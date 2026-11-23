@@ -64,6 +64,9 @@ class TruthPage:
     width: float
     height: float
     words: tuple[Word, ...]
+    # Text the reference cannot vouch for, such as words printed sideways: a PDF's text
+    # layer often stores those in reverse order. Lines made only of these are not scored.
+    ignored: tuple[Word, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,7 +145,7 @@ def make(
                 continue
             width, height = float(raw.width), float(raw.height)
             origin_x, origin_y = raw.bbox[0], raw.bbox[1]
-            words = []
+            words, ignored = [], []
             for found in raw.extract_words(keep_blank_chars=False, use_text_flow=False):
                 text = unicodedata.normalize("NFC", found["text"]).strip()
                 if not text:
@@ -154,7 +157,9 @@ def make(
                     float(found["x1"]) - origin_x,
                     float(found["bottom"]) - origin_y,
                 )
-                words.append(_tilted(word, width, height, chosen.tilt))
+                (words if found.get("upright", True) else ignored).append(
+                    _tilted(word, width, height, chosen.tilt)
+                )
             images.append(_roughen(native.render(raw, chosen.dpi, config.max_render_pixels), chosen))
             kept.append(
                 TruthPage(
@@ -163,6 +168,7 @@ def make(
                     width=width,
                     height=height,
                     words=tuple(words),
+                    ignored=tuple(ignored),
                 )
             )
     if not images:
@@ -191,10 +197,8 @@ def make(
                         "source_page": page.source_page,
                         "width": page.width,
                         "height": page.height,
-                        "words": [
-                            [w.text, round(w.x0, 2), round(w.top, 2), round(w.x1, 2), round(w.bottom, 2)]
-                            for w in page.words
-                        ],
+                        "words": [_row(w) for w in page.words],
+                        "ignored": [_row(w) for w in page.ignored],
                     }
                     for page in kept
                 ],
@@ -205,6 +209,10 @@ def make(
         encoding="utf8",
     )
     return pdf_path, truth_path
+
+
+def _row(word: Word) -> list:
+    return [word.text, round(word.x0, 2), round(word.top, 2), round(word.x1, 2), round(word.bottom, 2)]
 
 
 def page_numbers(spec: str) -> set[int]:
@@ -232,7 +240,8 @@ def load(path: str | Path) -> Truth:
             source_page=page.get("source_page", page["number"]),
             width=page["width"],
             height=page["height"],
-            words=tuple(Word(text, x0, top, x1, bottom) for text, x0, top, x1, bottom in page["words"]),
+            words=tuple(Word(*row) for row in page["words"]),
+            ignored=tuple(Word(*row) for row in page.get("ignored", [])),
         )
         for page in raw["pages"]
     )

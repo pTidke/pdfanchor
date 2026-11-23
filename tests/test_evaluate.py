@@ -187,3 +187,73 @@ def test_a_reference_can_be_limited_to_chosen_pages(native_pdf, tmp_path):
     # Without a selection, every page with a text layer is kept.
     _, all_pages = reference.make(native_pdf, "clean", tmp_path / "all")
     assert [p.source_page for p in reference.load(all_pages).pages] == [1, 2]
+
+
+def test_leader_dots_and_fill_lines_are_layout_not_text():
+    assert evaluate.canonical("Add lines 22 and 23 . . . . . . 24") == evaluate.canonical(
+        "Add lines 22 and 23 24"
+    )
+    assert evaluate.canonical("Name ____________ Date") == evaluate.canonical("Name Date")
+    assert evaluate.canonical("Section 10(46)") != evaluate.canonical("Section 10(48)")
+
+
+def _line(id_, x0, top, x1, bottom, text):
+    from ragnaroq.model import Box, Line
+
+    return Line(
+        id=id_,
+        page=1,
+        order=0,
+        box=Box(x0=x0, top=top, x1=x1, bottom=bottom),
+        raw=text,
+        text=text,
+        source="ocr:a",
+    )
+
+
+def test_a_word_inside_two_overlapping_lines_goes_to_the_one_that_read_it():
+    word = reference.Word("12d", 100, 100, 120, 110)
+    tall = _line("tall", 50, 90, 400, 130, "—— 23 Other taxes")  # a stray mark stretched this box
+    small = _line("small", 90, 95, 200, 112, "or 12d, see inst.")
+    owned, missed = evaluate._assign([word], [tall, small])
+    assert owned["small"] == [word] and not missed
+    # When no line read it, the smallest box still gets it.
+    owned, _ = evaluate._assign([word], [tall, _line("other", 90, 95, 200, 112, "unrelated")])
+    assert owned["other"] == [word]
+
+
+def test_lines_over_sideways_text_are_not_scored(clean_reference):
+    _, pdf, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    page = truth.pages[0]
+    sideways = reference.Word("mroF", 20, 400, 30, 440)
+    truth = reference.Truth(
+        pages=(
+            reference.TruthPage(
+                page.number, page.source_page, page.width, page.height, page.words, (sideways,)
+            ),
+        ),
+        meta=truth.meta,
+    )
+    engines = _readers(truth, LINES, LINES)
+    noise = ("€", (20 * 200 / 72, 400 * 200 / 72, 30 * 200 / 72, 440 * 200 / 72))
+    engines[0].lines.append(noise)
+    engines[1].lines.append(noise)
+    t = evaluate.score(convert(pdf, engines=engines), truth).tally
+    assert t.ignored_lines == 1 and t.lines == 3 and t.accepted_wrong == 0
+
+
+def test_a_cached_reading_is_reused_and_scored_again(clean_reference, tmp_path):
+    folder, _, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    engines = _readers(truth, LINES, LINES)
+    first = evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    assert len(list((tmp_path / "cache").glob("*.json"))) == 1
+
+    def unreadable(image, languages):
+        raise AssertionError("read again although cached")
+
+    for engine in engines:
+        engine.read = unreadable
+    again = evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    assert again.total.lines == first.total.lines == 3

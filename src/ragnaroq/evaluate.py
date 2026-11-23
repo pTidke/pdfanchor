@@ -10,7 +10,9 @@ the line whose box contains its centre. So a line the engine split or merged
 differently from the original is still compared with exactly the words it covers.
 """
 
+import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -24,12 +26,15 @@ from .structure import scripts_of
 MARGIN = 3.0  # points around a line's box that still count as inside
 THRESHOLDS = (0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00)
 TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", "−": "-", "…": "..."})
+# Leaders and fill lines: ". . . . 24", "Name ________". Layout, not content.
+LEADERS = re.compile(r"(?:[._-]\s?){3,}")
 
 
 def canonical(text: str) -> str:
     """The form two texts are compared in: Unicode-normalised, case-folded, single
-    spaces, typographic quotes and dashes made plain. Nothing else is forgiven."""
-    return normalise(text.translate(TYPOGRAPHY))
+    spaces, typographic quotes and dashes made plain, and runs of leader dots, rules
+    and fill underscores removed. Nothing else is forgiven."""
+    return normalise(LEADERS.sub(" ", text.translate(TYPOGRAPHY)))
 
 
 def distance(a: str, b: str) -> int:
@@ -83,6 +88,7 @@ class Tally:
     missed_words: int = 0
     char_errors: int = 0
     char_total: int = 0
+    ignored_lines: int = 0  # lines over text the reference cannot vouch for
 
     def add(self, other: "Tally") -> None:
         for key, value in asdict(other).items():
@@ -123,18 +129,25 @@ def _inside(word: Word, line: Line) -> bool:
 
 
 def _assign(words: list[Word], lines: list[Line]) -> tuple[dict[str, list[Word]], list[Word]]:
-    """Each true word goes to the smallest line box that contains its centre."""
+    """Each true word goes to a line whose box contains its centre.
+
+    Where boxes overlap (a ruled form, a stray mark that stretches a box), the word
+    goes to the line that read it, if one did; otherwise to the smallest box. So a
+    word is never blamed on a neighbouring line that merely overlaps it."""
     owned: dict[str, list[Word]] = {line.id: [] for line in lines}
     missed = []
+    read = {line.id: canonical(line.text) for line in lines}
     for word in words:
         holders = [line for line in lines if _inside(word, line)]
         if not holders:
             missed.append(word)
             continue
-        smallest = min(
-            holders, key=lambda line: (line.box.x1 - line.box.x0) * (line.box.bottom - line.box.top)
+        wanted = canonical(word.text)
+        found = [line for line in holders if wanted and wanted in read[line.id]]
+        best = min(
+            found or holders, key=lambda line: (line.box.x1 - line.box.x0) * (line.box.bottom - line.box.top)
         )
-        owned[smallest.id].append(word)
+        owned[best.id].append(word)
     return owned, missed
 
 
@@ -168,13 +181,20 @@ def score(
     tally = result.tally
     pages = {page.number: page for page in document.pages}
     for truth_page in truth.pages:
-        words = [word for word in truth_page.words if not _excluded(word, exclude_scripts)]
+        # A word that is only leader dots or a fill line has nothing to read.
+        words = [
+            word for word in truth_page.words if canonical(word.text) and not _excluded(word, exclude_scripts)
+        ]
         tally.truth_words += len(words)
         page = pages.get(truth_page.number)
         lines = [line for line in page.lines if not line.excluded] if page else []
         owned, missed = _assign(words, lines)
         tally.missed_words += len(missed)
+        shunned, _ = _assign(list(truth_page.ignored), lines)
         for line in lines:
+            if not owned[line.id] and shunned[line.id]:
+                tally.ignored_lines += 1
+                continue
             line_score = _line_score(line, owned[line.id])
             result.lines.append(line_score)
             tally.lines += 1
@@ -219,8 +239,13 @@ class Report:
     total: Tally
     sweep: list[dict]
 
-    def to_dict(self, examples: int = 50) -> dict:
+    def accepted_but_wrong(self) -> list[LineScore]:
+        """Every accepted line that is wrong, those wrong on a critical token first."""
         wrong = [line for f in self.files for line in f.lines if line.status == "accepted" and not line.exact]
+        return sorted(wrong, key=lambda line: line.critical_ok)
+
+    def to_dict(self) -> dict:
+        wrong = self.accepted_but_wrong()
         return {
             "engines": self.engines,
             "policy": {"min_similarity": self.min_similarity},
@@ -230,17 +255,30 @@ class Report:
                 for f in self.files
             ],
             "sweep": self.sweep,
-            "accepted_but_wrong": [asdict(line) for line in wrong[:examples]],
+            "accepted_but_wrong": [asdict(line) for line in wrong],
         }
 
 
-def run(folder: str | Path, *, config: Config | None = None, engines=None, progress=None) -> Report:
+def run(
+    folder: str | Path,
+    *,
+    config: Config | None = None,
+    engines=None,
+    progress=None,
+    cache: str | Path | None = None,
+) -> Report:
     """Convert every reference in `folder` (`*.truth.json` next to its `.pdf`) and score it.
 
-    `progress`, if given, is called as progress(done, total, name) after each reference."""
+    `progress`, if given, is called as progress(done, total, name) after each reference.
+    `cache`, if given, is a folder where each conversion is kept, keyed by the PDF's
+    bytes, the settings and the readers' versions. Reading is the slow part, so a
+    change to the scoring alone then takes seconds."""
+    from .ocr import available
     from .pipeline import convert
 
     config = config or Config()
+    engines = available(config.languages) if engines is None else list(engines)
+    readers = "+".join(f"{engine.name}={engine.version()}" for engine in engines)
     files: list[FileScore] = []
     total = Tally()
     names: dict[str, str] = {}
@@ -249,7 +287,7 @@ def run(folder: str | Path, *, config: Config | None = None, engines=None, progr
         pdf_path = truth_path.with_name(truth_path.name.removesuffix(".truth.json") + ".pdf")
         if not pdf_path.exists():
             raise FileNotFoundError(f"{truth_path.name} has no {pdf_path.name} beside it.")
-        document = convert(pdf_path, config=config, engines=engines)
+        document = _converted(pdf_path, config, engines, readers, cache, convert)
         names.update(
             {key: value for key, value in document.engine.components.items() if key.startswith("ocr:")}
         )
@@ -269,6 +307,21 @@ def run(folder: str | Path, *, config: Config | None = None, engines=None, progr
         total=total,
         sweep=sweep([line for f in files for line in f.lines]),
     )
+
+
+def _converted(pdf_path: Path, config: Config, engines, readers: str, cache, convert) -> Document:
+    if cache is None:
+        return convert(pdf_path, config=config, engines=engines)
+    key = hashlib.sha256(
+        b"|".join([pdf_path.read_bytes(), config.sha256().encode(), readers.encode()])
+    ).hexdigest()[:24]
+    stored = Path(cache) / f"{pdf_path.stem}.{key}.json"
+    if stored.exists():
+        return Document.model_validate_json(stored.read_text(encoding="utf8"))
+    document = convert(pdf_path, config=config, engines=engines)
+    stored.parent.mkdir(parents=True, exist_ok=True)
+    stored.write_text(document.model_dump_json(), encoding="utf8")
+    return document
 
 
 def _pct(value: float | None) -> str:
@@ -325,14 +378,22 @@ def to_markdown(report: Report, examples: int = 20) -> str:
             f"| {row['threshold']:.2f}{mark} | {row['accepted']} | {row['accepted_wrong']} | "
             f"{row['accepted_critical_wrong']} | {_pct(row['review_share'])} |"
         )
-    wrong = [line for f in report.files for line in f.lines if line.status == "accepted" and not line.exact]
-    out += ["", "## Accepted but wrong", ""]
+    wrong = report.accepted_but_wrong()
+    out += [
+        "",
+        "## Accepted but wrong",
+        "",
+        "Those wrong on a number, a date or a negation come first.",
+        "",
+    ]
     if not wrong:
         out.append("None.")
     else:
-        out += ["| Line | Read | Correct |", "| --- | --- | --- |"]
+        out += ["| Line | Critical | Read | Correct |", "| --- | --- | --- | --- |"]
         for line in wrong[:examples]:
-            out.append(f"| {line.line} | {line.read.replace('|', '¦')} | {line.expected.replace('|', '¦')} |")
+            critical = "" if line.critical_ok else "yes"
+            read, correct = line.read.replace("|", "¦"), line.expected.replace("|", "¦")
+            out.append(f"| {line.line} | {critical} | {read} | {correct} |")
         if len(wrong) > examples:
             out.append(f"\n…and {len(wrong) - examples} more in evaluation.json.")
     return "\n".join(out) + "\n"

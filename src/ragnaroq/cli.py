@@ -8,6 +8,7 @@ import argparse
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from . import __version__, evaluate, reference
 from .config import Config, Policy
@@ -54,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--dpi", type=int, default=200)
     check.add_argument("--exclude-script", action="append", default=[])
     check.add_argument("--min-similarity", type=float, help="Agreement threshold to evaluate (default: the policy's)")
+    check.add_argument(
+        "--fresh", action="store_true", help="Read every reference again instead of reusing <out>/cache"
+    )
     check.add_argument(
         "--max-critical-false-accepts",
         type=float,
@@ -107,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
                 config=config,
                 engines=engines_here(config.languages),
                 progress=lambda done, total, name: print(f"[{done}/{total}] {name}", file=sys.stderr, flush=True),
+                cache=None if args.fresh else Path(args.out) / "cache",
             )
         except (ConversionError, EngineUnavailable, OSError, ValueError) as error:
             print(json.dumps({"error": str(error)}), file=sys.stderr)
