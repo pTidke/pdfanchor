@@ -147,9 +147,16 @@ def make(
             width, height = float(raw.width), float(raw.height)
             origin_x, origin_y = raw.bbox[0], raw.bbox[1]
             words, ignored = [], []
-            for found in raw.extract_words(keep_blank_chars=False, use_text_flow=False):
+            # Some PDFs draw text twice, slightly offset, to fake bold. Count it once.
+            for found in raw.dedupe_chars().extract_words(keep_blank_chars=False, use_text_flow=False):
                 text = unicodedata.normalize("NFC", found["text"]).strip()
-                if not text:
+                # Text with no size is never drawn (hidden labels, link text): no
+                # scanner could see it, so it is not part of the answer.
+                too_small = (
+                    float(found["x1"]) - float(found["x0"]) < 0.5
+                    or float(found["bottom"]) - float(found["top"]) < 0.5
+                )
+                if not text or too_small:
                     continue
                 word = Word(
                     text,

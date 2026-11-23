@@ -37,6 +37,12 @@ def canonical(text: str) -> str:
     return normalise(LEADERS.sub(" ", text.translate(TYPOGRAPHY)))
 
 
+def critical(text: str):
+    """The critical tokens of `text`, with the same typography forgiven as `canonical`:
+    "Steps 2–4" and "Steps 2-4" name the same steps."""
+    return critical_tokens(LEADERS.sub(" ", text.translate(TYPOGRAPHY)))
+
+
 def distance(a: str, b: str) -> int:
     """Edit distance in characters (insertions, deletions, substitutions)."""
     if len(a) < len(b):
@@ -131,9 +137,10 @@ def _inside(word: Word, line: Line) -> bool:
 def _assign(words: list[Word], lines: list[Line]) -> tuple[dict[str, list[Word]], list[Word]]:
     """Each true word goes to a line whose box contains its centre.
 
-    Where boxes overlap (a ruled form, a stray mark that stretches a box), the word
-    goes to the line that read it, if one did; otherwise to the smallest box. So a
-    word is never blamed on a neighbouring line that merely overlaps it."""
+    Where boxes overlap (a ruled form, a tilted page, a stray mark that stretches a
+    box), the word goes to the line whose middle is nearest it vertically; between
+    lines about as near, to one that read the word. So a word is not blamed on a
+    neighbouring line that merely overlaps it."""
     owned: dict[str, list[Word]] = {line.id: [] for line in lines}
     missed = []
     read = {line.id: canonical(line.text) for line in lines}
@@ -143,11 +150,16 @@ def _assign(words: list[Word], lines: list[Line]) -> tuple[dict[str, list[Word]]
             missed.append(word)
             continue
         wanted = canonical(word.text)
-        found = [line for line in holders if wanted and wanted in read[line.id]]
-        best = min(
-            found or holders, key=lambda line: (line.box.x1 - line.box.x0) * (line.box.bottom - line.box.top)
-        )
-        owned[best.id].append(word)
+        _, y = word.centre
+        ranked = [
+            (
+                round(abs(y - (line.box.top + line.box.bottom) / 2) / 2),
+                not (wanted and wanted in read[line.id]),
+                n,
+            )
+            for n, line in enumerate(holders)
+        ]
+        owned[holders[min(ranked)[2]].id].append(word)
     return owned, missed
 
 
@@ -163,7 +175,7 @@ def _line_score(line: Line, words: list[Word]) -> LineScore:
         read=line.text,
         expected=expected,
         exact=read_c == expected_c,
-        critical_ok=critical_tokens(line.text) == critical_tokens(expected),
+        critical_ok=critical(line.text) == critical(expected),
         errors=distance(read_c, expected_c),
         length=len(expected_c),
         eligible=bool(others) and not any(flag.rule != "crosscheck.disagreement" for flag in line.flags),

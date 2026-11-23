@@ -265,3 +265,33 @@ def test_a_cached_reading_is_reused_and_scored_again(clean_reference, tmp_path):
         engine.read = unreadable
     again = evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
     assert again.total.lines == first.total.lines == 3
+
+
+def test_dash_styles_do_not_count_as_a_different_number():
+    assert evaluate.critical("Complete Steps 2–4") == evaluate.critical("Complete Steps 2-4")
+    assert evaluate.critical("Steps 2–4") != evaluate.critical("Steps 2–5")
+
+
+def test_text_drawn_twice_to_fake_bold_counts_once(tmp_path):
+    path = tmp_path / "bold.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Helvetica", 12)
+    for offset in (0, 0.3):  # the same text, overprinted a hair to the right
+        page.drawString(72 + offset, 760, "Publication 559 Survivors")
+    page.drawString(72, 740, "and executors of an estate.")
+    page.save()
+    _, truth_path = reference.make(path, "clean", tmp_path / "out")
+    words = [w.text for w in reference.load(truth_path).pages[0].words]
+    assert words.count("559") == 1
+
+
+def test_text_with_no_size_is_not_part_of_the_answer(tmp_path):
+    path = tmp_path / "hidden.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Helvetica", 12)
+    page.drawString(72, 760, "Publication 559 Survivors")
+    page.setFont("Helvetica", 0.01)  # drawn, but too small to exist on paper
+    page.drawString(300, 760, "559")
+    page.save()
+    _, truth_path = reference.make(path, "clean", tmp_path / "out")
+    assert [w.text for w in reference.load(truth_path).pages[0].words] == ["Publication", "559", "Survivors"]
