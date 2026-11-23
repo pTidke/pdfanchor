@@ -12,9 +12,9 @@ The files can be of any type. It starts with the common ones: PDF, Word, Excel, 
 
 ```
 folder ─▶ readers        one per file type, all writing the same document.json
-       ─▶ trust          rules ─▶ (optional) a cheap model repairs doubtful lines ─▶ a person decides the rest
+       ─▶ trust          rules ─▶ a local OCR model reads doubtful lines again ─▶ a person decides the rest
        ─▶ semantic layer metadata.json: a master file of what each document is and says, every value grounded in its source
-       ─▶ chunks         strategies chosen from the structure and the metadata
+       ─▶ chunks         a strategy per document, chosen from the metadata (chunking-plan.json)
        ─▶ index          embeddings in a local store, or pgvector, Qdrant and others
        ─▶ serve          Python API, command line, MCP server (stdio locally, HTTP on a server)
 ```
@@ -34,9 +34,9 @@ These hold for every stage.
    A chunk, a metadata value and an answer can always be traced back.
 2. **Nothing is changed silently.** A model's correction is a proposal, kept as another reading with its provider, model and cost. It is accepted only by rule. When it fails the rules, a person is asked.
 3. **The core stays offline and deterministic.**
-   - Model calls (repair, metadata, embeddings) are optional extras, switched on explicitly.
-   - Each run has a budget, and results are cached.
-   - Local models (Ollama) are supported as well as hosted ones.
+   - Model stages (OCR model, metadata, embeddings) are optional extras, switched on explicitly.
+   - Local models from Hugging Face or Ollama are the default, so everything can run free and offline.
+   - Hosted models are an option, with a budget per run. Results are cached.
 4. **Incremental.** Files are identified by content hash. Changing one file re-processes that file only.
 5. **Honest numbers.** For each file type, accuracy is measured on human-verified reference sets. A verdict of *accepted* means "passed the rules"; the measured error rate says how far to trust that.
 
@@ -64,18 +64,19 @@ Each file type has a reader that writes the same `document.json` contract, with 
 
 ### Trust and repair
 
-The PDF rules that exist today stay first. Lines that remain doubtful go to an optional repair stage (`pdfanchor[repair]`). It sends the crop of the line and the existing readings to the cheapest capable vision model the user configures.
+The PDF rules that exist today stay first. Lines that remain doubtful get one more reader: a small document-OCR model from Hugging Face that runs locally, free and offline (`pdfanchor[vlm]`).
 
-A proposal is accepted only if:
+- **The model:** the first candidate is PaddleOCR-VL. It has about 0.9 billion parameters, an Apache 2.0 licence and 109 languages including Hindi, and it runs on a CPU. It is to be measured against GLM-OCR on our reference set before it becomes the default.
+- **What it sees:** only the crop of each doubtful line, or of the whole page for a scan, so it runs on the few lines that need it, not on everything.
+- **How its reading is used:** its reading is one more independent reading, like Tesseract's and EasyOCR's, and the existing rule decides. A line is accepted only if the validators pass and two independent readings agree on every critical token (numbers, dates, negations). The model is never trusted on its own, and the text is never rewritten.
+- **Reproducibility:** the weights are pinned to a revision and checked, and decoding is deterministic. The same file gives the same result.
+- **If it still disagrees,** the line stays flagged for a person in the review UI.
 
-- the validators pass, and
-- it agrees with an independent reading on every critical token (numbers, dates, negations).
-
-Otherwise the line stays flagged for a person. A budget per run caps the spend, and every call is recorded with its cost.
+A hosted model (Gemini, OpenAI and others) can be switched in instead for people without the compute. It is optional, with a budget per run and the cost of every call recorded.
 
 ### The semantic layer: `metadata.json`
 
-A master file describing every document in the folder. It is built with Google's [LangExtract](https://github.com/google/langextract) (`pdfanchor[semantic]`), using Gemini, OpenAI or a local model through Ollama.
+A master file describing every document in the folder. It is built with Google's [LangExtract](https://github.com/google/langextract) (`pdfanchor[semantic]`), using a local model through Ollama by default (free and offline), or Gemini or OpenAI if you choose.
 
 - **Fields:** they come from a schema the user picks. The defaults are title, type, date, issuer, parties, amounts, references, periods, topics and entities, and domains can add their own.
 - **Grounding:** LangExtract maps each extracted value to its place in the text, and pdfanchor maps that back to the line anchors. A metadata value is therefore as checkable as a line.
@@ -83,16 +84,13 @@ A master file describing every document in the folder. It is built with Google's
 
 ### Chunking strategies
 
-Chunking is derived from the structure and the metadata, not fixed.
+Chunking is chosen per document from `metadata.json`, by fixed rules, and written to `chunking-plan.json` and `chunking-plan.md` with the reason for each choice.
 
-- **Structural (the default):** paragraphs kept whole, provisos with their paragraph, tables as their own chunk.
-- **Section-scoped:** headings from the metadata.
-- **Entity-scoped.**
-- **Table rows**, for spreadsheets.
-- **One chunk per slide.**
-- **Small-to-big:** small chunks to search, their parents to answer.
+- **Strategies:** single, question-answer, numbered paragraphs, sections, table rows, slides, records, and sentences as the fallback.
+- **Additions for every strategy:** definitions, entity filters, date filters, reference links, small-to-big parents.
+- **Checking:** a questions file can test the choice against the alternatives.
 
-Each chunk carries its metadata, so a search can filter on it. The manifest records which strategy was used, and why.
+[chunking.md](chunking.md) has the signals, the rules and the size limits.
 
 ### Index and serve
 
@@ -112,12 +110,12 @@ Decisions are written to `review.json` and become readings by a person. They als
 | --- | --- | --- |
 | **0.1** | Trustworthy PDFs | A human-verified reference set and `pdfanchor evaluate` (false-accept rate, overall and on critical tokens); thresholds calibrated from it; per-page time and memory limits; pinned OCR models; first release on PyPI. |
 | 0.2 | Folders and formats | `pdfanchor index ./folder` writing `.pdfanchor/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
-| 0.3 | Semantic layer | `metadata.json` through LangExtract; chunking strategies derived from it. |
-| 0.4 | Repair and review | The cheap-model repair stage with a budget; the local review UI. |
+| 0.3 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
+| 0.4 | Repair and review | A local OCR model as a third reader on doubtful lines (hosted models optional); the local review UI. |
 | 0.5 | Serve | Embeddings and stores; the MCP server, local and remote. |
 | Later | Harder PDFs | Scan recovery, tables on scans, very long documents, more languages (see `porting-from-the-lab.md`). |
 
 ## Open questions
 
 - **The name.** `pdfanchor` fits a PDF-first engine. A wider name may suit the folder-to-retrieval tool. Package names on PyPI are hard to change, so this should be settled before the 0.1 release.
-- **Defaults** for the embedding model, the repair model and the metadata model, chosen by measured cost and accuracy.
+- **Defaults** for the embedding model, the local OCR model and the metadata model, chosen by measured accuracy and speed on a CPU. The aim is that the whole pipeline runs free and offline, with hosted models as an option.
