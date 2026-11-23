@@ -68,7 +68,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
 | Large documents in page groups | Not built |
-| Accuracy measured on reference pages | Tooling working (`reference make`, `evaluate`); a public reference set is next. See [docs/evaluating.md](docs/evaluating.md) |
+| Accuracy measured on reference pages | First measurement on public IRS documents: 72.5% of lines accepted, 0.15% of those wrong on a number, date or negation. Codes mixing letters and digits are the weak spot. See [references/](references/README.md) |
 
 ## Install and run
 
@@ -165,6 +165,14 @@ ragnaroq evaluate refs/ --out results/            # how often an accepted line i
 ```
 
 The report counts accepted lines that are wrong, and those wrong on a number, a date or a negation. It also counts flagged lines that were right, and shows how each agreement threshold trades one against the other. [docs/evaluating.md](docs/evaluating.md) explains the method and its limits.
+
+First results, on public IRS forms and publications turned into scans (clean, low-res, blurred, tilted), read by Tesseract and EasyOCR:
+
+| Lines accepted without a person | Accepted but wrong | Accepted and wrong on a number, date or negation |
+| --- | --- | --- |
+| 72.5% | 6.7% | 0.15% |
+
+A stress test of codes such as `R28C0` does much worse: both readers turn the zero into a letter O, and agree. [references/](references/README.md) has the full results and how to reproduce them.
 
 ## Development
 
