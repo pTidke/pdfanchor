@@ -34,11 +34,18 @@ A human-verified reference uses the same truth format: a real scan, with its tex
 
 `ragnaroq evaluate` runs the full engine on every reference in a folder, with whichever OCR engines are installed. It then compares every line with the truth. Each true word belongs to the line whose box contains its centre, so a line the engine split or merged differently from the original is still compared with exactly the words it covers.
 
-The report goes to `evaluation.md` and `evaluation.json`.
+Two cases need care:
+
+- **Overlapping boxes.** On ruled forms, or where a stray mark stretches a box, a word can fall inside two lines. It then goes to the line that actually read it, and otherwise to the smallest box. A word is never blamed on a neighbour that merely overlaps it.
+- **Sideways text.** Text printed sideways (`Form` running up the margin) is often stored reversed in a PDF's text layer (`mroF`). The truth file keeps such words in an `ignored` list, and lines over nothing but them are not scored.
+
+The report goes to `evaluation.md` and `evaluation.json`. The JSON lists every accepted line that was wrong, those wrong on a critical token first.
+
+Reading is the slow part, so each conversion is kept in `<out>/cache`. It is keyed by the PDF's bytes, the settings and the readers' versions, so changing the scoring or the threshold takes seconds. `--fresh` reads everything again.
 
 | Measure | What it means |
 | --- | --- |
-| **Accepted but wrong** | Accepted lines whose text differs from the truth. Only Unicode form, case, spacing, and typographic quotes and dashes are forgiven. |
+| **Accepted but wrong** | Accepted lines whose text differs from the truth. Only these are forgiven: Unicode form, case, spacing, typographic quotes and dashes, and leader dots, rules and fill underscores (`. . . . 24`, `Name ____`), which are layout, not content. |
 | **Accepted with a wrong number, date or negation** | Accepted lines whose critical tokens differ from the truth. This is the number that matters most. |
 | Sent to a person | Lines flagged or blocked. |
 | Sent to a person although right | Flagged lines that were correct after all: the cost of being careful. |
