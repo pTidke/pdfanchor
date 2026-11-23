@@ -18,6 +18,8 @@ No language model and no network call is used anywhere in the engine.
 
 This is a working skeleton: small, tested, and end to end. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
 
+The goal is wider than PDFs: point pdfanchor at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones.
+
 | Area | State |
 | --- | --- |
 | Output contract and JSON schema | Working, versioned `0.1.0` |

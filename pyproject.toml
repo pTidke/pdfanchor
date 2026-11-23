@@ -18,7 +18,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/pTidke/benzeneblack"
+Repository = "https://github.com/pTidke/pdfanchor"
+Roadmap = "https://github.com/pTidke/pdfanchor/blob/main/docs/roadmap.md"
 
 [project.optional-dependencies]
 easyocr = ["easyocr>=1.7,<2", "numpy"]
