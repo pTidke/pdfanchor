@@ -132,13 +132,14 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 
 - A text-layer line is **accepted** when no validator objects and an independent OCR reading of the rendered page agrees with it: similar overall, and identical on every critical token (anything containing a digit, and negations).
 - A scanned line is **accepted** when two engines agree by the same test.
+- Two engines can agree on the same mistake. In text read from an image, a code that mixes letters and digits is therefore flagged when it holds a letter readers take for a digit: `R28C0` read as `R28CO`, `PAN AABTS1181R`. So is a bracket the line never pairs, as in `4a)` read for `4(a)`. Measured: this cut the critical errors let through from 5 to 3 on the IRS set, and from 30 to 0 on the code table.
 - Anything else is **flagged** with the rule that caused it. Tables are always flagged.
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
 - Text is never repaired. A flag says what looks wrong; the text stays as read.
 
 Two switches loosen this when you have no second reader: `Policy.accept_native_without_crosscheck` and `Policy.accept_single_ocr_reading`. Both are off by default.
 
-The thresholds are starting values. Until they are measured against human-verified pages, read "accepted" as "passed every rule", not as an accuracy figure.
+The thresholds are starting values, now measured on synthetic scans ([references/](references/README.md)) but not yet on real paper. Read "accepted" as "passed every rule", with the measured error rates as a guide.
 
 ## Layout
 
