@@ -179,7 +179,7 @@ def convert(
     document = Document(
         source=Source(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), filename=name, pages=count),
         engine=Engine(
-            name="ragnarok",
+            name="ragnaroq",
             version=__version__,
             policy_version=config.policy.version,
             config_sha256=config.sha256(),

@@ -1,10 +1,10 @@
-# Where RAGnarök is going
+# Where RAGnaroq is going
 
-Today ragnarok reads one PDF and writes text a language model can read and a vector index can ingest, with every line anchored to its place on the page and a rule-based verdict on whether it can be trusted.
+Today ragnaroq reads one PDF and writes text a language model can read and a vector index can ingest, with every line anchored to its place on the page and a rule-based verdict on whether it can be trusted.
 
 The goal is wider. The Norse names used below are explained in the [README](../README.md#rag-n-aroq). In three steps:
 
-1. Add ragnarok to your project.
+1. Add ragnaroq to your project.
 2. Point it at a folder.
 3. The folder becomes ready for retrieval: every file read, checked, described and indexed, and served to any model through MCP, on your machine or a server you choose.
 
@@ -45,7 +45,7 @@ These hold for every stage.
 ```
 my-folder/
   ...your files, untouched...
-  .ragnarok/
+  .ragnaroq/
     manifest.json      every file: hash, reader, status, flags, cost
     files/<id>/        document.json, document.md, chunks.jsonl
     metadata.json      the master metadata file for the whole folder
@@ -64,7 +64,7 @@ Each file type has a reader that writes the same `document.json` contract, with 
 
 ### Trust and repair: the Norns and Heimdall
 
-The PDF rules that exist today stay first. Lines that remain doubtful get one more reader: a small document-OCR model from Hugging Face that runs locally, free and offline (`ragnarok[vlm]`).
+The PDF rules that exist today stay first. Lines that remain doubtful get one more reader: a small document-OCR model from Hugging Face that runs locally, free and offline (`ragnaroq[vlm]`).
 
 - **The model:** the first candidate is PaddleOCR-VL. It has about 0.9 billion parameters, an Apache 2.0 licence and 109 languages including Hindi, and it runs on a CPU. It is to be measured against GLM-OCR on our reference set before it becomes the default.
 - **What it sees:** only the crop of each doubtful line, or of the whole page for a scan, so it runs on the few lines that need it, not on everything.
@@ -76,10 +76,10 @@ A hosted model (Gemini, OpenAI and others) can be switched in instead for people
 
 ### The semantic layer, `metadata.json`: Mímir
 
-A master file describing every document in the folder. It is built with Google's [LangExtract](https://github.com/google/langextract) (`ragnarok[semantic]`), using a local model through Ollama by default (free and offline), or Gemini or OpenAI if you choose.
+A master file describing every document in the folder. It is built with Google's [LangExtract](https://github.com/google/langextract) (`ragnaroq[semantic]`), using a local model through Ollama by default (free and offline), or Gemini or OpenAI if you choose.
 
 - **Fields:** they come from a schema the user picks. The defaults are title, type, date, issuer, parties, amounts, references, periods, topics and entities, and domains can add their own.
-- **Grounding:** LangExtract maps each extracted value to its place in the text, and ragnarok maps that back to the line anchors. A metadata value is therefore as checkable as a line.
+- **Grounding:** LangExtract maps each extracted value to its place in the text, and ragnaroq maps that back to the line anchors. A metadata value is therefore as checkable as a line.
 - **Folder level:** a catalogue of documents, links between documents that cite each other, and a glossary.
 
 ### Chunking strategies: Mímir, with Huginn's second opinion
@@ -100,7 +100,7 @@ Chunking is chosen per document from `metadata.json`: fixed rules first, then a 
 
 ### Review UI: Forseti
 
-A lightweight local web app, `ragnarok review ./folder`, shows each flagged line beside the crop of the original. The user accepts it, fixes it or marks it unreadable.
+A lightweight local web app, `ragnaroq review ./folder`, shows each flagged line beside the crop of the original. The user accepts it, fixes it or marks it unreadable.
 
 Decisions are written to `review.json` and become readings by a person. They also grow the reference set used to measure accuracy.
 
@@ -108,8 +108,8 @@ Decisions are written to `review.json` and become readings by a person. They als
 
 | Version | Theme | What it delivers |
 | --- | --- | --- |
-| **0.1** | Trustworthy PDFs | A human-verified reference set and `ragnarok evaluate` (false-accept rate, overall and on critical tokens); thresholds calibrated from it; per-page time and memory limits; pinned OCR models; first release on PyPI. |
-| 0.2 | Folders and formats | `ragnarok index ./folder` writing `.ragnarok/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
+| **0.1** | Trustworthy PDFs | A human-verified reference set and `ragnaroq evaluate` (false-accept rate, overall and on critical tokens); thresholds calibrated from it; per-page time and memory limits; pinned OCR models; first release on PyPI. |
+| 0.2 | Folders and formats | `ragnaroq index ./folder` writing `.ragnaroq/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
 | 0.3 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
 | 0.4 | Repair and review | A local OCR model as a third reader on doubtful lines (hosted models optional); the local review UI. |
 | 0.5 | Serve | Embeddings and stores; the MCP server, local and remote. |

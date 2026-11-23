@@ -3,7 +3,7 @@ requires = ["setuptools>=80"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ragnarok"
+name = "ragnaroq"
 version = "0.0.4"
 description = "Turn any PDF into LLM-readable, RAG-ready text with every line anchored to its source and a rule-based trust verdict."
 readme = "README.md"
@@ -18,15 +18,15 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/pTidke/ragnarok"
-Roadmap = "https://github.com/pTidke/ragnarok/blob/main/docs/roadmap.md"
+Repository = "https://github.com/pTidke/ragnaroq"
+Roadmap = "https://github.com/pTidke/ragnaroq/blob/main/docs/roadmap.md"
 
 [project.optional-dependencies]
 easyocr = ["easyocr>=1.7,<2", "numpy"]
 test = ["pytest>=8", "reportlab>=4", "ruff>=0.6"]
 
 [project.scripts]
-ragnarok = "ragnarok.cli:main"
+ragnaroq = "ragnaroq.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

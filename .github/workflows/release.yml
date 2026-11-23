@@ -1,4 +1,4 @@
-# Publishes ragnarok to PyPI when a GitHub release is published.
+# Publishes ragnaroq to PyPI when a GitHub release is published.
 # PyPI trusts this workflow directly ("trusted publishing"): no password or
 # token is stored. The release tag must match the package version, e.g. v0.0.4.
 name: Release
