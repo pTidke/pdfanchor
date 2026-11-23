@@ -9,21 +9,22 @@ pip install ragnarok          # once released; until then, install from this rep
 ragnarok convert notification.pdf --out out/
 ```
 
-## RAG 'n' AROK
+## RAG 'n' AROQ
 
-In Old Norse, *ragna rök* is "the fate of the gods", and *rök* means fate, or judgement. Passing judgement on every line is what this tool is for. So: **RAG 'n' AROK**, like rock 'n' roll. RAG, and the four jobs that make it trustworthy.
+In Old Norse, *ragna rök* is "the fate of the gods", and *rök* means fate, or judgement. Passing judgement on every line is what this tool is for. So: **RAG 'n' AROQ**, like rock 'n' roll. RAG, and the four jobs that make it trustworthy. It is spelt with a K and heard with a Q.
 
 | | Job | Norse name | Why the name fits |
 | --- | --- | --- | --- |
 | **A** | **Assess**: every line gets a verdict, *accepted*, *flagged* or *blocked*, by rules. | **The Norns** | Three Norns weave every fate at the roots of Yggdrasil. Three verdicts. |
 | **R** | **Read**: the text layer, and later Word, Excel, PowerPoint, JSON, XML and more. | **Runes** | Odin hung nine nights on the world tree to learn to read the runes. |
 | **O** | **OCR**: read what is only an image, with independent readers checking each other. | **Heimdall** | The watchman of the gods sees a hundred leagues, by night as well as by day. |
-| **K** | **Knowledge**: metadata, chunks and the index. | **Mímir** | The wisest of all, keeper of the well of knowledge. Odin gave an eye for one drink. |
+| **Q** | **Questions**: ask your folder and get answers that cite their lines. | **The Völva** | In the *Völuspá*, Odin questions a seeress, and her answer foretells Ragnarök itself. |
 
 And around them:
 
 | Name | Part | Why |
 | --- | --- | --- |
+| **Mímir** | `metadata.json`, the master file of what every document is and says | The keeper of the well of wisdom. Odin gave an eye for one drink. |
 | **Huginn** | A local language model's second opinion (metadata, chunking plan) | Odin's raven of *thought*. |
 | **Muninn** | The search index | Odin's raven of *memory*. |
 | **Forseti** | The review screen, where a person settles what the readers disagree on | The god who settles every dispute. |

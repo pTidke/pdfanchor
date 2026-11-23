@@ -2,7 +2,7 @@
 
 Today ragnarok reads one PDF and writes text a language model can read and a vector index can ingest, with every line anchored to its place on the page and a rule-based verdict on whether it can be trusted.
 
-The goal is wider. The Norse names used below are explained in the [README](../README.md#rag-n-arok). In three steps:
+The goal is wider. The Norse names used below are explained in the [README](../README.md#rag-n-aroq). In three steps:
 
 1. Add ragnarok to your project.
 2. Point it at a folder.
@@ -92,7 +92,7 @@ Chunking is chosen per document from `metadata.json`: fixed rules first, then a 
 
 [chunking.md](chunking.md) has the signals, the rules, the model's role and the size limits.
 
-### Index and serve: Muninn and Bifröst
+### Index and serve: Muninn, Bifröst and the Völva
 
 - **Embeddings:** the provider is configurable.
 - **Store:** a local store by default, with adapters for pgvector, Qdrant and others.
