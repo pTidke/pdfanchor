@@ -18,7 +18,7 @@ The lab never chooses: no engine is selected, nothing is accepted, every result 
 ## Order of work
 
 1. **Reference pages first.** Before porting more, build the verified reference set the lab started (`reference_pack.py`, `reference_eval.py`, `benchmark/references/`). Port the CER/WER scorer as `ragnaroq.evaluate`, and add the two numbers that decide whether the policy is safe: the share of accepted lines that are wrong (false accepts), overall and on critical tokens. Calibrate `Policy.min_similarity` from it.
-2. **Isolation and budgets.** Port the per-page subprocess with time, memory, pixel and glyph limits from `runner.py` and `worker.py`. Needed before running on files you did not choose.
+2. **Isolation and budgets.** Done in 0.1.0: a worker process per document with time, memory and glyph limits per page, and pixel limits for rendering. Since 0.1.1 the worker is a new interpreter started with `subprocess`, as the lab's `runner.py` started `worker.py`, so it never runs the caller's script.
 3. **Second reader.** Done in 0.0.3 for English scanned pages: offline models with an explicit download switch, failures confined to the page. Still to do: pin the EasyOCR and model versions, a per-page time limit, and its Hindi model, measured; today Hindi has one reader.
 4. **Pinned Tesseract weights.** `ocr_compare.py` verifies weight hashes and records them. Bring that in, and record the `tessdata` variant in `Engine.components`. Benchmark `tessdata_best` against `tessdata_fast`.
 5. **Scan recovery.** `scan_recovery.py` and `targeted_ocr.py`: quarter-turn detection, row segmentation, the numeric profile, background flattening. Each becomes a retry strategy the pipeline tries when the first reading fails a rule, with every attempt kept as a `Reading`.

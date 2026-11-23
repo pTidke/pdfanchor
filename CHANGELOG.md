@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 — 23 November 2026
+
+### Fixed
+
+- **`convert()` failed from a script on stdin or a script with no main guard.** The page worker was started by multiprocessing's `spawn` method, which runs the caller's main script again in the worker. A script read from stdin (`python - < script.py`) has no file to run again, so the worker died. A script without `if __name__ == "__main__":` started a second conversion inside the worker, which Python refuses. Either way `convert()` raised `ConversionError`, wrongly blaming memory. The worker is now a new Python interpreter that imports ragnaroq and nothing of the caller's, so it no longer matters how the calling code is run. It is as fast as before.
+- **A worker that stops now says how.** It reports its exit code or signal, and the last line it wrote, such as an import error. It suggests memory only when the worker was killed by a signal.
+- Anything a library prints inside the worker goes to stderr and can no longer garble the pages sent back.
+
 ## 0.1.0 — 23 November 2026
 
 Trustworthy PDFs: a measured number behind *accepted*, and limits for PDFs you did not choose.
