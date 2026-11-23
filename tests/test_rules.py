@@ -55,7 +55,9 @@ def test_unmapped_characters_are_flagged():
 
 
 def test_critical_tokens_keep_numbers_references_and_negations():
-    tokens = critical_tokens("Under section 10(23FE), w.e.f. 01.04.2026, not exceeding Rs. 1,50,000 (or 12.5%).")
+    tokens = critical_tokens(
+        "Under section 10(23FE), w.e.f. 01.04.2026, not exceeding Rs. 1,50,000 (or 12.5%)."
+    )
     assert set(tokens) == {"10(23fe)", "01.04.2026", "not", "1,50,000", "12.5%"}
 
 
@@ -87,3 +89,32 @@ def test_tesseract_rows_become_lines_in_order():
     lines = parse_tsv("\n".join([header, *rows]))
     assert [line.text for line in lines] == ["Circular No.", "2026"]
     assert lines[0].box == (10, 10, 140, 30) and lines[0].confidence == 94.0
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        # Codes mixing letters and digits, with a letter a reader can take for a digit.
+        ("R28CO 28,000 R28C1 28,001", ["code.confusable"]),
+        ("Cat. No. 11320B", ["code.confusable"]),
+        ("PAN AABTS1181R of the trust", ["code.confusable"]),
+        ("Addlines16and17", ["code.confusable"]),  # words run together by a reader
+        # A bracket the line never pairs, inside such a code: "4a)" read for "4(a)".
+        ("Step 4a). Enter in this step", ["code.unbalanced-bracket"]),
+        # Not codes, or no risk: nothing is raised.
+        ("(see line 12b) and line 13", []),
+        ("Form 1040-ES and Form 1040-SR", []),
+        ("call 1-800-THE-LOST today", []),
+        ("a 10-year-old child", []),
+        ("see IRS.gov/Form1040 for more", []),
+        ("on the 31st day of March", []),
+        ("R28C1 28,001 Form W-4", []),
+    ],
+)
+def test_codes_mixing_letters_and_digits(text, expected):
+    assert [rule for rule in rules(text) if rule.startswith("code.")] == expected
+
+
+def test_misreading_checks_apply_only_to_text_read_from_an_image():
+    assert run("Cat. No. 11320B", ocr=False) == []
+    assert [flag.rule for flag in run("Cat. No. 11320B", ocr=True)] == ["code.confusable"]

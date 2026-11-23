@@ -13,7 +13,7 @@ class Policy:
     "passed every rule we have", not as a measured accuracy.
     """
 
-    version: str = "0.1"
+    version: str = "0.2"  # 0.2: codes mixing letters and digits are checked (validators/codes.py)
     # Two readings of a line agree when their similarity is at least this and
     # every critical token (numbers, dates, section references, negations) matches.
     min_similarity: float = 0.90
@@ -41,7 +41,19 @@ class Config:
     # are for scanned pages, where every word comes from OCR, and running them on
     # every text page would multiply the time for little gain.
     native_crosscheck_engines: int = 1
+    # A scanned page whose image holds fewer dots per inch than this is read at
+    # `low_res_render_dpi` instead of `dpi`. Measured: on 110-dpi scans, reading at
+    # 300 instead of 200 removed every critical error the rules let through (3 to 0)
+    # and a quarter of all accepted mistakes, for about 1.7 times the reading time.
+    low_res_source_dpi: int = 150
+    low_res_render_dpi: int = 300
     policy: Policy = field(default_factory=Policy)
 
     def sha256(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+
+    def reading_sha256(self) -> str:
+        """The settings that change what is read, leaving out the decision policy: a
+        reading can be decided again under another policy without reading it again."""
+        settings = {key: value for key, value in asdict(self).items() if key != "policy"}
+        return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

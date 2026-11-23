@@ -295,3 +295,34 @@ def test_text_with_no_size_is_not_part_of_the_answer(tmp_path):
     page.save()
     _, truth_path = reference.make(path, "clean", tmp_path / "out")
     assert [w.text for w in reference.load(truth_path).pages[0].words] == ["Publication", "559", "Survivors"]
+
+
+def test_a_stored_reading_is_decided_again_under_the_current_policy(clean_reference, tmp_path):
+    from dataclasses import replace
+
+    from ragnaroq import Policy
+
+    folder, _, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    engines = _readers(truth, LINES, ["Circular No. 7 of 2026.", LINES[1], LINES[2]])
+    cache = tmp_path / "cache"
+    lenient = evaluate.run(folder, engines=engines, cache=cache)
+    strict = evaluate.run(
+        folder, config=replace(Config(), policy=Policy(min_similarity=1.0)), engines=engines, cache=cache
+    )
+    # One reading, stored once, decided twice: the stray full stop passes at 0.90
+    # and not at 1.00.
+    assert len(list(cache.glob("*.json"))) == 1
+    assert (lenient.total.accepted, strict.total.accepted) == (3, 2)
+
+
+def test_deciding_twice_gives_the_same_verdicts(clean_reference):
+    from ragnaroq import policy
+
+    _, pdf, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    engines = _readers(truth, LINES, ["Circular No. 7 of 2026", LINES[1], "Interest is payable on refunds."])
+    document = convert(pdf, engines=engines)
+    before = [(line.status, [flag.rule for flag in line.flags]) for line in document.lines()]
+    policy.decide(document, Config().policy)
+    assert [(line.status, [flag.rule for flag in line.flags]) for line in document.lines()] == before

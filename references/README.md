@@ -45,12 +45,21 @@ Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with t
 | --- | --- | --- | --- | --- | --- | --- |
 | [IRS, 23 November 2026](results/2026-11-23-irs.md) | 4,476 | 72.5% | 6.7% of accepted | **0.15%** of accepted (5 lines) | 27.5% | 57.7% of flagged |
 | [Code table, 23 November 2026](results/2026-11-23-code-table.md) | 348 | 16.1% | 53.6% of accepted | **53.6%** of accepted (30 lines) | 83.9% | 57.5% of flagged |
+| [IRS, with the code rule and low-res reading](results/2026-11-23-irs-code-rule-low-res.md) | 4,468 | 72.3% | 6.2% of accepted | **0** | 27.7% | 58.0% of flagged |
+| [Code table, with the code rule and low-res reading](results/2026-11-23-code-table-code-rule-low-res.md) | 348 | 7.5% | 0 | **0** | 92.5% | 57.1% of flagged |
 
 ### What the runs show
 
-- **Every critical error was one of a single kind:** both readers made the same letter–digit mistake inside a code. Examples are `11320B` read as `113208`, `R28C0` as `R28CO`, and `(b)` as `(6)`. All five on the IRS set came from the low-resolution profile.
-- **The agreement threshold cannot fix these.** The readers agree exactly, so critical errors barely move between 0.80 and 1.00. They need a different signal: a rule for codes that mix letters and digits, a third and different reader, or reading low-resolution pages at a higher resolution.
-- **Most other accepted mistakes are harmless symbols**, such as checkbox drawings read as `[_]`, **or letter slips**, such as `Hf you` for *If you*. A letter slip gets through when the readers differ by a letter or two, because the line is accepted with the first reader's text. Requiring letters to match, or keeping the reading both agree on, is the next experiment.
-- **More than half of what goes to a person is right**: the price of the rules as they stand.
+**The first runs** (policy 0.1) found that every critical error let through was one kind: both readers made the same letter–digit mistake inside a code. Examples are `11320B` read as `113208`, `R28C0` as `R28CO`, and `(b)` as `(6)`. All five on the IRS set came from the low-resolution profile. The agreement threshold cannot catch these, because the readers agree exactly.
+
+**Two changes then brought critical errors to zero on both sets:**
+
+- **The code rule (policy 0.2).** In text read from an image, a code that mixes letters and digits is flagged when it holds a letter readers take for a digit, or a bracket the line never pairs. On the IRS set it costs 10 more lines sent to a person; the code table now goes almost entirely to a person, as a page of `R28C0`-style codes should.
+- **Reading low-resolution scans at 300 dpi.** A scanned page whose image holds under 150 dots per inch is read at 300 instead of 200. On the 110-dpi references this removed the three errors no text rule can see (`113208`, `102200`, `(6)`) and a quarter of all accepted mistakes. It costs about 1.7 times the reading time, for those pages only.
+
+**What is left:**
+
+- **Accepted lines with other mistakes, 6.2% of accepted.** These are mostly harmless symbols, such as checkbox drawings read as `[_]`, or letter slips, such as `Hf you` for *If you*. A letter slip gets through when the readers differ by a letter or two, because the line is accepted with the first reader's text. Requiring letters to match, or keeping the reading both agree on, is the next experiment.
+- **Lines sent to a person although right, 58% of flagged.** That is the price of caution; the next experiments should lower it.
 
 These are synthetic scans of born-digital pages: a best case for real paper. See [the limits](../docs/evaluating.md#limits-of-synthetic-references).

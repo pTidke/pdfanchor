@@ -16,7 +16,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import reference
+from . import policy, reference
 from .config import Config
 from .crosscheck import compare, critical_tokens, normalise
 from .model import Document, Line
@@ -282,9 +282,10 @@ def run(
     """Convert every reference in `folder` (`*.truth.json` next to its `.pdf`) and score it.
 
     `progress`, if given, is called as progress(done, total, name) after each reference.
-    `cache`, if given, is a folder where each conversion is kept, keyed by the PDF's
-    bytes, the settings and the readers' versions. Reading is the slow part, so a
-    change to the scoring alone then takes seconds."""
+    `cache`, if given, is a folder where each reading is kept, keyed by the PDF's
+    bytes, the reading settings and the readers' versions. A stored reading is decided
+    again under the current rules and policy, so a change to the rules, the threshold
+    or the scoring takes seconds, not a new reading."""
     from .ocr import available
     from .pipeline import convert
 
@@ -325,11 +326,13 @@ def _converted(pdf_path: Path, config: Config, engines, readers: str, cache, con
     if cache is None:
         return convert(pdf_path, config=config, engines=engines)
     key = hashlib.sha256(
-        b"|".join([pdf_path.read_bytes(), config.sha256().encode(), readers.encode()])
+        b"|".join([pdf_path.read_bytes(), config.reading_sha256().encode(), readers.encode()])
     ).hexdigest()[:24]
     stored = Path(cache) / f"{pdf_path.stem}.{key}.json"
     if stored.exists():
-        return Document.model_validate_json(stored.read_text(encoding="utf8"))
+        document = Document.model_validate_json(stored.read_text(encoding="utf8"))
+        policy.decide(document, config.policy)
+        return document
     document = convert(pdf_path, config=config, engines=engines)
     stored.parent.mkdir(parents=True, exist_ok=True)
     stored.write_text(document.model_dump_json(), encoding="utf8")

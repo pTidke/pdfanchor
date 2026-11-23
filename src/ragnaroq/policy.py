@@ -19,7 +19,7 @@ def _flag(line: Line, rule: str, message: str, severity="review") -> None:
 
 
 def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
-    line.flags.extend(validators.run(line.text))
+    line.flags.extend(validators.run(line.text, ocr=line.source != "native"))
     others = [r for r in line.readings if r.source != line.source]
     if line.role == "table":
         _flag(line, "table.member", "Part of a table; table structure is never accepted by rule.")
@@ -49,8 +49,14 @@ def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
 
 
 def decide(document: Document, policy: Policy) -> None:
+    """Decide every line and table. Only this decides, so any earlier verdict is
+    cleared first: a stored reading can be decided again under new rules."""
     for page in document.pages:
         image_backed = any(flag.rule == "native.image-backed" for flag in page.flags)
+        for table in page.tables:
+            table.flags = []
+        for line in page.lines:
+            line.flags = []
         for table in page.tables:
             table.flags.append(
                 Flag(
