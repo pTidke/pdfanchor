@@ -2,6 +2,7 @@
 outcome is set up on purpose."""
 
 import json
+import time
 
 import pdfplumber
 import pytest
@@ -75,6 +76,13 @@ def test_a_reference_is_an_image_only_pdf_with_every_word_and_its_box(clean_refe
         assert abs(float(page.width) - A4[0]) < 1 and abs(float(page.height) - A4[1]) < 1
     meta = json.loads(truth_path.read_text())
     assert meta["format"] == reference.FORMAT and meta["profile"]["name"] == "clean"
+
+
+def test_the_same_pdf_always_gives_the_same_reference(three_lines, tmp_path):
+    a, truth_a = reference.make(three_lines, "blurred", tmp_path / "a")
+    time.sleep(1.1)  # a clock in the file would now show a different second
+    b, truth_b = reference.make(three_lines, "blurred", tmp_path / "b")
+    assert a.read_bytes() == b.read_bytes() and truth_a.read_text() == truth_b.read_text()
 
 
 def test_a_tilted_page_moves_each_word_with_it(three_lines, tmp_path):

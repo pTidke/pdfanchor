@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import math
+import time
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -182,6 +183,9 @@ def make(
         append_images=rest,
         resolution=chosen.dpi,
         quality=chosen.jpeg_quality,
+        # A fixed date, so the same input always gives byte-identical files.
+        creationDate=time.gmtime(0),
+        modDate=time.gmtime(0),
     )
     truth_path = out / f"{stem}.truth.json"
     truth_path.write_text(
