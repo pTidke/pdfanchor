@@ -5,7 +5,7 @@
 Today it reads PDFs. The plan is any folder of files, ready for retrieval and served to any model over MCP ([roadmap](docs/roadmap.md)).
 
 ```bash
-pip install ragnaroq          # with a Q. Not released yet: until then, install from this repository
+pip install ragnaroq          # with a Q
 ragnaroq convert notification.pdf --out out/
 ```
 
@@ -49,7 +49,7 @@ The core uses no language model and makes no network call. Model stages planned 
 
 ## Status
 
-This is a working skeleton: small, tested, and end to end. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
+Version 0.1: small, tested, end to end, and measured. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
 
 The goal is wider than PDFs: point ragnaroq at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
 
@@ -59,11 +59,12 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | Text-layer reading with line and table-cell boxes | Working |
 | Scanned pages through Tesseract (command-line program) | Working, tested with the real program |
 | Cross-check of the text layer against an OCR reading | Working |
-| Validators: unmapped characters, malformed dates | Working |
-| Decision policy: accepted / flagged / blocked, with rule ids | Working; **thresholds are not calibrated** |
+| Validators: unmapped characters, malformed dates, codes where a letter can pass for a digit | Working |
+| Decision policy: accepted / flagged / blocked, with rule ids | Working; measured on synthetic scans, not yet on real paper |
 | Markdown and chunk exporters | Working |
 | EasyOCR as a second reader on scanned pages | Working, tested with the real models in CI; English only |
-| Process isolation and resource limits per page | Not ported (lab: `runner.py`, `worker.py`) |
+| Process isolation and resource limits per page | Working: a worker process per document, with a time, memory and character limit per page |
+| Low-resolution scans read at a higher resolution | Working: under 150 dpi, read at 300 |
 | Pinned, hash-checked OCR weights | Partly: EasyOCR checks its own MD5 sums; versions are not pinned yet |
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
@@ -75,7 +76,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 Python 3.12 or newer. For scanned pages, install the Tesseract program and the language data you need (`eng`, `hin`, …).
 
 ```bash
-pip install -e ".[test]"
+pip install ragnaroq
 ```
 
 ```bash
@@ -90,7 +91,7 @@ A second reader for scanned pages, so lines that both readers agree on need no p
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-pip install -e ".[easyocr]"
+pip install "ragnaroq[easyocr]"
 ragnaroq convert scan.pdf --out out/ --easyocr-models ~/easyocr-models --easyocr-download
 ```
 
@@ -105,6 +106,16 @@ document = convert("notification.pdf", config=Config(languages=("eng",)))
 print(document.summary)        # {'lines': 120, 'accepted': 112, 'flagged': 8, ...}
 write(document, "out/")
 ```
+
+### PDFs you did not choose
+
+A crafted or broken PDF can make a parser spin for minutes, use memory until the machine stalls, or crash. Each page's text layer is therefore read, and the page drawn for OCR, in a worker process with limits:
+
+- **Time:** `--page-timeout`, 60 seconds by default.
+- **Memory:** `--page-memory-mb`, 2,048 MB by default.
+- **Characters:** 200,000 per page (`Config.max_page_chars`).
+
+A page that breaks a limit fails alone, flagged with the limit (`budget.page-time`, `budget.page-memory`, `budget.page-glyphs`, `page.crashed`), and the rest of the document is read. A PDF that cannot even be opened within the limits fails as a whole. `--no-isolation` reads in the same process: quicker to start, with no time or memory limit.
 
 ## What comes out
 

@@ -9,11 +9,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, native, policy, structure
+from . import __version__, policy, structure
 from .config import Config
 from .crosscheck import text_inside, to_points
 from .export.chunks import to_chunks, to_jsonl
 from .export.markdown import to_markdown
+from .isolation import BudgetExceeded, PageReader
 from .model import Document, Engine, Flag, Line, Page, Reading, Source
 from .ocr import OcrEngine, OcrLine, available
 
@@ -22,7 +23,7 @@ class ConversionError(Exception):
     """The file could not be processed at all."""
 
 
-def _preflight(data: bytes, config: Config) -> tuple[int, list[Flag]]:
+def _preflight(data: bytes, config: Config) -> tuple[int, list[Flag], list[tuple[float, float]]]:
     from pypdf import PdfReader
     from pypdf.errors import PyPdfError
 
@@ -35,6 +36,12 @@ def _preflight(data: bytes, config: Config) -> tuple[int, list[Flag]]:
         if reader.is_encrypted:
             raise ConversionError("The PDF is encrypted.")
         count = len(reader.pages)
+        sizes = []
+        for page in reader.pages:
+            try:
+                sizes.append((float(page.cropbox.width), float(page.cropbox.height)))
+            except Exception:  # a page whose size cannot be read still gets a place
+                sizes.append((0.0, 0.0))
         root = reader.trailer["/Root"]
         names = root.get("/Names", {})
         names = names.get_object() if hasattr(names, "get_object") else names
@@ -54,7 +61,7 @@ def _preflight(data: bytes, config: Config) -> tuple[int, list[Flag]]:
         flags.append(
             Flag(rule="pdf.form-fields", severity="review", message="Has form fields; their values were not read.")
         )
-    return count, flags
+    return count, flags, sizes
 
 
 def _ocr(engine: OcrEngine, image, config: Config) -> list[tuple]:
@@ -131,22 +138,33 @@ def convert(
 ) -> Document:
     """Convert one PDF. `engines=None` uses whatever OCR engines are installed;
     pass `[]` to read the text layer only."""
-    import pdfplumber
-
     config = config or Config()
     data = source if isinstance(source, bytes) else Path(source).read_bytes()
     name = filename or (Path(source).name if not isinstance(source, bytes) else "document.pdf")
-    count, flags = _preflight(data, config)
+    count, flags, sizes = _preflight(data, config)
     engines = available(config.languages) if engines is None else list(engines)
+    crosscheck = bool(engines and config.native_crosscheck_engines)
     pages: list[Page] = []
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        for number, raw in enumerate(pdf.pages, 1):
+    try:
+        reader = PageReader(data, config)
+    except BudgetExceeded as error:
+        raise ConversionError(error.message) from error
+    with reader:
+        for number in range(1, count + 1):
+            size = sizes[number - 1]
             if number > config.max_pages:
-                pages.append(_failed(raw, number, "budget.page-limit", "Beyond the page budget; not read."))
+                pages.append(_failed(size, number, "budget.page-limit", "Beyond the page budget; not read."))
                 continue
             try:
-                raw, hidden = native.visible(raw)
-                page = native.read_page(raw, number, config)
+                got = reader.read(number, crosscheck)
+            except BudgetExceeded as error:
+                pages.append(_failed(size, number, error.rule, error.message))
+                continue
+            except Exception as error:  # one bad page must not lose the others
+                pages.append(_failed(size, number, "page.failed", str(error) or f"{type(error).__name__} while reading."))
+                continue
+            page, image, hidden = got.page, got.image, got.hidden
+            try:
                 if hidden:
                     page.flags.append(
                         Flag(
@@ -156,19 +174,7 @@ def convert(
                             "are not shown by PDF viewers and were left out.",
                         )
                     )
-                if page.kind == "scanned" or (
-                    page.kind == "native" and engines and config.native_crosscheck_engines
-                ):
-                    dpi = config.dpi
-                    if page.kind == "scanned":
-                        found = native.source_dpi(raw)
-                        if found is not None:
-                            page.metrics["source_dpi"] = round(found, 1)
-                            if found < config.low_res_source_dpi:
-                                dpi = max(dpi, config.low_res_render_dpi)
-                    page.metrics["render_dpi"] = dpi
-                    image = native.render(raw, dpi, config.max_render_pixels)
-                    image.info["dpi"] = (dpi, dpi)
+                if image is not None:
                     if page.kind == "scanned":
                         _scanned(page, image, engines, config)
                     else:
@@ -177,7 +183,8 @@ def convert(
                             _attach(line, readings)
                 pages.append(page)
             except Exception as error:  # one bad page must not lose the others
-                pages.append(_failed(raw, number, "page.failed", f"{type(error).__name__} while reading."))
+                pages.append(_failed(size, number, "page.failed", f"{type(error).__name__} while reading."))
+        readable = reader.page_count
     components = {
         package: importlib.metadata.version(package)
         for package in ("pdfplumber", "pypdf", "pypdfium2", "pydantic", "Pillow")
@@ -198,7 +205,7 @@ def convert(
         pages=pages,
         flags=flags,
     )
-    if len(pages) != count:
+    if readable is not None and readable != count:
         document.flags.append(
             Flag(rule="pdf.page-count-mismatch", severity="blocking", message="Readers disagree on page count.")
         )
@@ -207,11 +214,11 @@ def convert(
     return document
 
 
-def _failed(raw, number: int, rule: str, message: str) -> Page:
+def _failed(size: tuple[float, float], number: int, rule: str, message: str) -> Page:
     return Page(
         number=number,
-        width=float(raw.width),
-        height=float(raw.height),
+        width=size[0],
+        height=size[1],
         kind="failed",
         flags=[Flag(rule=rule, severity="blocking", message=message)],
     )

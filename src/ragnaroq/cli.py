@@ -32,6 +32,13 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--exclude-script", action="append", default=[], help="For example Deva")
     run.add_argument("--chunk-chars", type=int, default=1200)
     run.add_argument("--trust-native", action="store_true", help="Accept clean text-layer lines with no OCR cross-check")
+    run.add_argument("--page-timeout", type=float, help="Seconds a page may take to read (default 60)")
+    run.add_argument("--page-memory-mb", type=int, help="Memory the page reader may use (default 2048)")
+    run.add_argument(
+        "--no-isolation",
+        action="store_true",
+        help="Read pages in this process: quicker to start, with no time or memory limit",
+    )
     run.add_argument(
         "--same-letters",
         action="store_true",
@@ -140,6 +147,12 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(config, policy=replace(config.policy, accept_native_without_crosscheck=True))
     if args.same_letters:
         config = replace(config, policy=replace(config.policy, same_letters=True))
+    if args.page_timeout is not None:
+        config = replace(config, page_timeout_seconds=args.page_timeout)
+    if args.page_memory_mb is not None:
+        config = replace(config, page_memory_mb=args.page_memory_mb)
+    if args.no_isolation:
+        config = replace(config, isolate_pages=False)
     try:
         engines = engines_here(config.languages) if args.ocr == "auto" else []
         document = convert(args.pdf, config=config, engines=engines)
