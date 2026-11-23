@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import shutil
@@ -6,11 +7,16 @@ from pathlib import Path
 
 import pytest
 from conftest import BAD_DATE, BODY, FakeEngine, echo_engine
+from PIL import Image, ImageDraw, ImageFont
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 from ragnaroq import Config, ConversionError, Document, Policy, convert, write
 from ragnaroq.cli import main
 from ragnaroq.export.chunks import to_chunks
 from ragnaroq.export.markdown import to_markdown
+from ragnaroq.ocr import OcrLine
 from ragnaroq.ocr.tesseract import TesseractCli
 from ragnaroq.policy import needs_review
 
@@ -262,3 +268,58 @@ def test_real_tesseract_and_easyocr_agree_on_a_clean_scan(scanned_pdf):
         (line.text, line.readings[1].text, [f.message for f in line.flags]) for line in page.lines
     ]
     assert document.engine.components["ocr:easyocr"]
+
+
+def _scan_at(path, dots_per_inch):
+    """An image-only A4 page scanned at `dots_per_inch`, with one line of text."""
+    width, height = round(A4[0] / 72 * dots_per_inch), round(A4[1] / 72 * dots_per_inch)
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=dots_per_inch // 4)
+    for row in range(6):  # enough ink that the page is not taken for blank
+        draw.text(
+            (width // 8, height // 8 + row * dots_per_inch // 2),
+            "Circular No. 7 of 2026",
+            fill="black",
+            font=font,
+        )
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.drawImage(ImageReader(io.BytesIO(buffer.getvalue())), 0, 0, width=A4[0], height=A4[1])
+    page.save()
+    return path
+
+
+class SizeRecorder:
+    """A reader that reports one line at a fixed place in points, whatever the image size."""
+
+    name = "recorder"
+
+    def __init__(self):
+        self.sizes = []
+
+    def version(self):
+        return "test"
+
+    def read(self, image, languages):
+        self.sizes.append(image.size)
+        dpi = image.info["dpi"][0]
+        return [
+            OcrLine(
+                "Circular No. 7 of 2026", (72 * dpi / 72, 72 * dpi / 72, 300 * dpi / 72, 90 * dpi / 72), 90.0
+            )
+        ]
+
+
+def test_a_low_resolution_scan_is_read_at_a_higher_resolution(tmp_path):
+    low, normal = _scan_at(tmp_path / "low.pdf", 100), _scan_at(tmp_path / "normal.pdf", 200)
+    for path, source, rendered in ((low, 100, 300), (normal, 200, 200)):
+        reader = SizeRecorder()
+        page = convert(path, engines=[reader]).pages[0]
+        assert abs(page.metrics["source_dpi"] - source) < 1
+        assert page.metrics["render_dpi"] == rendered
+        assert abs(reader.sizes[0][0] - A4[0] / 72 * rendered) < 2
+        # Boxes are in points whatever the reading resolution.
+        box = page.lines[0].box
+        assert (round(box.x0), round(box.top), round(box.x1), round(box.bottom)) == (72, 72, 300, 90)

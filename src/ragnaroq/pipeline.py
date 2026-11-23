@@ -58,7 +58,8 @@ def _preflight(data: bytes, config: Config) -> tuple[int, list[Flag]]:
 
 
 def _ocr(engine: OcrEngine, image, config: Config) -> list[tuple]:
-    return [(to_points(line, config.dpi), line) for line in engine.read(image, config.languages)]
+    dpi = image.info.get("dpi", (config.dpi,))[0]
+    return [(to_points(line, dpi), line) for line in engine.read(image, config.languages)]
 
 
 def _others(page: Page, image, engines: Sequence[OcrEngine], config: Config) -> list[tuple[str, list[tuple]]]:
@@ -158,8 +159,16 @@ def convert(
                 if page.kind == "scanned" or (
                     page.kind == "native" and engines and config.native_crosscheck_engines
                 ):
-                    image = native.render(raw, config.dpi, config.max_render_pixels)
-                    image.info["dpi"] = (config.dpi, config.dpi)
+                    dpi = config.dpi
+                    if page.kind == "scanned":
+                        found = native.source_dpi(raw)
+                        if found is not None:
+                            page.metrics["source_dpi"] = round(found, 1)
+                            if found < config.low_res_source_dpi:
+                                dpi = max(dpi, config.low_res_render_dpi)
+                    page.metrics["render_dpi"] = dpi
+                    image = native.render(raw, dpi, config.max_render_pixels)
+                    image.info["dpi"] = (dpi, dpi)
                     if page.kind == "scanned":
                         _scanned(page, image, engines, config)
                     else:

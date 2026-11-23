@@ -68,7 +68,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
 | Large documents in page groups | Not built |
-| Accuracy measured on reference pages | First measurement on public IRS documents: 72.5% of lines accepted, 0.15% of those wrong on a number, date or negation. Codes mixing letters and digits are the weak spot. See [references/](references/README.md) |
+| Accuracy measured on reference pages | On public IRS documents turned into scans: 72.3% of lines accepted, none of them wrong on a number, date or negation. See [references/](references/README.md) |
 
 ## Install and run
 
@@ -133,6 +133,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 - A text-layer line is **accepted** when no validator objects and an independent OCR reading of the rendered page agrees with it: similar overall, and identical on every critical token (anything containing a digit, and negations).
 - A scanned line is **accepted** when two engines agree by the same test.
 - Two engines can agree on the same mistake. In text read from an image, a code that mixes letters and digits is therefore flagged when it holds a letter readers take for a digit: `R28C0` read as `R28CO`, `PAN AABTS1181R`. So is a bracket the line never pairs, as in `4a)` read for `4(a)`. Measured: this cut the critical errors let through from 5 to 3 on the IRS set, and from 30 to 0 on the code table.
+- A scanned page whose image holds under 150 dots per inch is read at 300 instead of 200. On low-resolution scans this removed the critical errors no text rule can see, such as `113208` read for `11320B`.
 - Anything else is **flagged** with the rule that caused it. Tables are always flagged.
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
 - Text is never repaired. A flag says what looks wrong; the text stays as read.
@@ -171,9 +172,9 @@ First results, on public IRS forms and publications turned into scans (clean, lo
 
 | Lines accepted without a person | Accepted but wrong | Accepted and wrong on a number, date or negation |
 | --- | --- | --- |
-| 72.5% | 6.7% | 0.15% |
+| 72.3% | 6.2% | 0 |
 
-A stress test of codes such as `R28C0` does much worse: both readers turn the zero into a letter O, and agree. [references/](references/README.md) has the full results and how to reproduce them.
+The first run let 5 such lines through (0.15%), and a stress test of codes such as `R28C0` let half its accepted lines through wrong. A rule for codes that mix letters and digits, and reading low-resolution scans at 300 dpi, brought both to zero. [references/](references/README.md) has the full results and how to reproduce them.
 
 ## Development
 

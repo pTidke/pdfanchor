@@ -16,6 +16,22 @@ def render(page, dpi: int, max_pixels: int):
     return page.to_image(resolution=dpi, antialias=True).original.convert("RGB")
 
 
+def source_dpi(page) -> float | None:
+    """The resolution of the largest image on the page, in dots per inch as it is
+    drawn: for a scan, how much detail the scanner captured. None if no image."""
+    best, area = None, 0.0
+    for image in page.images:
+        width_pt = float(image["x1"]) - float(image["x0"])
+        height_pt = float(image["bottom"]) - float(image["top"])
+        pixels = image.get("srcsize") or (0, 0)
+        if width_pt <= 0 or height_pt <= 0 or not pixels[0] or not pixels[1]:
+            continue
+        if width_pt * height_pt > area:
+            area = width_pt * height_pt
+            best = min(pixels[0] / (width_pt / 72), pixels[1] / (height_pt / 72))
+    return best
+
+
 def visible(page):
     """The part of the page a PDF viewer shows: the crop box, not the whole sheet.
 
