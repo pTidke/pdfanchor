@@ -13,12 +13,53 @@ time limit.
 """
 
 import io
-import multiprocessing
+import json
+import os
+import pickle
+import queue
+import signal
+import struct
+import subprocess
+import sys
+import threading
+from collections import deque
 from dataclasses import dataclass
 
 from . import native
 from .config import Config
 from .model import Page
+
+# The worker is a new interpreter running this line, never the caller's script. (The
+# `spawn` start method of multiprocessing runs the caller's `__main__` again in the
+# child, which fails for a script read from stdin and recurses for a script without an
+# `if __name__ == "__main__":` guard.) `sys.argv[1]` carries the caller's import path,
+# so the worker imports the same ragnaroq.
+_BOOTSTRAP = (
+    "import json, sys; sys.path[:] = json.loads(sys.argv[1]); "
+    "from ragnaroq.isolation import _serve; _serve()"
+)
+
+# Messages both ways are pickles, each after its length as 8 bytes, big-endian.
+_HEADER = struct.Struct("!Q")
+_GONE = object()  # the worker's replies ended
+
+
+def _send(stream, message) -> None:
+    body = pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
+    stream.write(_HEADER.pack(len(body)))
+    stream.write(body)
+    stream.flush()
+
+
+def _receive(stream):
+    header = stream.read(_HEADER.size)
+    if len(header) < _HEADER.size:
+        raise EOFError
+    (size,) = _HEADER.unpack(header)
+    body = stream.read(size)
+    if len(body) < size:
+        raise EOFError
+    return pickle.loads(body)
 
 
 class BudgetExceeded(Exception):
@@ -62,45 +103,110 @@ def read_one(pdf, number: int, config: Config, crosscheck: bool) -> PageRead:
     return PageRead(page=page, image=image, hidden=hidden)
 
 
-def _worker(conn, data: bytes, config: Config) -> None:
-    if config.page_memory_mb:
-        try:
-            import resource
-
-            limit = config.page_memory_mb * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-        except (ImportError, ValueError, OSError):  # not on every platform
-            pass
-    import pdfplumber
-
+def _limit_memory(megabytes: int) -> None:
+    if not megabytes:
+        return
     try:
+        import resource
+
+        limit = megabytes * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ImportError, ValueError, OSError):  # not on every platform
+        pass
+
+
+def _serve() -> None:
+    """The worker: reads requests on stdin and answers on stdout until stdin closes."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ctrl-C is for the caller, who then stops us
+    requests, replies = os.fdopen(os.dup(0), "rb"), os.fdopen(os.dup(1), "wb")
+    if sys.platform == "win32":
+        import msvcrt
+
+        for stream in (requests, replies):
+            msvcrt.setmode(stream.fileno(), os.O_BINARY)
+    # Whatever a library prints goes to stderr, so it cannot garble the replies.
+    nothing = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(nothing, 0)
+    os.close(nothing)
+    os.dup2(2, 1)
+    try:
+        _answer(requests, replies)
+    except (EOFError, BrokenPipeError):  # the caller has gone
+        pass
+
+
+def _answer(requests, replies) -> None:
+    data, config = _receive(requests)
+    _limit_memory(config.page_memory_mb)
+    try:
+        import pdfplumber
+
         pdf = pdfplumber.open(io.BytesIO(data))
-        conn.send(("ready", len(pdf.pages)))
     except Exception as error:
-        conn.send(("error", type(error).__name__))
+        _send(replies, ("error", type(error).__name__))
         return
     with pdf:
-        while True:
-            request = conn.recv()
-            if request is None:
-                return
+        _send(replies, ("ready", len(pdf.pages)))
+        while (request := _receive(requests)) is not None:
             number, crosscheck = request
             try:
-                conn.send(("ok", read_one(pdf, number, config, crosscheck)))
+                reply = ("ok", read_one(pdf, number, config, crosscheck))
             except BudgetExceeded as error:
-                conn.send(("budget", (error.rule, error.message)))
+                reply = ("budget", (error.rule, error.message))
             except MemoryError:
-                conn.send(
+                reply = (
+                    "budget",
                     (
-                        "budget",
-                        (
-                            "budget.page-memory",
-                            f"Reading the page needed more than {config.page_memory_mb:,} MB; it was stopped.",
-                        ),
-                    )
+                        "budget.page-memory",
+                        f"Reading the page needed more than {config.page_memory_mb:,} MB; it was stopped.",
+                    ),
                 )
             except Exception as error:
-                conn.send(("error", type(error).__name__))
+                reply = ("error", type(error).__name__)
+            _send(replies, reply)
+
+
+def _collect(stream, replies: queue.Queue) -> None:
+    """In the caller, a thread per worker: every reply goes to `replies`, then _GONE."""
+    try:
+        while True:
+            replies.put(_receive(stream))
+    except Exception:  # EOFError when the worker exits; anything else ends it as well
+        pass
+    replies.put(_GONE)
+
+
+def _relay(stream, last: deque) -> None:
+    """Pass on what the worker writes to stderr, keeping its last lines for an error."""
+    for raw in iter(stream.readline, b""):
+        line = raw.decode("utf-8", "replace")
+        if line.strip():
+            last.append(line.strip())
+        try:
+            sys.stderr.write(line)
+        except Exception:  # no stderr (pythonw), or one that was closed
+            pass
+
+
+def _feed(stream, message) -> None:
+    try:
+        _send(stream, message)
+    except OSError:  # the worker died before reading; _collect reports it
+        pass
+
+
+def _how_it_stopped(code: int | None) -> str:
+    if code is None:
+        how = "stopped answering"
+    elif code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = f"signal {-code}"
+        how = f"was killed by {name}, perhaps for running out of memory or by a fault in the PDF parser"
+    else:
+        how = f"exited with code {code}"
+    return how
 
 
 class PageReader:
@@ -112,7 +218,7 @@ class PageReader:
     def __init__(self, data: bytes, config: Config):
         self.data, self.config = data, config
         self.page_count: int | None = None
-        self._pdf = self._process = self._conn = None
+        self._pdf = self._process = None
         if not config.isolate_pages:
             import pdfplumber
 
@@ -124,51 +230,100 @@ class PageReader:
             self._start()
 
     def _start(self) -> None:
-        context = multiprocessing.get_context("spawn")  # never fork a process that may hold threads
-        self._conn, child = context.Pipe()
-        self._process = context.Process(target=_worker, args=(child, self.data, self.config), daemon=True)
-        self._process.start()
-        child.close()
-        if not self._conn.poll(self.config.page_timeout_seconds + 30):
-            self._stop()
-            raise BudgetExceeded("budget.open-time", "The PDF could not be opened within the time limit.")
-        kind, payload = self._recv()
+        if not sys.executable:
+            raise BudgetExceeded(
+                "pdf.open-failed",
+                "No Python interpreter was found to read the pages in. Read them in this "
+                "process instead, with isolation off.",
+            )
+        path = [os.fspath(entry) for entry in sys.path if isinstance(entry, (str, os.PathLike))]
+        # The caller's -O, -X and -W options, passed on as multiprocessing does.
+        flags = getattr(subprocess, "_args_from_interpreter_flags", list)()
+        try:
+            self._process = subprocess.Popen(
+                [sys.executable, *flags, "-c", _BOOTSTRAP, json.dumps(path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as error:
+            raise BudgetExceeded("pdf.open-failed", f"The reader could not be started ({error}).") from None
+        self._replies: queue.Queue = queue.Queue()
+        self._last: deque = deque(maxlen=5)
+        threading.Thread(target=_collect, args=(self._process.stdout, self._replies), daemon=True).start()
+        self._relay = threading.Thread(target=_relay, args=(self._process.stderr, self._last), daemon=True)
+        self._relay.start()
+        # In a thread, so the time limit holds even if the worker never reads it.
+        message = (self.data, self.config)
+        threading.Thread(target=_feed, args=(self._process.stdin, message), daemon=True).start()
+        kind, payload = self._wait(
+            self.config.page_timeout_seconds + 30,
+            ("budget.open-time", "The PDF could not be opened within the time limit."),
+            "before it could open the PDF",
+        )
         if kind != "ready":
             self._stop()
             raise BudgetExceeded("pdf.open-failed", f"The PDF could not be opened ({payload}).")
         self.page_count = payload
 
-    def _recv(self):
+    def _wait(self, seconds: float, late: tuple[str, str], when: str):
+        """The worker's next reply. Raises BudgetExceeded, with `late` after `seconds`,
+        or with page.crashed, saying how and `when`, if the worker stopped."""
         try:
-            return self._conn.recv()
-        except (EOFError, OSError):
+            reply = self._replies.get(timeout=seconds)
+        except queue.Empty:
             self._stop()
-            raise BudgetExceeded(
-                "page.crashed", "The reader stopped while reading this page, perhaps out of memory."
-            ) from None
+            raise BudgetExceeded(*late) from None
+        if reply is not _GONE:
+            return reply
+        process = self._process
+        try:
+            code = process.wait(5)
+        except subprocess.TimeoutExpired:
+            code = None
+        self._relay.join(2)  # its last words, if it wrote any
+        message = f"The reader {_how_it_stopped(code)} {when}."
+        if self._last:
+            message += f" It last wrote: {self._last[-1][:300]}"
+        self._stop()
+        raise BudgetExceeded("page.crashed", message)
 
     def _stop(self) -> None:
-        if self._process is not None:
-            self._process.kill()
-            self._process.join(5)
-        if self._conn is not None:
-            self._conn.close()
-        self._process = self._conn = None
+        process, self._process = self._process, None
+        if process is None:
+            return
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (process.stdin, process.stdout, process.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def read(self, number: int, crosscheck: bool) -> PageRead:
         """Read one page, or raise BudgetExceeded (with the rule to flag) or RuntimeError."""
         if self._pdf is not None:
             return read_one(self._pdf, number, self.config, crosscheck)
-        if self._process is None or not self._process.is_alive():
-            self._start()
-        self._conn.send((number, crosscheck))
-        if not self._conn.poll(self.config.page_timeout_seconds):
+        if self._process is None or self._process.poll() is not None:
             self._stop()
-            raise BudgetExceeded(
+            self._start()
+        try:
+            _send(self._process.stdin, (number, crosscheck))
+        except OSError:  # it died since the last page; _wait says how
+            pass
+        kind, payload = self._wait(
+            self.config.page_timeout_seconds,
+            (
                 "budget.page-time",
-                f"Reading the page took longer than {self.config.page_timeout_seconds:g} seconds; it was stopped.",
-            )
-        kind, payload = self._recv()
+                f"Reading the page took longer than {self.config.page_timeout_seconds:g} seconds; "
+                "it was stopped.",
+            ),
+            "while reading this page",
+        )
         if kind == "ok":
             return payload
         if kind == "budget":
@@ -178,12 +333,8 @@ class PageReader:
     def close(self) -> None:
         if self._pdf is not None:
             self._pdf.close()
-        if self._conn is not None:
-            try:
-                self._conn.send(None)
-            except (OSError, BrokenPipeError):
-                pass
-        self._stop()
+            self._pdf = None
+        self._stop()  # the worker holds nothing that needs a goodbye
 
     def __enter__(self):
         return self
