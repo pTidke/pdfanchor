@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(PROFILES),
         help="How to roughen the pages; repeat for several (default: all)",
     )
+    make.add_argument("--pages", help='Pages of each PDF to use, for example "1-3,7" (default: all)')
     check = sub.add_parser("evaluate", help="Run the engine on references and measure how often it is wrong")
     check.add_argument("folder", help="Folder of references: *.pdf with *.truth.json beside each")
     check.add_argument("--out", required=True, help="Where evaluation.md and evaluation.json go")
@@ -86,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         for pdf in args.pdf:
             for profile in args.profile or sorted(PROFILES):
                 try:
-                    pdf_path, truth_path = reference.make(pdf, profile, args.out)
+                    chosen = reference.page_numbers(args.pages) if args.pages else None
+                    pdf_path, truth_path = reference.make(pdf, profile, args.out, pages=chosen)
                 except (ValueError, OSError) as error:
                     print(json.dumps({"error": str(error), "pdf": pdf, "profile": profile}), file=sys.stderr)
                     return 1

@@ -175,3 +175,15 @@ def test_comparison_forgives_typography_and_nothing_else():
     assert evaluate.canonical("“Quoted” — Text") == evaluate.canonical('"quoted" - text')
     assert evaluate.canonical("31st") != evaluate.canonical("3lst")
     assert evaluate.distance("kitten", "sitting") == 3
+
+
+def test_a_reference_can_be_limited_to_chosen_pages(native_pdf, tmp_path):
+    assert reference.page_numbers("1-3, 7") == {1, 2, 3, 7}
+    with pytest.raises(ValueError):
+        reference.page_numbers("3-1")
+    _, truth_path = reference.make(native_pdf, "clean", tmp_path, pages={2})
+    truth = reference.load(truth_path)
+    assert [(p.number, p.source_page) for p in truth.pages] == [(1, 2)]
+    # Without a selection, every page with a text layer is kept.
+    _, all_pages = reference.make(native_pdf, "clean", tmp_path / "all")
+    assert [p.source_page for p in reference.load(all_pages).pages] == [1, 2]

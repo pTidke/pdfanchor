@@ -104,9 +104,15 @@ def _roughen(image, profile: Profile):
 
 
 def make(
-    source: str | Path, profile: str | Profile, out: str | Path, config: Config | None = None
+    source: str | Path,
+    profile: str | Profile,
+    out: str | Path,
+    config: Config | None = None,
+    pages: set[int] | None = None,
 ) -> tuple[Path, Path]:
     """Write `<name>.<profile>.pdf` and `<name>.<profile>.truth.json` into `out`.
+
+    `pages`, if given, limits it to those page numbers of the original.
 
     Only pages with a usable text layer are kept, since only they have a known
     answer. Returns the two paths."""
@@ -120,7 +126,7 @@ def make(
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     stem = f"{source.stem}.{name}"
-    images, pages = [], []
+    images, kept = [], []
     if not data.startswith(b"%PDF-"):
         raise ValueError(f"{source.name} is not a PDF.")
     try:
@@ -129,6 +135,8 @@ def make(
         raise ValueError(f"{source.name} could not be parsed as a PDF.") from error
     with pdf:
         for number, raw in enumerate(pdf.pages, 1):
+            if pages and number not in pages:
+                continue
             raw, _ = native.visible(raw)
             if native.read_page(raw, number, config).kind != "native":
                 continue
@@ -148,9 +156,9 @@ def make(
                 )
                 words.append(_tilted(word, width, height, chosen.tilt))
             images.append(_roughen(native.render(raw, chosen.dpi, config.max_render_pixels), chosen))
-            pages.append(
+            kept.append(
                 TruthPage(
-                    number=len(pages) + 1,
+                    number=len(kept) + 1,
                     source_page=number,
                     width=width,
                     height=height,
@@ -188,7 +196,7 @@ def make(
                             for w in page.words
                         ],
                     }
-                    for page in pages
+                    for page in kept
                 ],
             },
             ensure_ascii=False,
@@ -197,6 +205,21 @@ def make(
         encoding="utf8",
     )
     return pdf_path, truth_path
+
+
+def page_numbers(spec: str) -> set[int]:
+    """Parse a page selection such as "1-3,7,10-12" into page numbers."""
+    chosen: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        first, _, last = part.partition("-")
+        start, end = int(first), int(last or first)
+        if start < 1 or end < start:
+            raise ValueError(f"Bad page range: {part}")
+        chosen.update(range(start, end + 1))
+    return chosen
 
 
 def load(path: str | Path) -> Truth:

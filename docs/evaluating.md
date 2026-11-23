@@ -26,6 +26,8 @@ The engine can only be scored against text whose correct answer is known. A born
 
 Profiles use no randomness: the same PDF always gives the same reference. Pages without a text layer are left out, since they have no known answer.
 
+`--pages 2,9-10` takes a sample of a long document, so an evaluation stays quick: EasyOCR on a CPU takes tens of seconds a page.
+
 A human-verified reference uses the same truth format: a real scan, with its text typed in or corrected by a person. This is how real paper, stamps, handwriting and show-through will be measured.
 
 ## What `evaluate` reports
