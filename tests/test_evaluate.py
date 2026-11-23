@@ -326,3 +326,22 @@ def test_deciding_twice_gives_the_same_verdicts(clean_reference):
     before = [(line.status, [flag.rule for flag in line.flags]) for line in document.lines()]
     policy.decide(document, Config().policy)
     assert [(line.status, [flag.rule for flag in line.flags]) for line in document.lines()] == before
+
+
+def test_strict_mode_sends_a_one_letter_disagreement_to_a_person(clean_reference):
+    from dataclasses import replace
+
+    from ragnaroq import Policy
+
+    _, pdf, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    engines = _readers(truth, LINES, ["Clrcular No. 7 of 2026", LINES[1], LINES[2]])
+    default = convert(pdf, engines=engines)
+    strict = convert(pdf, engines=engines, config=replace(Config(), policy=Policy(same_letters=True)))
+    first = lambda document: next(line for line in document.lines() if line.text.startswith("Circular"))  # noqa: E731
+    assert first(default).status == "accepted"
+    assert first(strict).status == "flagged"
+    assert "differs in letters" in first(strict).flags[0].message
+    result = evaluate.score(strict, truth)
+    rows = {row["threshold"]: row for row in evaluate.sweep(result.lines, same_letters=True)}
+    assert rows[0.90]["accepted"] == 2

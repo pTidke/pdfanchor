@@ -21,6 +21,10 @@ class Policy:
     accept_native_without_crosscheck: bool = False
     # Accept scanned text read by one engine only.
     accept_single_ocr_reading: bool = False
+    # Two readings must also have the same letters and digits (spacing, punctuation
+    # and symbols may differ). Without it, readings a letter or two apart can agree,
+    # and the line is accepted with the first reader's letters.
+    same_letters: bool = False
 
 
 @dataclass(frozen=True)

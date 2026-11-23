@@ -26,12 +26,13 @@ def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
     if others:
         for other in others:
             result = compare(line.text, other.text)
-            if not result.agrees(policy.min_similarity):
-                detail = (
-                    f"differs on {', '.join(result.only_first + result.only_second)}"
-                    if not result.critical_equal
-                    else f"similarity {result.similarity}"
-                )
+            if not result.agrees(policy.min_similarity, policy.same_letters):
+                if not result.critical_equal:
+                    detail = f"differs on {', '.join(result.only_first + result.only_second)}"
+                elif result.similarity < policy.min_similarity:
+                    detail = f"similarity {result.similarity}"
+                else:
+                    detail = "differs in letters"
                 _flag(
                     line,
                     "crosscheck.disagreement",

@@ -140,6 +140,8 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 
 Two switches loosen this when you have no second reader: `Policy.accept_native_without_crosscheck` and `Policy.accept_single_ocr_reading`. Both are off by default.
 
+One switch tightens it: `Policy.same_letters` (`--same-letters`) makes two readings agree only if they have the same letters and digits, not only if they are similar. It catches letter slips such as `Hf you` for *If you*, at a measured cost: on the IRS set, 82 slips caught for 324 correct lines sent to a person.
+
 The thresholds are starting values, now measured on synthetic scans ([references/](references/README.md)) but not yet on real paper. Read "accepted" as "passed every rule", with the measured error rates as a guide.
 
 ## Layout

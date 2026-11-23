@@ -118,3 +118,12 @@ def test_codes_mixing_letters_and_digits(text, expected):
 def test_misreading_checks_apply_only_to_text_read_from_an_image():
     assert run("Cat. No. 11320B", ocr=False) == []
     assert [flag.rule for flag in run("Cat. No. 11320B", ocr=True)] == ["code.confusable"]
+
+
+def test_readings_a_letter_apart_agree_unless_letters_must_match():
+    slip = compare("Hf you pay tax on time", "If you pay tax on time")
+    assert slip.critical_equal and slip.similarity >= 0.9 and not slip.letters_equal
+    assert slip.agrees(0.9) and not slip.agrees(0.9, same_letters=True)
+    # Symbols and spacing are not letters: a checkbox read as "[_]" by one reader only.
+    boxed = compare("Single [_] Married filing jointly", "Single Married filing jointly")
+    assert boxed.letters_equal
