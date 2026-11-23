@@ -1,6 +1,6 @@
 # Choosing a chunking strategy from `metadata.json`
 
-There is no single best way to cut documents into chunks. A FAQ, a legal notification, a spreadsheet and a slide deck each want something different. pdfanchor picks a strategy per document from what `metadata.json` says about it, writes down the reason, and lets you override it.
+There is no single best way to cut documents into chunks. A FAQ, a legal notification, a spreadsheet and a slide deck each want something different. ragnarok picks a strategy per document from what `metadata.json` says about it, writes down the reason, and lets you override it.
 
 The choice is made in two steps:
 
@@ -13,8 +13,8 @@ The metadata itself comes from LangExtract, which also runs on a local model by 
 
 Each run writes two files next to the metadata:
 
-- `.pdfanchor/chunking-plan.json`: for every document, the strategy, its parameters and the reasons. Each reason names the metadata field that led to it.
-- `.pdfanchor/chunking-plan.md`: the same, for a person to read.
+- `.ragnarok/chunking-plan.json`: for every document, the strategy, its parameters and the reasons. Each reason names the metadata field that led to it.
+- `.ragnarok/chunking-plan.md`: the same, for a person to read.
 
 ```json
 {
@@ -30,7 +30,7 @@ Each run writes two files next to the metadata:
 }
 ```
 
-To override, name a strategy for a file or a pattern in `pdfanchor.toml`:
+To override, name a strategy for a file or a pattern in `ragnarok.toml`:
 
 ```toml
 [chunking]
@@ -79,7 +79,7 @@ The plan takes the first rule that matches. Some rules add to every strategy, wh
 - **Dates and periods.** Tax years, effective dates and similar become filters on the chunk. They are never used as cut points.
 - **References.** A sentence that cites another section or document is never split. The reference is stored as a link, so an answer can follow it.
 - **Mixed scripts.** When scripts are mixed, as with Hindi and English on the same Gazette page, each script gets its own chunks, and only the scripts you choose are indexed.
-- **Doubtful lines.** Lines that pdfanchor flagged or blocked are left out by default. Two settings change this: `include_flagged = "mark"` keeps them with a marker, and `"keep"` keeps them as they are.
+- **Doubtful lines.** Lines that ragnarok flagged or blocked are left out by default. Two settings change this: `include_flagged = "mark"` keeps them with a marker, and `"keep"` keeps them as they are.
 - **Small-to-big.** Every strategy records a parent (the section, the table, the slide), so the search can match a small chunk and the answer can use its parent.
 
 ## Size limits
@@ -98,15 +98,15 @@ Its suggestion is held to these limits:
 - **Agreeing changes nothing.** When it picks the same strategy as the rules, its reasons are added beside the rules' reasons. People usually find these easier to read.
 - **Disagreeing is settled by evidence.**
   - With a questions file, both strategies are built and tested ([Checking the choice](#checking-the-choice)). The better score wins, and a tie goes to the rules.
-  - Without one, the rules' choice stays, and the suggestion waits in the plan for a person to accept it (`pdfanchor plan --accept <file>`, or in the review UI).
+  - Without one, the rules' choice stays, and the suggestion waits in the plan for a person to accept it (`ragnarok plan --accept <file>`, or in the review UI).
 - **Repeatable.** The model is pinned to a version and answers deterministically (temperature 0). Answers are cached by the hash of the metadata and the pages read, so the same folder gives the same plan.
 - **Optional.** Without the extra installed, or with `--no-llm`, the plan is made by the rules alone.
 
-A hosted model can be used instead, like everywhere else in pdfanchor: as an option, with a budget.
+A hosted model can be used instead, like everywhere else in ragnarok: as an option, with a budget.
 
 ## Checking the choice
 
-Rules and the model's suggestion give a sensible start. Questions show whether it works. If you provide a questions file, `pdfanchor evaluate --chunking` builds each candidate strategy for a document and searches with your questions.
+Rules and the model's suggestion give a sensible start. Questions show whether it works. If you provide a questions file, `ragnarok evaluate --chunking` builds each candidate strategy for a document and searches with your questions.
 
 - **Questions file:** each question names the document and the passage that answers it.
 - **Scores:** the found rank and the mean reciprocal rank.

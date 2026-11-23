@@ -45,6 +45,6 @@ jobs:
       - name: Real Tesseract and EasyOCR on a scan
         run: |
           mkdir -p ~/easyocr-models
-          export PDFANCHOR_EASYOCR_MODELS=~/easyocr-models
+          export RAGNAROK_EASYOCR_MODELS=~/easyocr-models
           python -m pytest -q -k easyocr
-          pdfanchor engines --easyocr-models ~/easyocr-models
+          ragnarok engines --easyocr-models ~/easyocr-models
