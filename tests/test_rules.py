@@ -1,10 +1,10 @@
 import pytest
 
-from ragnarok.crosscheck import compare, critical_tokens
-from ragnarok.ocr.tesseract import parse_tsv
-from ragnarok.structure import scripts_of
-from ragnarok.validators import run
-from ragnarok.validators.dates import expected_suffix
+from ragnaroq.crosscheck import compare, critical_tokens
+from ragnaroq.ocr.tesseract import parse_tsv
+from ragnaroq.structure import scripts_of
+from ragnaroq.validators import run
+from ragnaroq.validators.dates import expected_suffix
 
 
 def rules(text):

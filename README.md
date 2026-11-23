@@ -1,17 +1,17 @@
-# RAGnarök
+# RAGnaroq
 
 **The end of bad RAG.** Point it at your files and get text a language model can trust: every line anchored to its place in the source, and judged before it is used.
 
 Today it reads PDFs. The plan is any folder of files, ready for retrieval and served to any model over MCP ([roadmap](docs/roadmap.md)).
 
 ```bash
-pip install ragnarok          # once released; until then, install from this repository
-ragnarok convert notification.pdf --out out/
+pip install ragnaroq          # with a Q. Not released yet: until then, install from this repository
+ragnaroq convert notification.pdf --out out/
 ```
 
 ## RAG 'n' AROQ
 
-In Old Norse, *ragna rök* is "the fate of the gods", and *rök* means fate, or judgement. Passing judgement on every line is what this tool is for. So: **RAG 'n' AROQ**, like rock 'n' roll. RAG, and the four jobs that make it trustworthy. It is spelt with a K and heard with a Q.
+In Old Norse, *ragna rök* is "the fate of the gods", and *rök* means fate, or judgement. Passing judgement on every line is what this tool is for. So: **RAG 'n' AROQ**, like rock 'n' roll. RAG, and the four jobs that make it trustworthy. That is why the name ends in Q: it is Ragnarök, spelt the way the fourth job reads.
 
 | | Job | Norse name | Why the name fits |
 | --- | --- | --- | --- |
@@ -29,9 +29,9 @@ And around them:
 | **Muninn** | The search index | Odin's raven of *memory*. |
 | **Forseti** | The review screen, where a person settles what the readers disagree on | The god who settles every dispute. |
 | **Bifröst** | The MCP server: the bridge from your folder to any model, local or on your server | The rainbow bridge between the worlds. |
-| **Yggdrasil** | The `.ragnarok/` folder that ties a processed folder together | The world tree that connects the nine worlds. |
+| **Yggdrasil** | The `.ragnaroq/` folder that ties a processed folder together | The world tree that connects the nine worlds. |
 
-Norse names are for the big parts; the plumbing has plain names (`ragnarok.ocr`, `ragnarok.policy`). Wherever a Norse name appears, its plain meaning appears with it.
+Norse names are for the big parts; the plumbing has plain names (`ragnaroq.ocr`, `ragnaroq.policy`). Wherever a Norse name appears, its plain meaning appears with it.
 
 ## How it reads a PDF
 
@@ -51,7 +51,7 @@ The core uses no language model and makes no network call. Model stages planned 
 
 This is a working skeleton: small, tested, and end to end. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
 
-The goal is wider than PDFs: point ragnarok at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
+The goal is wider than PDFs: point ragnaroq at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
 
 | Area | State |
 | --- | --- |
@@ -79,11 +79,11 @@ pip install -e ".[test]"
 ```
 
 ```bash
-ragnarok convert notification.pdf --out out/
+ragnaroq convert notification.pdf --out out/
 ```
 
 ```bash
-ragnarok convert gazette.pdf --out out/ --lang eng+hin --exclude-script Deva
+ragnaroq convert gazette.pdf --out out/ --lang eng+hin --exclude-script Deva
 ```
 
 A second reader for scanned pages, so lines that both readers agree on need no person:
@@ -91,7 +91,7 @@ A second reader for scanned pages, so lines that both readers agree on need no p
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[easyocr]"
-ragnarok convert scan.pdf --out out/ --easyocr-models ~/easyocr-models --easyocr-download
+ragnaroq convert scan.pdf --out out/ --easyocr-models ~/easyocr-models --easyocr-download
 ```
 
 The models are fetched once into `--easyocr-models`; leave out `--easyocr-download` afterwards to stay offline. If they are missing, EasyOCR is left out at the start and Tesseract reads alone. EasyOCR confirms scanned pages only: a page with a text layer is cross-checked by the first engine (`Config.native_crosscheck_engines`). A confirming reader that fails on a page flags the page (`ocr.reader-failed`) and the first reader's lines stand.
@@ -99,7 +99,7 @@ The models are fetched once into `--easyocr-models`; leave out `--easyocr-downlo
 Exit code `0` means every line was accepted by rule, `2` means the files were written and something needs a person, `1` means the file could not be processed.
 
 ```python
-from ragnarok import Config, convert, write
+from ragnaroq import Config, convert, write
 
 document = convert("notification.pdf", config=Config(languages=("eng",)))
 print(document.summary)        # {'lines': 120, 'accepted': 112, 'flagged': 8, ...}
@@ -143,7 +143,7 @@ The thresholds are starting values. Until they are measured against human-verifi
 ## Layout
 
 ```
-src/ragnarok/
+src/ragnaroq/
   model.py        output contract (pydantic)        config.py   settings and policy thresholds
   native.py       text layer, tables, rendering     ocr/        engine interface and adapters
   crosscheck.py   compare two readings              validators/ rule checks that raise flags
@@ -169,7 +169,7 @@ ruff check .
 After changing `model.py`, regenerate the schema:
 
 ```bash
-ragnarok schema > schemas/document.schema.json
+ragnaroq schema > schemas/document.schema.json
 ```
 
 ## Licence
