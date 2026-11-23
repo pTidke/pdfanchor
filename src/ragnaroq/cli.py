@@ -1,4 +1,4 @@
-"""Command line: `ragnaroq convert file.pdf --out dir`.
+"""Command line: `ragnaroq convert file.pdf --out dir`, and `reference make` / `evaluate` to measure it.
 
 Exit codes: 0 everything accepted by rule; 2 files were written but something needs a
 person; 1 the file could not be processed.
@@ -8,13 +8,15 @@ import argparse
 import json
 import sys
 from dataclasses import replace
+from pathlib import Path
 
-from . import __version__
+from . import __version__, evaluate, reference
 from .config import Config, Policy
 from .model import Document
 from .ocr import EngineUnavailable, available
 from .pipeline import ConversionError, convert, write
 from .policy import needs_review
+from .reference import PROFILES
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,7 +34,36 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--trust-native", action="store_true", help="Accept clean text-layer lines with no OCR cross-check")
     sub.add_parser("schema", help="Print the JSON schema of document.json")
     listing = sub.add_parser("engines", help="List the OCR engines that can run here")
-    for command in (run, listing):
+    ref = sub.add_parser("reference", help="Make reference PDFs whose correct text is known")
+    ref_sub = ref.add_subparsers(dest="action", required=True)
+    make = ref_sub.add_parser(
+        "make", help="Turn born-digital PDFs into scan-like PDFs, each with a truth file of every word"
+    )
+    make.add_argument("pdf", nargs="+")
+    make.add_argument("--out", required=True)
+    make.add_argument(
+        "--profile",
+        action="append",
+        choices=sorted(PROFILES),
+        help="How to roughen the pages; repeat for several (default: all)",
+    )
+    make.add_argument("--pages", help='Pages of each PDF to use, for example "1-3,7" (default: all)')
+    check = sub.add_parser("evaluate", help="Run the engine on references and measure how often it is wrong")
+    check.add_argument("folder", help="Folder of references: *.pdf with *.truth.json beside each")
+    check.add_argument("--out", required=True, help="Where evaluation.md and evaluation.json go")
+    check.add_argument("--lang", default="eng")
+    check.add_argument("--dpi", type=int, default=200)
+    check.add_argument("--exclude-script", action="append", default=[])
+    check.add_argument("--min-similarity", type=float, help="Agreement threshold to evaluate (default: the policy's)")
+    check.add_argument(
+        "--fresh", action="store_true", help="Read every reference again instead of reusing <out>/cache"
+    )
+    check.add_argument(
+        "--max-critical-false-accepts",
+        type=float,
+        help="Exit 3 when the share of accepted lines wrong on a critical token is above this, e.g. 0.001",
+    )
+    for command in (run, listing, check):
         command.add_argument(
             "--easyocr-models", help="Folder with EasyOCR's model files (the second reader)"
         )
@@ -55,6 +86,42 @@ def main(argv: list[str] | None = None) -> int:
         for engine in engines_here():
             print(engine.name, engine.version())
         return 0
+    if args.command == "reference":
+        made = []
+        for pdf in args.pdf:
+            for profile in args.profile or sorted(PROFILES):
+                try:
+                    chosen = reference.page_numbers(args.pages) if args.pages else None
+                    pdf_path, truth_path = reference.make(pdf, profile, args.out, pages=chosen)
+                except (ValueError, OSError) as error:
+                    print(json.dumps({"error": str(error), "pdf": pdf, "profile": profile}), file=sys.stderr)
+                    return 1
+                made.append({"pdf": str(pdf_path), "truth": str(truth_path)})
+        print(json.dumps({"references": made}))
+        return 0
+    if args.command == "evaluate":
+        config = Config(
+            dpi=args.dpi, languages=tuple(args.lang.split("+")), exclude_scripts=tuple(args.exclude_script)
+        )
+        if args.min_similarity is not None:
+            config = replace(config, policy=replace(config.policy, min_similarity=args.min_similarity))
+        try:
+            report = evaluate.run(
+                args.folder,
+                config=config,
+                engines=engines_here(config.languages),
+                progress=lambda done, total, name: print(f"[{done}/{total}] {name}", file=sys.stderr, flush=True),
+                cache=None if args.fresh else Path(args.out) / "cache",
+            )
+        except (ConversionError, EngineUnavailable, OSError, ValueError) as error:
+            print(json.dumps({"error": str(error)}), file=sys.stderr)
+            return 1
+        files = evaluate.write(report, args.out)
+        rates = report.total.rates()
+        print(json.dumps({"total": rates, "files": {k: str(v) for k, v in files.items()}}))
+        limit = args.max_critical_false_accepts
+        too_high = limit is not None and (rates["critical_false_accept_rate"] or 0) > limit
+        return 3 if too_high else 0
     config = Config(
         dpi=args.dpi,
         languages=tuple(args.lang.split("+")),
