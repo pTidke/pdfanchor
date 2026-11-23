@@ -84,13 +84,13 @@ A master file describing every document in the folder. It is built with Google's
 
 ### Chunking strategies
 
-Chunking is chosen per document from `metadata.json`, by fixed rules, and written to `chunking-plan.json` and `chunking-plan.md` with the reason for each choice.
+Chunking is chosen per document from `metadata.json`: fixed rules first, then a second opinion from a local language model. The result is written to `chunking-plan.json` and `chunking-plan.md` with the reasons for each choice. Where the two disagree, a questions file or a person settles it.
 
 - **Strategies:** single, question-answer, numbered paragraphs, sections, table rows, slides, records, and sentences as the fallback.
 - **Additions for every strategy:** definitions, entity filters, date filters, reference links, small-to-big parents.
 - **Checking:** a questions file can test the choice against the alternatives.
 
-[chunking.md](chunking.md) has the signals, the rules and the size limits.
+[chunking.md](chunking.md) has the signals, the rules, the model's role and the size limits.
 
 ### Index and serve
 

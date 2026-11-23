@@ -2,7 +2,12 @@
 
 There is no single best way to cut documents into chunks. A FAQ, a legal notification, a spreadsheet and a slide deck each want something different. pdfanchor picks a strategy per document from what `metadata.json` says about it, writes down the reason, and lets you override it.
 
-The metadata is extracted with a model (LangExtract). The choice of strategy is not: it is a fixed set of rules over the metadata, so the same metadata always gives the same plan.
+The choice is made in two steps:
+
+1. **Rules first.** A fixed set of rules over the metadata picks a strategy, so there is always a choice that can be explained and repeated.
+2. **A second opinion from a local language model.** It reads the metadata and the start of the document and writes its own suggestion, in plain words, into the plan. It can confirm the rules' choice or propose another, within strict limits ([below](#a-second-opinion-from-a-local-model)).
+
+The metadata itself comes from LangExtract, which also runs on a local model by default.
 
 ## What the plan looks like
 
@@ -83,9 +88,25 @@ The plan takes the first rule that matches. Some rules add to every strategy, wh
 - **Splitting.** A unit above the limit is split between sentences, never inside a word or a sentence, and the previous sentence is repeated at the start of the next chunk.
 - **Minimum.** A chunk smaller than about 200 characters joins its neighbour in the same section, except for a definition or a question-answer pair, which stay whole.
 
+## A second opinion from a local model
+
+After the rules have chosen, a small local language model writes the suggestion part of `chunking-plan.md`. It runs through Ollama, like LangExtract, so it is free and offline. It reads the document's entry in `metadata.json` and the first few pages, and answers in a fixed form: a strategy, its parameters, and the reasons.
+
+Its suggestion is held to these limits:
+
+- **Only known strategies.** It can only pick one of the strategies above, with parameters inside their limits. Anything else is set aside and noted in the plan.
+- **Agreeing changes nothing.** When it picks the same strategy as the rules, its reasons are added beside the rules' reasons. People usually find these easier to read.
+- **Disagreeing is settled by evidence.**
+  - With a questions file, both strategies are built and tested ([Checking the choice](#checking-the-choice)). The better score wins, and a tie goes to the rules.
+  - Without one, the rules' choice stays, and the suggestion waits in the plan for a person to accept it (`pdfanchor plan --accept <file>`, or in the review UI).
+- **Repeatable.** The model is pinned to a version and answers deterministically (temperature 0). Answers are cached by the hash of the metadata and the pages read, so the same folder gives the same plan.
+- **Optional.** Without the extra installed, or with `--no-llm`, the plan is made by the rules alone.
+
+A hosted model can be used instead, like everywhere else in pdfanchor: as an option, with a budget.
+
 ## Checking the choice
 
-Rules give a sensible start. Questions show whether it works. If you provide a questions file, `pdfanchor evaluate --chunking` builds each candidate strategy for a document and searches with your questions.
+Rules and the model's suggestion give a sensible start. Questions show whether it works. If you provide a questions file, `pdfanchor evaluate --chunking` builds each candidate strategy for a document and searches with your questions.
 
 - **Questions file:** each question names the document and the passage that answers it.
 - **Scores:** the found rank and the mean reciprocal rank.
