@@ -1,6 +1,6 @@
 # Porting from the lab
 
-The laboratory is `tools/pdf_pipeline/` in the All About Tax application repository (`pTidke/nextjs-allabouttax`): about 11,000 lines, 328 tests, and a record of what works on real Indian tax documents. `pdfanchor` is the product that comes out of it. Module names below refer to that directory. This page says what moves, in what order, and what stays behind.
+The laboratory is `tools/pdf_pipeline/` in the All About Tax application repository (`pTidke/nextjs-allabouttax`): about 11,000 lines, 328 tests, and a record of what works on real Indian tax documents. `ragnarok` is the product that comes out of it. Module names below refer to that directory. This page says what moves, in what order, and what stays behind.
 
 ## What changes in spirit
 
@@ -17,7 +17,7 @@ The lab never chooses: no engine is selected, nothing is accepted, every result 
 
 ## Order of work
 
-1. **Reference pages first.** Before porting more, build the verified reference set the lab started (`reference_pack.py`, `reference_eval.py`, `benchmark/references/`). Port the CER/WER scorer as `pdfanchor.evaluate`, and add the two numbers that decide whether the policy is safe: the share of accepted lines that are wrong (false accepts), overall and on critical tokens. Calibrate `Policy.min_similarity` from it.
+1. **Reference pages first.** Before porting more, build the verified reference set the lab started (`reference_pack.py`, `reference_eval.py`, `benchmark/references/`). Port the CER/WER scorer as `ragnarok.evaluate`, and add the two numbers that decide whether the policy is safe: the share of accepted lines that are wrong (false accepts), overall and on critical tokens. Calibrate `Policy.min_similarity` from it.
 2. **Isolation and budgets.** Port the per-page subprocess with time, memory, pixel and glyph limits from `runner.py` and `worker.py`. Needed before running on files you did not choose.
 3. **Second reader.** Done in 0.0.3 for English scanned pages: offline models with an explicit download switch, failures confined to the page. Still to do: pin the EasyOCR and model versions, a per-page time limit, and its Hindi model, measured; today Hindi has one reader.
 4. **Pinned Tesseract weights.** `ocr_compare.py` verifies weight hashes and records them. Bring that in, and record the `tessdata` variant in `Engine.components`. Benchmark `tessdata_best` against `tessdata_fast`.
@@ -36,13 +36,13 @@ The lab never chooses: no engine is selected, nothing is accepted, every result 
 | `corpus.py`, `scripts/tax-corpus.ts` | Reads this application's database. |
 | `benchmark/*.json` | Feedback bound to specific official documents. The reference pages can become a public test set if the documents may be redistributed; check first. |
 | `content_scope.py`, `content_classification.py` | Administrative-content rules specific to CBDT circulars ("Copy to", Guard File). These become an optional profile outside the generic engine. |
-| Tax metadata rules (instrument number, commencement, amendments) | Tax-specific. They read `document.json` and live with the application, or in a separate `pdfanchor-india-tax` add-on. |
+| Tax metadata rules (instrument number, commencement, amendments) | Tax-specific. They read `document.json` and live with the application, or in a separate `ragnarok-india-tax` add-on. |
 
 ## Connecting the application
 
 The application should treat the engine as a black box that produces `document.json`:
 
-- The extract workflow runs `pdfanchor convert` for each new or changed official document.
+- The extract workflow runs `ragnarok convert` for each new or changed official document.
 - The staging importer builds a candidate from `document.json`: flagged lines become the review queue; accepted lines need no tick, apart from an audit sample.
 - The release adapter turns accepted extraction plus an accepted tax decision into retrievable items, starting from `chunks.jsonl`.
 - The local repair provider calls the engine's OCR adapters on a crop.

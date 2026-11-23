@@ -1,4 +1,4 @@
-"""Command line: `pdfanchor convert file.pdf --out dir`.
+"""Command line: `ragnarok convert file.pdf --out dir`.
 
 Exit codes: 0 everything accepted by rule; 2 files were written but something needs a
 person; 1 the file could not be processed.
@@ -18,7 +18,7 @@ from .policy import needs_review
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="pdfanchor", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="ragnarok", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("convert", help="Convert a PDF into document.json, document.md and chunks.jsonl")

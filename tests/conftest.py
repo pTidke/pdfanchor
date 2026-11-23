@@ -10,7 +10,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
 
-from pdfanchor.ocr import OcrLine
+from ragnarok.ocr import OcrLine
 
 BODY = [
     "This notification shall come into force on the 1st day of April, 2026.",

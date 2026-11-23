@@ -1,4 +1,4 @@
-"""EasyOCR as an independent second reader. Optional: `pip install pdfanchor[easyocr]`.
+"""EasyOCR as an independent second reader. Optional: `pip install ragnarok[easyocr]`.
 
 A different kind of reader from Tesseract (a neural detector and recogniser), so the
 two rarely make the same mistake in the same place; where they agree, a line can be

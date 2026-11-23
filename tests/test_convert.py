@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 from conftest import BAD_DATE, BODY, FakeEngine, echo_engine
 
-from pdfanchor import Config, ConversionError, Document, Policy, convert, write
-from pdfanchor.cli import main
-from pdfanchor.export.chunks import to_chunks
-from pdfanchor.export.markdown import to_markdown
-from pdfanchor.ocr.tesseract import TesseractCli
-from pdfanchor.policy import needs_review
+from ragnarok import Config, ConversionError, Document, Policy, convert, write
+from ragnarok.cli import main
+from ragnarok.export.chunks import to_chunks
+from ragnarok.export.markdown import to_markdown
+from ragnarok.ocr.tesseract import TesseractCli
+from ragnarok.policy import needs_review
 
 TRUSTING = Config(policy=Policy(accept_native_without_crosscheck=True))
 
@@ -226,10 +226,10 @@ def test_text_pages_are_cross_checked_by_the_first_engine_only(native_pdf):
 
 
 def test_an_engine_whose_models_are_missing_is_left_out_up_front(monkeypatch):
-    from pdfanchor import ocr
-    from pdfanchor.ocr import EngineUnavailable
-    from pdfanchor.ocr.easyocr import EasyOcr
-    from pdfanchor.ocr.tesseract import TesseractCli
+    from ragnarok import ocr
+    from ragnarok.ocr import EngineUnavailable
+    from ragnarok.ocr.easyocr import EasyOcr
+    from ragnarok.ocr.tesseract import TesseractCli
 
     def missing(self, languages):
         raise EngineUnavailable("no models")
@@ -243,13 +243,13 @@ def test_an_engine_whose_models_are_missing_is_left_out_up_front(monkeypatch):
 
 
 @pytest.mark.skipif(
-    not (shutil.which("tesseract") and os.environ.get("PDFANCHOR_EASYOCR_MODELS")),
-    reason="needs tesseract, easyocr and PDFANCHOR_EASYOCR_MODELS",
+    not (shutil.which("tesseract") and os.environ.get("RAGNAROK_EASYOCR_MODELS")),
+    reason="needs tesseract, easyocr and RAGNAROK_EASYOCR_MODELS",
 )
 def test_real_tesseract_and_easyocr_agree_on_a_clean_scan(scanned_pdf):
-    from pdfanchor.ocr.easyocr import EasyOcr
+    from ragnarok.ocr.easyocr import EasyOcr
 
-    second = EasyOcr(os.environ["PDFANCHOR_EASYOCR_MODELS"], download=True)
+    second = EasyOcr(os.environ["RAGNAROK_EASYOCR_MODELS"], download=True)
     second.prepare(("eng",))
     document = convert(scanned_pdf, engines=[TesseractCli(), second])
     page = document.pages[0]

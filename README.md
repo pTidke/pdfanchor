@@ -1,6 +1,39 @@
-# pdfanchor
+# RAGnarök
 
-Give it any PDF. It writes files a language model can read and a vector index can ingest, with every line anchored to its place on the page and a rule-based verdict on whether that line can be trusted.
+**The end of bad RAG.** Point it at your files and get text a language model can trust: every line anchored to its place in the source, and judged before it is used.
+
+Today it reads PDFs. The plan is any folder of files, ready for retrieval and served to any model over MCP ([roadmap](docs/roadmap.md)).
+
+```bash
+pip install ragnarok          # once released; until then, install from this repository
+ragnarok convert notification.pdf --out out/
+```
+
+## RAG 'n' AROQ
+
+In Old Norse, *ragna rök* is "the fate of the gods", and *rök* means fate, or judgement. Passing judgement on every line is what this tool is for. So: **RAG 'n' AROQ**, like rock 'n' roll. RAG, and the four jobs that make it trustworthy. It is spelt with a K and heard with a Q.
+
+| | Job | Norse name | Why the name fits |
+| --- | --- | --- | --- |
+| **A** | **Assess**: every line gets a verdict, *accepted*, *flagged* or *blocked*, by rules. | **The Norns** | Three Norns weave every fate at the roots of Yggdrasil. Three verdicts. |
+| **R** | **Read**: the text layer, and later Word, Excel, PowerPoint, JSON, XML and more. | **Runes** | Odin hung nine nights on the world tree to learn to read the runes. |
+| **O** | **OCR**: read what is only an image, with independent readers checking each other. | **Heimdall** | The watchman of the gods sees a hundred leagues, by night as well as by day. |
+| **Q** | **Questions**: ask your folder and get answers that cite their lines. | **The Völva** | In the *Völuspá*, Odin questions a seeress, and her answer foretells Ragnarök itself. |
+
+And around them:
+
+| Name | Part | Why |
+| --- | --- | --- |
+| **Mímir** | `metadata.json`, the master file of what every document is and says | The keeper of the well of wisdom. Odin gave an eye for one drink. |
+| **Huginn** | A local language model's second opinion (metadata, chunking plan) | Odin's raven of *thought*. |
+| **Muninn** | The search index | Odin's raven of *memory*. |
+| **Forseti** | The review screen, where a person settles what the readers disagree on | The god who settles every dispute. |
+| **Bifröst** | The MCP server: the bridge from your folder to any model, local or on your server | The rainbow bridge between the worlds. |
+| **Yggdrasil** | The `.ragnarok/` folder that ties a processed folder together | The world tree that connects the nine worlds. |
+
+Norse names are for the big parts; the plumbing has plain names (`ragnarok.ocr`, `ragnarok.policy`). Wherever a Norse name appears, its plain meaning appears with it.
+
+## How it reads a PDF
 
 It is an extraction engine, not only OCR. Character recognition is one stage, used when a page has no usable text layer and as an independent check when it does.
 
@@ -12,13 +45,13 @@ PDF ─▶ preflight ─▶ text layer + geometry ─▶ OCR (scan, or cross-che
        chunks.jsonl    for a vector index, with citations
 ```
 
-No language model and no network call is used anywhere in the engine.
+The core uses no language model and makes no network call. Model stages planned on the roadmap are optional and local by default.
 
 ## Status
 
-This is a working skeleton: small, tested, and end to end. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
+This is a working skeleton: small, tested, and end to end. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
 
-The goal is wider than PDFs: point pdfanchor at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
+The goal is wider than PDFs: point ragnarok at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
 
 | Area | State |
 | --- | --- |
@@ -46,11 +79,11 @@ pip install -e ".[test]"
 ```
 
 ```bash
-pdfanchor convert notification.pdf --out out/
+ragnarok convert notification.pdf --out out/
 ```
 
 ```bash
-pdfanchor convert gazette.pdf --out out/ --lang eng+hin --exclude-script Deva
+ragnarok convert gazette.pdf --out out/ --lang eng+hin --exclude-script Deva
 ```
 
 A second reader for scanned pages, so lines that both readers agree on need no person:
@@ -58,7 +91,7 @@ A second reader for scanned pages, so lines that both readers agree on need no p
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[easyocr]"
-pdfanchor convert scan.pdf --out out/ --easyocr-models ~/easyocr-models --easyocr-download
+ragnarok convert scan.pdf --out out/ --easyocr-models ~/easyocr-models --easyocr-download
 ```
 
 The models are fetched once into `--easyocr-models`; leave out `--easyocr-download` afterwards to stay offline. If they are missing, EasyOCR is left out at the start and Tesseract reads alone. EasyOCR confirms scanned pages only: a page with a text layer is cross-checked by the first engine (`Config.native_crosscheck_engines`). A confirming reader that fails on a page flags the page (`ocr.reader-failed`) and the first reader's lines stand.
@@ -66,7 +99,7 @@ The models are fetched once into `--easyocr-models`; leave out `--easyocr-downlo
 Exit code `0` means every line was accepted by rule, `2` means the files were written and something needs a person, `1` means the file could not be processed.
 
 ```python
-from pdfanchor import Config, convert, write
+from ragnarok import Config, convert, write
 
 document = convert("notification.pdf", config=Config(languages=("eng",)))
 print(document.summary)        # {'lines': 120, 'accepted': 112, 'flagged': 8, ...}
@@ -110,7 +143,7 @@ The thresholds are starting values. Until they are measured against human-verifi
 ## Layout
 
 ```
-src/pdfanchor/
+src/ragnarok/
   model.py        output contract (pydantic)        config.py   settings and policy thresholds
   native.py       text layer, tables, rendering     ocr/        engine interface and adapters
   crosscheck.py   compare two readings              validators/ rule checks that raise flags
@@ -136,7 +169,7 @@ ruff check .
 After changing `model.py`, regenerate the schema:
 
 ```bash
-pdfanchor schema > schemas/document.schema.json
+ragnarok schema > schemas/document.schema.json
 ```
 
 ## Licence
