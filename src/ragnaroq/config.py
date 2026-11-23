@@ -45,3 +45,9 @@ class Config:
 
     def sha256(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+
+    def reading_sha256(self) -> str:
+        """The settings that change what is read, leaving out the decision policy: a
+        reading can be decided again under another policy without reading it again."""
+        settings = {key: value for key, value in asdict(self).items() if key != "policy"}
+        return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
