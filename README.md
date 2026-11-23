@@ -68,7 +68,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
 | Large documents in page groups | Not built |
-| Accuracy measured on reference pages | Not done; needed before trusting "accepted" |
+| Accuracy measured on reference pages | Tooling working (`reference make`, `evaluate`); a public reference set is next. See [docs/evaluating.md](docs/evaluating.md) |
 
 ## Install and run
 
@@ -149,12 +149,22 @@ src/ragnaroq/
   crosscheck.py   compare two readings              validators/ rule checks that raise flags
   policy.py       accepted / flagged / blocked      structure.py scripts, headings, paragraphs
   export/         markdown and chunks               pipeline.py convert() and write()
+  reference.py    reference PDFs with known text    evaluate.py how often accepted is wrong
   cli.py
 schemas/document.schema.json   generated; a test keeps it in sync
 tests/                         synthetic PDFs only
 ```
 
 Adding an OCR engine means one class with `name`, `version()` and `read(image, languages)`. Adding a rule means one function from text to flags, listed in `validators/__init__.py`.
+
+## Measuring it
+
+```bash
+ragnaroq reference make notice.pdf --out refs/     # born-digital PDFs become scans with a known answer
+ragnaroq evaluate refs/ --out results/            # how often an accepted line is wrong
+```
+
+The report counts accepted lines that are wrong, and those wrong on a number, a date or a negation. It also counts flagged lines that were right, and shows how each agreement threshold trades one against the other. [docs/evaluating.md](docs/evaluating.md) explains the method and its limits.
 
 ## Development
 
