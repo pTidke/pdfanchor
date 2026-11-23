@@ -47,6 +47,7 @@ Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with t
 | [Code table, 23 November 2026](results/2026-11-23-code-table.md) | 348 | 16.1% | 53.6% of accepted | **53.6%** of accepted (30 lines) | 83.9% | 57.5% of flagged |
 | [IRS, with the code rule and low-res reading](results/2026-11-23-irs-code-rule-low-res.md) | 4,468 | 72.3% | 6.2% of accepted | **0** | 27.7% | 58.0% of flagged |
 | [Code table, with the code rule and low-res reading](results/2026-11-23-code-table-code-rule-low-res.md) | 348 | 7.5% | 0 | **0** | 92.5% | 57.1% of flagged |
+| [IRS, strict mode (`--same-letters`)](results/2026-11-23-irs-same-letters.md) | 4,468 | 62.8% | 3.5% of accepted | **0** | 37.2% | 62.7% of flagged |
 
 ### What the runs show
 
@@ -59,7 +60,9 @@ Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with t
 
 **What is left:**
 
-- **Accepted lines with other mistakes, 6.2% of accepted.** These are mostly harmless symbols, such as checkbox drawings read as `[_]`, or letter slips, such as `Hf you` for *If you*. A letter slip gets through when the readers differ by a letter or two, because the line is accepted with the first reader's text. Requiring letters to match, or keeping the reading both agree on, is the next experiment.
+- **Accepted lines with other mistakes, 6.2% of accepted.** About half are harmless symbols, such as checkbox drawings read as `[_]`. The other half are letter slips, such as `Hf you` for *If you*. A letter slip gets through when the readers differ by a letter or two, because the line is accepted with the first reader's text.
+
+  **Strict mode (`--same-letters`)** requires the readers to have the same letters and digits, not only to be similar. It cuts the letter slips let through from 90 to 8. But in most lines where the readers differ by a letter, the first reader was right and the second slipped. So strict mode sends 324 correct lines to a person to catch 82 slips, and the accepted share falls from 72.3% to 62.8%. It is an option for word-perfect needs, such as legal text and citations, not the default. A third reader would settle such lines by majority instead.
 - **Lines sent to a person although right, 58% of flagged.** That is the price of caution; the next experiments should lower it.
 
 These are synthetic scans of born-digital pages: a best case for real paper. See [the limits](../docs/evaluating.md#limits-of-synthetic-references).

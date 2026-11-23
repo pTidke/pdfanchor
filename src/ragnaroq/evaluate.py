@@ -70,13 +70,15 @@ class LineScore:
     eligible: bool  # passes every rule except the agreement threshold
     min_similarity: float | None  # lowest similarity to the other readings
     critical_agree: bool  # the readings agree on every critical token
+    letters_agree: bool = True  # the readings have the same letters and digits
 
-    def accepted_at(self, threshold: float) -> bool:
+    def accepted_at(self, threshold: float, same_letters: bool = False) -> bool:
         return (
             self.eligible
             and self.critical_agree
             and self.min_similarity is not None
             and self.min_similarity >= threshold
+            and (self.letters_agree or not same_letters)
         )
 
 
@@ -181,6 +183,7 @@ def _line_score(line: Line, words: list[Word]) -> LineScore:
         eligible=bool(others) and not any(flag.rule != "crosscheck.disagreement" for flag in line.flags),
         min_similarity=min((a.similarity for a in agreements), default=None),
         critical_agree=all(a.critical_equal for a in agreements),
+        letters_agree=all(a.letters_equal for a in agreements),
     )
 
 
@@ -226,11 +229,11 @@ def score(
     return result
 
 
-def sweep(lines: list[LineScore], thresholds=THRESHOLDS) -> list[dict]:
+def sweep(lines: list[LineScore], thresholds=THRESHOLDS, same_letters: bool = False) -> list[dict]:
     """What the agreement threshold would change, with every other rule kept as it is."""
     rows = []
     for threshold in thresholds:
-        accepted = [line for line in lines if line.accepted_at(threshold)]
+        accepted = [line for line in lines if line.accepted_at(threshold, same_letters)]
         rows.append(
             {
                 "threshold": threshold,
@@ -318,7 +321,7 @@ def run(
         min_similarity=config.policy.min_similarity,
         files=files,
         total=total,
-        sweep=sweep([line for f in files for line in f.lines]),
+        sweep=sweep([line for f in files for line in f.lines], same_letters=config.policy.same_letters),
     )
 
 

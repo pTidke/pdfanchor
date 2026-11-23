@@ -11,7 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import __version__, evaluate, reference
-from .config import Config, Policy
+from .config import Config
 from .model import Document
 from .ocr import EngineUnavailable, available
 from .pipeline import ConversionError, convert, write
@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--exclude-script", action="append", default=[], help="For example Deva")
     run.add_argument("--chunk-chars", type=int, default=1200)
     run.add_argument("--trust-native", action="store_true", help="Accept clean text-layer lines with no OCR cross-check")
+    run.add_argument(
+        "--same-letters",
+        action="store_true",
+        help="Strict: two readings must have the same letters and digits, not only be similar",
+    )
     sub.add_parser("schema", help="Print the JSON schema of document.json")
     listing = sub.add_parser("engines", help="List the OCR engines that can run here")
     ref = sub.add_parser("reference", help="Make reference PDFs whose correct text is known")
@@ -55,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--dpi", type=int, default=200)
     check.add_argument("--exclude-script", action="append", default=[])
     check.add_argument("--min-similarity", type=float, help="Agreement threshold to evaluate (default: the policy's)")
+    check.add_argument("--same-letters", action="store_true", help="Evaluate the strict agreement rule")
     check.add_argument(
         "--fresh", action="store_true", help="Read every reference again instead of reusing <out>/cache"
     )
@@ -105,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.min_similarity is not None:
             config = replace(config, policy=replace(config.policy, min_similarity=args.min_similarity))
+        if args.same_letters:
+            config = replace(config, policy=replace(config.policy, same_letters=True))
         try:
             report = evaluate.run(
                 args.folder,
@@ -129,7 +137,9 @@ def main(argv: list[str] | None = None) -> int:
         chunk_chars=args.chunk_chars,
     )
     if args.trust_native:
-        config = replace(config, policy=Policy(accept_native_without_crosscheck=True))
+        config = replace(config, policy=replace(config.policy, accept_native_without_crosscheck=True))
+    if args.same_letters:
+        config = replace(config, policy=replace(config.policy, same_letters=True))
     try:
         engines = engines_here(config.languages) if args.ocr == "auto" else []
         document = convert(args.pdf, config=config, engines=engines)

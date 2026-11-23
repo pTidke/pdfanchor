@@ -16,6 +16,12 @@ def normalise(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
+def letters(text: str) -> str:
+    """Only the letters and digits, case-folded: two readings that differ in nothing
+    else differ only in spacing, punctuation or symbols."""
+    return "".join(ch for ch in normalise(text) if ch.isalnum())
+
+
 def critical_tokens(text: str) -> Counter:
     """Tokens where one wrong character changes the meaning: anything with a digit
     (amounts, dates, section and instrument numbers) and negations."""
@@ -38,8 +44,14 @@ class Agreement:
     only_first: tuple[str, ...]
     only_second: tuple[str, ...]
 
-    def agrees(self, min_similarity: float) -> bool:
-        return self.critical_equal and self.similarity >= min_similarity
+    letters_equal: bool = True  # the same letters and digits, whatever the spacing and punctuation
+
+    def agrees(self, min_similarity: float, same_letters: bool = False) -> bool:
+        return (
+            self.critical_equal
+            and self.similarity >= min_similarity
+            and (self.letters_equal or not same_letters)
+        )
 
 
 def compare(first: str, second: str) -> Agreement:
@@ -49,6 +61,7 @@ def compare(first: str, second: str) -> Agreement:
         critical_equal=a == b,
         only_first=tuple(sorted((a - b).elements())),
         only_second=tuple(sorted((b - a).elements())),
+        letters_equal=letters(first) == letters(second),
     )
 
 
