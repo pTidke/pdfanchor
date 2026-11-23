@@ -51,6 +51,16 @@ class Config:
     # and a quarter of all accepted mistakes, for about 1.7 times the reading time.
     low_res_source_dpi: int = 150
     low_res_render_dpi: int = 300
+    # Safety limits for PDFs you did not choose (see isolation.py). Each page's text
+    # layer is read, and the page drawn, in a worker process that is stopped after
+    # `page_timeout_seconds` and may use at most `page_memory_mb`; a page with more
+    # than `max_page_chars` characters is not read. A page that breaks a limit fails
+    # alone, flagged with the limit. `isolate_pages` off reads pages in this process:
+    # quicker to start, with no time or memory limit.
+    isolate_pages: bool = True
+    page_timeout_seconds: float = 60.0
+    page_memory_mb: int = 2048
+    max_page_chars: int = 200_000
     policy: Policy = field(default_factory=Policy)
 
     def sha256(self) -> str:
@@ -59,5 +69,7 @@ class Config:
     def reading_sha256(self) -> str:
         """The settings that change what is read, leaving out the decision policy: a
         reading can be decided again under another policy without reading it again."""
-        settings = {key: value for key, value in asdict(self).items() if key != "policy"}
+        # The safety limits decide whether a page is read, not how: left out too.
+        ignored = {"policy", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
+        settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

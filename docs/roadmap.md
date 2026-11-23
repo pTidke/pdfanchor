@@ -108,7 +108,7 @@ Decisions are written to `review.json` and become readings by a person. They als
 
 | Version | Theme | What it delivers |
 | --- | --- | --- |
-| **0.1** | Trustworthy PDFs | A human-verified reference set and `ragnaroq evaluate` (false-accept rate, overall and on critical tokens); thresholds calibrated from it; per-page time and memory limits; pinned OCR models; first release on PyPI. |
+| **0.1** ✓ | Trustworthy PDFs | Done in 0.1.0: reference sets with a known answer and `ragnaroq evaluate` (false-accept rate, overall and on critical tokens); a first measurement on public IRS documents; the code rule and low-resolution reading that brought critical errors to zero on it; per-page time, memory and character limits; on PyPI. Moved on: human-verified real scans, and pinned OCR model versions. |
 | 0.2 | Folders and formats | `ragnaroq index ./folder` writing `.ragnaroq/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
 | 0.3 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
 | 0.4 | Repair and review | A local OCR model as a third reader on doubtful lines (hosted models optional); the local review UI. |
