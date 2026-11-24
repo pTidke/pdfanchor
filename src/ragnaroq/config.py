@@ -37,6 +37,20 @@ class Policy:
 
 
 @dataclass(frozen=True)
+class ThirdReaderSettings:
+    """How disputed scanned lines are redrawn and cropped for the third reader (third.py)."""
+
+    dpi: int = 300
+    pad_points: float = 2.0  # added left and right of the line's box, none above or below
+    frame_pixels: int = 12  # white border around the crop
+    max_new_tokens: int = 160
+    line_seconds: float = 20.0
+    # Wall-clock limit for the whole stage; lines not reached are left for a person.
+    # Not part of the cache key: it changes how many lines are read, not what a crop reads as.
+    budget_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class Config:
     dpi: int = 200
     languages: tuple[str, ...] = ("eng",)
@@ -71,6 +85,7 @@ class Config:
     page_memory_mb: int = 2048
     max_page_chars: int = 200_000
     policy: Policy = field(default_factory=Policy)
+    third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 
     def sha256(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
@@ -79,6 +94,6 @@ class Config:
         """The settings that change what is read, leaving out the decision policy: a
         reading can be decided again under another policy without reading it again."""
         # The safety limits decide whether a page is read, not how: left out too.
-        ignored = {"policy", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
+        ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
         settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

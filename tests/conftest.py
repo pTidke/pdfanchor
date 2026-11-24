@@ -99,3 +99,27 @@ def cropped_pdf(tmp_path_factory):
     page.drawString(72, 200, "Hidden text below the visible page area.")
     page.save()
     return path
+
+
+class FakeLineReader:
+    """A third reader that returns, or raises, the next prepared answer for each crop."""
+
+    name = "fake"
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.crops = []
+        self.prepared = 0
+
+    def version(self):
+        return "test"
+
+    def prepare(self):
+        self.prepared += 1
+
+    def read_line(self, image, max_new_tokens, seconds):
+        self.crops.append(image)
+        answer = self.answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
