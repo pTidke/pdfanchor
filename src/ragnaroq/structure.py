@@ -58,6 +58,10 @@ def apply(document: Document, config: Config) -> None:
                 paragraph += 1
             line.paragraph = paragraph
             previous = line
-    document.title = next(
-        (line.text.strip() for line in document.lines() if line.role == "heading"), None
-    )
+    document.title = title(document)
+
+
+def title(document: Document) -> str | None:
+    """The first heading's text. Call it again after a decision that can change a line's
+    text (a third reading can), since `apply` runs before the decision."""
+    return next((line.text.strip() for line in document.lines() if line.role == "heading"), None)

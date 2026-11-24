@@ -15,12 +15,11 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import policy, reference
+from . import policy, reference, structure
 from .config import Config
 from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
 from .model import SCHEMA_VERSION, Document, Line
 from .reference import Truth, Word
-from .structure import scripts_of
 
 MARGIN = 3.0  # points around a line's box that still count as inside
 THRESHOLDS = (0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00)
@@ -125,7 +124,7 @@ class FileScore:
 
 
 def _excluded(word: Word, scripts: tuple[str, ...]) -> bool:
-    found = scripts_of(word.text)
+    found = structure.scripts_of(word.text)
     return bool(found) and set(found) <= set(scripts)
 
 
@@ -333,6 +332,7 @@ def run(
                 Path(cache) / "third" if cache else None,
             )
             policy.decide(document, config.policy)
+            document.title = structure.title(document)  # a settled line may now carry other text
             document.engine.components[f"vlm:{third_reader.name}"] = third_reader.version()
         names.update(
             {

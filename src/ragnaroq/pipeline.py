@@ -219,6 +219,7 @@ def convert(
     if third_reader is not None:
         third.read_disputed(document, data, config, third_reader, third_cache)
         policy.decide(document, config.policy)
+    document.title = structure.title(document)  # a settled line may now carry other text
     return document
 
 

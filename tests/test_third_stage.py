@@ -185,3 +185,17 @@ def test_a_corrected_line_reaches_the_markdown(scanned_pdf):
     document = convert(scanned_pdf, engines=[first, second], third_reader=FakeLineReader([DUE]))
     markdown = to_markdown(document)
     assert DUE in markdown and MISREAD not in markdown
+
+
+def test_a_corrected_title_line_corrects_the_document_title(scanned_pdf):
+    from ragnaroq.export.chunks import to_chunks
+
+    heading, misread = "SCHEDULE 7 of 2026", "SCHEDULE 7 of 2028"
+    first = FakeEngine("one", [(misread, BOX_A), (DUE, BOX_B)])
+    second = FakeEngine("two", [(heading, BOX_A), (DUE, BOX_B)])
+    document = convert(scanned_pdf, engines=[first, second], third_reader=FakeLineReader([heading]))
+    title = document.pages[0].lines[0]
+    assert title.role == "heading" and title.text == heading and title.resolution.text_from == "ocr:two"
+    assert document.title == heading
+    (chunk,) = to_chunks(document, Config())
+    assert chunk["context"] == [heading] and misread not in chunk["embedding_text"]
