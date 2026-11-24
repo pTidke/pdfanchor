@@ -96,6 +96,32 @@ def _tilted(word: Word, page_width: float, page_height: float, degrees: float) -
     return Word(word.text, word.x0 + shift_x, word.top + shift_y, word.x1 + shift_x, word.bottom + shift_y)
 
 
+def _joined(words: list[Word]) -> list[Word]:
+    """Join words a reader sees as one, such as a label "20b" whose space the PDF overprints.
+
+    A word merges into the one before it when their tops are within 1 pt and the visible
+    gap between them is at most a tenth of the line height (slight overlaps included): a
+    reader sees no space there. The merged text has no space and its box is the union."""
+    joined: list[Word] = []
+    for word in words:
+        last = joined[-1] if joined else None
+        if (
+            last
+            and abs(word.top - last.top) <= 1.0
+            and word.x0 - last.x1 <= 0.1 * (last.bottom - last.top)
+        ):
+            joined[-1] = Word(
+                last.text + word.text,
+                min(last.x0, word.x0),
+                min(last.top, word.top),
+                max(last.x1, word.x1),
+                max(last.bottom, word.bottom),
+            )
+        else:
+            joined.append(word)
+    return joined
+
+
 def _roughen(image, profile: Profile):
     from PIL import Image, ImageFilter
 
@@ -165,9 +191,9 @@ def make(
                     float(found["x1"]) - origin_x,
                     float(found["bottom"]) - origin_y,
                 )
-                (words if found.get("upright", True) else ignored).append(
-                    _tilted(word, width, height, chosen.tilt)
-                )
+                (words if found.get("upright", True) else ignored).append(word)
+            words = [_tilted(w, width, height, chosen.tilt) for w in _joined(words)]
+            ignored = [_tilted(w, width, height, chosen.tilt) for w in ignored]
             images.append(_roughen(native.render(raw, chosen.dpi, config.max_render_pixels), chosen))
             kept.append(
                 TruthPage(

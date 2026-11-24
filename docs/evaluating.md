@@ -15,7 +15,7 @@ The engine can only be scored against text whose correct answer is known. A born
 
 1. Renders the page to an image, as a scanner would, roughened by a profile.
 2. Saves the images as an image-only PDF: `<name>.<profile>.pdf`. It has no text layer, so the engine has to read it like any scan.
-3. Writes `<name>.<profile>.truth.json`, with every word of the original text and its box on the page. The boxes move with the page when the profile tilts it.
+3. Writes `<name>.<profile>.truth.json`, with every word of the original text and its box on the page. The boxes move with the page when the profile tilts it. Words printed with no visible gap between them (a label like "20b", whose space the PDF overprints) are one word in the truth file, as a reader sees them.
 
 | Profile | What it does to the page |
 | --- | --- |

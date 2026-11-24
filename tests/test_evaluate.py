@@ -78,6 +78,25 @@ def test_a_reference_is_an_image_only_pdf_with_every_word_and_its_box(clean_refe
     assert meta["format"] == reference.FORMAT and meta["profile"]["name"] == "clean"
 
 
+def test_a_label_printed_without_a_gap_is_one_word(tmp_path):
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    path = tmp_path / "label.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Helvetica-Bold", 8)
+    page.drawString(72, 700, "20")
+    # The "b" starts where the overprinted space starts, so no gap is visible.
+    page.drawString(72 + stringWidth("20", "Helvetica-Bold", 8) - stringWidth(" ", "Helvetica-Bold", 8), 700, " b")
+    page.drawString(120, 700, "Other business property")
+    page.drawString(72, 600, "Line 20 b")
+    page.save()
+    pdf, truth = reference.make(path, "clean", tmp_path)
+    texts = [w.text for w in reference.load(truth).pages[0].words]
+    assert "20b" in texts and "b" not in texts[: texts.index("20b") + 2]
+    assert ["Other", "business", "property"] == texts[texts.index("20b") + 1 : texts.index("20b") + 4]
+    assert texts[-3:] == ["Line", "20", "b"]  # a visible space still separates words
+
+
 def test_the_same_pdf_always_gives_the_same_reference(three_lines, tmp_path):
     a, truth_a = reference.make(three_lines, "blurred", tmp_path / "a")
     time.sleep(1.1)  # a clock in the file would now show a different second
