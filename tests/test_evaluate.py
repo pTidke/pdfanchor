@@ -395,3 +395,18 @@ def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_ref
     assert "## Third reader" in evaluate.to_markdown(report)
     held = run("something else", tmp_path / "fresh")
     assert held.total.third_held_no_match == 1 and held.total.third_settled == 0
+
+
+def test_the_threshold_sweep_compares_a_corrected_line_by_its_first_reading(clean_reference):
+    from conftest import FakeLineReader
+
+    _, pdf, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    misread = "The due date is 31st July 2028."
+    engines = _readers(truth, [LINES[0], misread, LINES[2]], LINES)
+    document = convert(pdf, engines=engines, third_reader=FakeLineReader([LINES[1]]))
+    (due,) = [line for line in evaluate.score(document, truth).lines if line.settled]
+    assert due.read == LINES[1] and due.status == "accepted"
+    # The sweep is the two-reader rule: the first reader's 2028 still disagrees.
+    assert due.min_similarity < 1.0 and not due.critical_agree
+    assert all(row["accepted"] == 0 for row in evaluate.sweep([due]))

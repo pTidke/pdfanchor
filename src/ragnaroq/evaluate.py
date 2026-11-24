@@ -12,6 +12,7 @@ differently from the original is still compared with exactly the words it covers
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -173,7 +174,10 @@ def _line_score(line: Line, words: list[Word]) -> LineScore:
     ]
     prefix = f"{policy.THIRD}."
     held = next((flag.rule.removeprefix(prefix) for flag in line.flags if flag.rule.startswith(prefix)), None)
-    agreements = [compare(line.text, other.text) for other in others]
+    # The first reader's own reading: after a correction `text` holds another reader's,
+    # which would agree with itself at every threshold.
+    first = unicodedata.normalize("NFC", line.raw)
+    agreements = [compare(first, other.text) for other in others]
     return LineScore(
         page=line.page,
         line=line.id,
@@ -451,6 +455,9 @@ def to_markdown(report: Report, examples: int = 20) -> str:
         "## The agreement threshold",
         "",
         "Every other rule kept as it is. A higher threshold accepts fewer lines: fewer mistakes get through, and more work goes to a person.",
+        "",
+        "The table shows the two-reader rule only: a line the third reader settled is compared by "
+        "its first reader's reading.",
         "",
         "| Threshold | Accepted | Accepted but wrong | Wrong on a critical token | Sent to a person |",
         "| --- | --- | --- | --- | --- |",

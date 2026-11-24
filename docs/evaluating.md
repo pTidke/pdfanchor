@@ -53,7 +53,7 @@ Reading is the slow part, so each reading is kept in `<out>/cache`, keyed by the
 | True words no line covered | Text the engine never found. |
 | Lines with no true text under them | Text the engine made up, such as noise read as letters. |
 
-The **threshold table** re-decides every line at agreement thresholds from 0.80 to 1.00, with every other rule kept as it is. It shows the trade between mistakes let through and work sent to a person. The policy's thresholds are set from this table, not guessed.
+The **threshold table** re-decides every line at agreement thresholds from 0.80 to 1.00, with every other rule kept as it is. It shows the trade between mistakes let through and work sent to a person. The policy's thresholds are set from this table, not guessed. It shows the two-reader rule only: a line the third reader settled is compared by its first reader's reading, as if the third reader were off.
 
 `--max-critical-false-accepts 0.001` makes the command exit with code 3 when the critical false-accept rate is above that share. That lets a CI job fail when a change makes the engine less safe.
 
