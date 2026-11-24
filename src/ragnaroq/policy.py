@@ -13,7 +13,18 @@ import unicodedata
 
 from . import validators
 from .config import Policy
-from .crosscheck import canonical, compare, letters, shares_words, without_marks
+from .crosscheck import (
+    LAYOUT_MARKS,
+    LEADERS,
+    NEGATIONS,
+    TYPOGRAPHY,
+    canonical,
+    compare,
+    critical_tokens,
+    letters,
+    shares_words,
+    without_marks,
+)
 from .model import Document, Flag, Line, Resolution
 
 VLM = "vlm:"  # sources starting with this are third readings (a local vision model)
@@ -55,6 +66,16 @@ def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
         line.status = "flagged" if line.flags else "accepted"
 
 
+def _exact_critical(text: str):
+    """Critical tokens without compatibility folding: "80¹" is not "801"."""
+    return critical_tokens(LEADERS.sub(" ", text.translate(TYPOGRAPHY)), fold=False)
+
+
+def _numbers(text: str):
+    """The critical tokens made only of digits and number punctuation."""
+    return [t for t in _exact_critical(text).elements() if re.fullmatch(r"[\d,.\-/%$()]*\d[\d,.\-/%$()]*", t)]
+
+
 def _third_reader(line: Line, neighbours: list[str], policy: Policy) -> None:
     """Settle a disputed scanned line when the third reading matches one OCR reading
     exactly (layout marks, case, spacing and typography aside). The first refusal adds
@@ -66,28 +87,53 @@ def _third_reader(line: Line, neighbours: list[str], policy: Policy) -> None:
         for r in line.readings
         if r.source != line.source and not r.source.startswith(VLM)
     ]
+    head = f'{vlm.source} reads "{seen}"'
 
     def refuse(name: str, message: str) -> None:
-        _flag(line, f"{THIRD}.{name}", message)
+        _flag(line, f"{THIRD}.{name}", f"{head}; {message}")
 
-    wanted = canonical(seen)
-    match = next(((src, t) for src, t in candidates if letters(t) and canonical(t) == wanted), None)
+    wanted, wanted_critical = canonical(seen), _exact_critical(seen)
+    match = next(
+        (
+            (src, t)
+            for src, t in candidates
+            if letters(t) and canonical(t) == wanted and _exact_critical(t) == wanted_critical
+        ),
+        None,
+    )
     if match is None or not letters(seen):
-        refuse("no-match", f'{vlm.source} reads "{seen}"; no other reading matches it exactly.')
+        refuse("no-match", "no other reading matches it exactly.")
         return
     source, text = match
-    if validators.run(text, ocr=True) or validators.run(seen, ocr=True):
-        refuse("validators", f'{vlm.source} and {source} agree on "{text}", but a validator flags it.')
+    fired = [
+        (who, f.rule) for who, t in ((source, text), (vlm.source, seen)) for f in validators.run(t, ocr=True)
+    ]
+    if fired:
+        names = ", ".join(f"{rule} on {who}" for who, rule in fired)
+        refuse("validators", f'agrees with {source} on "{text}", but a validator flags it ({names}).')
         return
     size = max(len(letters(text)), len(letters(seen)))
     limit = policy.third_reader_letter_ratio * size
+    own = _exact_critical(text)
+    marked = LAYOUT_MARKS.search(vlm.text) is not None
     for other, other_text in candidates:
-        if canonical(other_text) != wanted and len(letters(other_text)) > limit:
-            refuse("omission", f'{other} reads "{other_text}", which has more text than {vlm.source}.')
-            return
-    if any(re.search(r"\w_\w", t) for t in [seen, *(t for _, t in candidates)]):
-        refuse("underscore", "A reading has an underscore inside a word; it may be a misread character.")
+        if canonical(other_text) == wanted:
+            continue
+        theirs = _exact_critical(other_text)
+        if len(letters(other_text)) > limit:
+            why = "has more text"
+        elif any(w in NEGATIONS and w not in own for w in theirs):
+            why = "has a negation"
+        elif marked and len(_numbers(other_text)) > len(_numbers(text)):
+            why = "has a number where a mark was removed"
+        else:
+            continue
+        refuse("omission", f'{other} reads "{other_text}", which {why} that {source} does not.')
         return
+    for who, t in [(vlm.source, seen), *candidates]:
+        if re.search(r"[^\W_]_[^\W_]", t):
+            refuse("underscore", f"{who} has an underscore inside a word; it may be a misread character.")
+            return
     if any(shares_words(text, n, policy.third_reader_neighbour_words) for n in neighbours):
         refuse("neighbour", f'"{text}" shares words with a neighbouring line; it may run into it.')
         return

@@ -69,20 +69,23 @@ def test_no_exact_match_keeps_the_line_for_a_person():
 
 def test_an_agreeing_reading_must_pass_the_validators():
     (line,) = decided(("The earlier order dated 31 March, 2025 is withdrawn.", BAD_DATE, BAD_DATE))
-    assert "crosscheck.third-reader.validators" in {f.rule for f in line.flags}
+    flag = next(f for f in line.flags if f.rule == "crosscheck.third-reader.validators")
+    assert BAD_DATE in flag.message and "date.ordinal-suffix" in flag.message
 
 
 def test_a_reader_that_saw_more_text_holds_the_line_back():
     seen = "Designee Designee's Phone Personal identification"
     more = "Designee Designee's name Phone no. Personal identification number (PIN)"
     (line,) = decided((seen, more, seen))
-    assert "crosscheck.third-reader.omission" in {f.rule for f in line.flags}
+    flag = next(f for f in line.flags if f.rule == "crosscheck.third-reader.omission")
+    assert seen in flag.message
 
 
 def test_an_underscore_inside_a_word_holds_the_line_back():
     rows = ("See 2026-02 IRB#NOT-2026-3.", "See 2026-02_IRBANOT 2026-3.", "See 2026-02 IRB#NOT-2026-3.")
     (line,) = decided(rows)
-    assert "crosscheck.third-reader.underscore" in {f.rule for f in line.flags}
+    flag = next(f for f in line.flags if f.rule == "crosscheck.third-reader.underscore")
+    assert rows[2] in flag.message and "ocr:two" in flag.message
 
 
 def test_text_that_belongs_to_the_next_line_holds_the_line_back():
@@ -92,7 +95,8 @@ def test_text_that_belongs_to_the_next_line_holds_the_line_back():
         ("Personal name on your social security", longer, longer),
         ("card? If not, to ensure you get", "card? If not, to ensure you get", None),
     )
-    assert "crosscheck.third-reader.neighbour" in {f.rule for f in lines[1].flags}
+    flag = next(f for f in lines[1].flags if f.rule == "crosscheck.third-reader.neighbour")
+    assert longer in flag.message
 
 
 def test_an_empty_reading_never_settles_a_line():
@@ -121,6 +125,52 @@ def test_deciding_again_starts_from_the_first_reader():
     line.readings = [r for r in line.readings if not r.source.startswith("vlm:")]
     policy.decide(document, Policy())
     assert line.text == MISREAD and line.status == "flagged" and line.resolution is None
+
+
+def rules(line):
+    return {f.rule for f in line.flags}
+
+
+def test_a_mark_inside_a_word_is_content():
+    (line,) = decided(
+        ("Pay tax of Rs. ,000 by July", "Pay tax of Rs. 5,000 by July", "Pay tax of Rs. ■,000 by July")
+    )
+    assert line.status == "flagged" and line.resolution is None
+    assert "crosscheck.third-reader.no-match" in rules(line)
+
+
+def test_a_superscript_is_not_the_digit_it_looks_like():
+    rows = [
+        ("Deduction under section 801 is allowed.", "Deduction under section 80 is allowed.",
+         "Deduction under section 80¹ is allowed."),
+        ("Total income 12,5001", "Total income 12,500", "Total income 12,500¹"),
+    ]
+    for row in rows:
+        (line,) = decided(row)
+        assert line.status == "flagged" and line.resolution is None
+        assert "crosscheck.third-reader.no-match" in rules(line)
+
+
+def test_a_negation_only_one_reader_saw_holds_the_line_back():
+    rows = ("You are required to file.", "You are not required to file.", "You are required to file.")
+    (line,) = decided(rows)
+    assert "crosscheck.third-reader.omission" in rules(line)
+
+
+def test_a_mark_where_a_reader_saw_a_number_holds_the_line_back():
+    (line,) = decided(
+        (
+            "Enter the amount from line of the form.",
+            "Enter the amount from line 1 of the form.",
+            "Enter the amount from line | of the form.",
+        )
+    )
+    assert "crosscheck.third-reader.omission" in rules(line)
+
+
+def test_a_fill_rule_is_not_an_underscore_in_a_word():
+    (line,) = decided(("Name ____________ Date of birth", "Name Date of birth", "Name Date of birth"))
+    assert line.status == "accepted" and line.resolution.text_from == "ocr:one"
 
 
 def test_shares_words():
