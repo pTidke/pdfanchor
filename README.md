@@ -49,13 +49,13 @@ The core uses no language model and makes no network call. Model stages planned 
 
 ## Status
 
-Version 0.1: small, tested, end to end, and measured. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
+Version 0.2: small, tested, end to end, and measured. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
 
 The goal is wider than PDFs: point ragnaroq at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
 
 | Area | State |
 | --- | --- |
-| Output contract and JSON schema | Working, versioned `0.1.0` |
+| Output contract and JSON schema | Working, versioned `0.2.0` |
 | Text-layer reading with line and table-cell boxes | Working |
 | Scanned pages through Tesseract (command-line program) | Working, tested with the real program |
 | Cross-check of the text layer against an OCR reading | Working |
@@ -65,11 +65,12 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | EasyOCR as a second reader on scanned pages | Working, tested with the real models in CI; English only |
 | Process isolation and resource limits per page | Working: a worker process per document, with a time, memory and character limit per page |
 | Low-resolution scans read at a higher resolution | Working: under 150 dpi, read at 300 |
-| Pinned, hash-checked OCR weights | Partly: EasyOCR checks its own MD5 sums; versions are not pinned yet |
+| A third reader for lines the two readers dispute | Working, optional (`--third-reader`, `ragnaroq[vlm]`); scanned lines only; about 2.5 seconds a disputed line on a CPU |
+| Pinned, hash-checked OCR weights | Partly: the third reader's files are pinned to a revision and checked by SHA-256; EasyOCR checks its own MD5 sums and is not pinned yet |
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
 | Large documents in page groups | Not built |
-| Accuracy measured on reference pages | On public IRS documents turned into scans: 72.3% of lines accepted, none of them wrong on a number, date or negation. See [references/](references/README.md) |
+| Accuracy measured on reference pages | On public IRS documents turned into scans (0.1): 72.3% of lines accepted, none wrong on a number, date or negation. On a held-out set of five other IRS documents, 6 accepted lines were wrong on a number, with or without the third reader. In 5, both OCR readers read a "1" as "|" and agree. This is a known limitation, not fixed in 0.2.0; a follow-up is planned. See [references/](references/README.md) |
 
 ## Install and run
 
@@ -156,6 +157,15 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
 - Text is never repaired. A flag says what looks wrong; the text stays as read.
 
+- **Third reader (optional, `--third-reader`).** A scanned line the two engines disagree on is read again, as a crop, by a local model. The line is accepted only if the model's reading exactly matches one of the two engines' readings and four checks pass:
+  - neither matching reading trips a validator;
+  - no other reading has clearly more letters, which would mean both missed small print;
+  - no reading has an underscore inside a word or number, which an underline can hide;
+  - the line does not repeat four words of the line before or after it, which happens when its box covers two printed lines.
+
+  Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. It costs about 2.5 seconds a disputed line on a CPU.
+- **Known limit.** Both engines can read a "1" as "|" and agree, and the line is then accepted before the third reader is consulted. Of the six accepted lines wrong on a number on the held-out set, with or without the third reader, five were this. A follow-up is planned.
+
 Two switches loosen this when you have no second reader: `Policy.accept_native_without_crosscheck` and `Policy.accept_single_ocr_reading`. Both are off by default.
 
 One switch tightens it: `Policy.same_letters` (`--same-letters`) makes two readings agree only if they have the same letters and digits, not only if they are similar. It catches letter slips such as `Hf you` for *If you*, at a measured cost: on the IRS set, 82 slips caught for 324 correct lines sent to a person.
@@ -188,13 +198,21 @@ ragnaroq evaluate refs/ --out results/            # how often an accepted line i
 
 The report counts accepted lines that are wrong, and those wrong on a number, a date or a negation. It also counts flagged lines that were right, and shows how each agreement threshold trades one against the other. [docs/evaluating.md](docs/evaluating.md) explains the method and its limits.
 
-First results, on public IRS forms and publications turned into scans (clean, low-res, blurred, tilted), read by Tesseract and EasyOCR:
+On the held-out set (five other IRS documents, 3,712 lines), without and with the third reader:
+
+| | Without | With |
+| --- | --- | --- |
+| Lines sent to a person | 1,072 | 625 |
+| Accepted but wrong | 12.5% | 11.3% |
+| Accepted with a wrong number, date or negation | 6 | 6 |
+
+First results (0.1), on public IRS forms and publications turned into scans (clean, low-res, blurred, tilted), read by Tesseract and EasyOCR:
 
 | Lines accepted without a person | Accepted but wrong | Accepted and wrong on a number, date or negation |
 | --- | --- | --- |
 | 72.3% | 6.2% | 0 |
 
-The first run let 5 such lines through (0.15%), and a stress test of codes such as `R28C0` let half its accepted lines through wrong. A rule for codes that mix letters and digits, and reading low-resolution scans at 300 dpi, brought both to zero. [references/](references/README.md) has the full results and how to reproduce them.
+The first run let 5 such lines through (0.15%), and a stress test of codes such as `R28C0` let half its accepted lines through wrong. A rule for codes that mix letters and digits, and reading low-resolution scans at 300 dpi, brought both to zero on those sets; the held-out set above shows the limit of that result. [references/](references/README.md) has the full results and how to reproduce them.
 
 ## Development
 
