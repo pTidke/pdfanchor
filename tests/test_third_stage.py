@@ -166,3 +166,22 @@ def test_a_drawing_error_without_isolation_keeps_the_first_decisions(scanned_pdf
     (flag,) = document.pages[0].flags
     assert flag.rule == "third-reader.unread" and "Render exceeds the pixel budget" in flag.message
     assert reader.crops == []
+
+
+def test_convert_settles_a_disputed_scanned_line(scanned_pdf):
+    first = FakeEngine("one", [(TITLE, BOX_A), (DUE, BOX_B)])
+    second = FakeEngine("two", [(TITLE, BOX_A), (MISREAD, BOX_B)])
+    document = convert(scanned_pdf, engines=[first, second], third_reader=FakeLineReader([DUE]))
+    due = document.pages[0].lines[1]
+    assert due.status == "accepted" and due.resolution.agreed == ["ocr:one", "vlm:fake"]
+    assert document.engine.components["vlm:fake"] == "test"
+
+
+def test_a_corrected_line_reaches_the_markdown(scanned_pdf):
+    from ragnaroq.export.markdown import to_markdown
+
+    first = FakeEngine("one", [(TITLE, BOX_A), (MISREAD, BOX_B)])
+    second = FakeEngine("two", [(TITLE, BOX_A), (DUE, BOX_B)])
+    document = convert(scanned_pdf, engines=[first, second], third_reader=FakeLineReader([DUE]))
+    markdown = to_markdown(document)
+    assert DUE in markdown and MISREAD not in markdown

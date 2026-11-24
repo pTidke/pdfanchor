@@ -335,3 +335,12 @@ def test_a_resolution_records_which_readings_agreed(native_pdf):
     again = Document.model_validate_json(document.model_dump_json())
     assert again.schema_version == "0.2.0"
     assert next(again.lines()).resolution.text_from == "ocr:two"
+
+
+def test_a_missing_model_stops_the_command_before_reading(scanned_pdf, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("ragnaroq.pipeline.PageReader", None)  # any read would fail loudly
+    code = main(
+        ["convert", str(scanned_pdf), "--out", str(tmp_path / "out"),
+         "--third-reader", "--vlm-models", str(tmp_path / "none")]
+    )
+    assert code == 1 and "--vlm-download" in json.loads(capsys.readouterr().err)["error"]

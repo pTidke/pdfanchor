@@ -9,14 +9,14 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import __version__, policy, structure
+from . import __version__, policy, structure, third
 from .config import Config
 from .crosscheck import text_inside, to_points
 from .export.chunks import to_chunks, to_jsonl
 from .export.markdown import to_markdown
 from .isolation import BudgetExceeded, PageReader
 from .model import Document, Engine, Flag, Line, Page, Reading, Source
-from .ocr import OcrEngine, OcrLine, available
+from .ocr import LineReader, OcrEngine, OcrLine, available
 
 
 class ConversionError(Exception):
@@ -135,9 +135,12 @@ def convert(
     config: Config | None = None,
     engines: Sequence[OcrEngine] | None = None,
     filename: str | None = None,
+    third_reader: LineReader | None = None,
+    third_cache: str | Path | None = None,
 ) -> Document:
     """Convert one PDF. `engines=None` uses whatever OCR engines are installed;
-    pass `[]` to read the text layer only."""
+    pass `[]` to read the text layer only. A `third_reader` reads the scanned lines the
+    first two readers disagree on, and the verdict is decided again with its reading."""
     config = config or Config()
     data = source if isinstance(source, bytes) else Path(source).read_bytes()
     name = filename or (Path(source).name if not isinstance(source, bytes) else "document.pdf")
@@ -192,6 +195,8 @@ def convert(
     components["python"] = platform.python_version()
     for engine in engines:
         components[f"ocr:{engine.name}"] = engine.version()
+    if third_reader is not None:
+        components[f"vlm:{third_reader.name}"] = third_reader.version()
     document = Document(
         source=Source(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), filename=name, pages=count),
         engine=Engine(
@@ -211,6 +216,9 @@ def convert(
         )
     structure.apply(document, config)
     policy.decide(document, config.policy)
+    if third_reader is not None:
+        third.read_disputed(document, data, config, third_reader, third_cache)
+        policy.decide(document, config.policy)
     return document
 
 

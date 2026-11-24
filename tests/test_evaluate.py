@@ -354,3 +354,25 @@ def test_a_cache_from_another_schema_version_is_read_again(clean_reference, tmp_
     monkeypatch.setattr(evaluate, "SCHEMA_VERSION", "0.1.0")
     evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
     assert len(list((tmp_path / "cache").glob("*.json"))) == 2
+
+
+def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_reference, tmp_path):
+    from conftest import FakeLineReader
+
+    folder, _, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    misread = "The due date is 31st July 2028."
+
+    def run(answer, cache):
+        engines = _readers(truth, [LINES[0], misread, LINES[2]], LINES)
+        return evaluate.run(
+            folder, engines=engines, cache=cache, third_reader=FakeLineReader([answer])
+        )
+
+    cache = tmp_path / "cache"
+    report = run(LINES[1], cache)
+    assert report.total.third_settled == 1 and report.total.third_settled_wrong == 0
+    assert len(list((cache / "third").iterdir())) == 1
+    assert "## Third reader" in evaluate.to_markdown(report)
+    held = run("something else", tmp_path / "fresh")
+    assert held.total.third_held_no_match == 1 and held.total.third_settled == 0
