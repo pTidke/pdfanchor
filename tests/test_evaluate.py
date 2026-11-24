@@ -86,7 +86,8 @@ def test_a_label_printed_without_a_gap_is_one_word(tmp_path):
     page.setFont("Helvetica-Bold", 8)
     page.drawString(72, 700, "20")
     # The "b" starts where the overprinted space starts, so no gap is visible.
-    page.drawString(72 + stringWidth("20", "Helvetica-Bold", 8) - stringWidth(" ", "Helvetica-Bold", 8), 700, " b")
+    space = stringWidth(" ", "Helvetica-Bold", 8)
+    page.drawString(72 + stringWidth("20", "Helvetica-Bold", 8) - space, 700, " b")
     page.drawString(120, 700, "Other business property")
     page.drawString(72, 600, "Line 20 b")
     page.save()
