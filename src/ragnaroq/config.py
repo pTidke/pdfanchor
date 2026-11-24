@@ -43,8 +43,11 @@ class ThirdReaderSettings:
     dpi: int = 300
     pad_points: float = 2.0  # added left and right of the line's box, none above or below
     frame_pixels: int = 12  # white border around the crop
+    # The token limit is what stops a model that repeats itself, and it is deterministic.
+    # The time limit is only a safety net: it is wall-clock time, so on a slow or busy
+    # machine it could change which lines get a reading.
     max_new_tokens: int = 160
-    line_seconds: float = 20.0
+    line_seconds: float = 120.0
     # Wall-clock limit for the whole stage; lines not reached are left for a person.
     # Not part of the cache key: it changes how many lines are read, not what a crop reads as.
     budget_seconds: float | None = None

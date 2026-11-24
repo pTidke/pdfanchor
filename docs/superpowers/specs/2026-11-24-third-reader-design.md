@@ -84,7 +84,7 @@ Running after the first decision, and not inside the page loop, keeps two things
 - **Number format.** bfloat16 on a CPU that supports it natively (AMX or AVX-512 BF16), otherwise float32. A GPU when one is present. On the test machine bfloat16 was 2.5 times faster than float32, with the same output.
 - **Crop.** The line's exact box with 2 points of padding left and right, none above or below, and a 12-pixel white frame. Wider crops let neighbouring lines bleed in, and the model then transcribed them too.
 - **Limits per line.**
-  - At most 160 new tokens and 20 seconds (setting).
+  - At most 160 new tokens and 20 seconds (setting) (changed to 120 seconds before release; see the plan ledger ruling R13).
   - A line that hits either limit, or whose output repeats itself, gets no reading and stays with a person.
 - **Limit per document.** An optional time budget, off by default. When it runs out, the remaining lines stay flagged, and the document carries a flag saying how many were not read.
 - **Order.** The model is loaded once per run, before the first crop, so a missing or broken model fails at the start, not on every line.

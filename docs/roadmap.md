@@ -69,7 +69,7 @@ The PDF rules that exist today stay first. Lines that remain doubtful get one mo
 - **The model:** PaddleOCR-VL-1.6, shipped in 0.2.0 as an optional third reader. It has about 0.9 billion parameters, an Apache 2.0 licence and 109 languages including Hindi, and it runs on a CPU. It is still to be measured against GLM-OCR on our reference set.
 - **What it sees:** only the crop of each doubtful line, so it runs on the few lines that need it, not on everything. Reading whole pages is not planned: it takes minutes a page on a CPU. A comparison with GLM-OCR comes later.
 - **How its reading is used:** its reading is one more independent reading, like Tesseract's and EasyOCR's, and the existing rule decides. A line is accepted only if the validators pass and two independent readings agree on every critical token (numbers, dates, negations). The model is never trusted on its own, and the text is never rewritten.
-- **Reproducibility:** the weights are pinned to a revision and checked, and decoding is deterministic. The same file gives the same result.
+- **Reproducibility:** the weights are pinned to a revision and checked, and decoding is greedy, so with the same model, number format and versions the same crop gives the same reading. The per-line time limit and the optional budget are wall-clock limits, so on a slow or busy machine they can change which lines are read.
 - **If it still disagrees,** the line stays flagged for a person in the review UI (0.5).
 
 A hosted model (Gemini, OpenAI and others) can be switched in instead for people without the compute. It is optional, with a budget per run and the cost of every call recorded.

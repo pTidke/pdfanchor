@@ -63,7 +63,7 @@ The **threshold table** re-decides every line at agreement thresholds from 0.80 
 ragnaroq evaluate refs/ --out results/ --easyocr-models ~/easyocr-models --third-reader
 ```
 
-`--third-reader` adds a local model (PaddleOCR-VL-1.6, from `ragnaroq[vlm]`) that reads the crop of each scanned line Tesseract and EasyOCR disagree on. A fixed rule then settles the line or keeps it for a person; see "How it decides" in the [README](../README.md#how-it-decides). The model is chosen with `--vlm-models DIR` and fetched only with `--vlm-download`. `--third-reader-budget SECONDS` limits the time it may spend in all.
+`--third-reader` adds a local model (PaddleOCR-VL-1.6, from `ragnaroq[vlm]`) that reads the crop of each scanned line Tesseract and EasyOCR disagree on. A fixed rule then settles the line or keeps it for a person; see "How it decides" in the [README](../README.md#how-it-decides). The model is chosen with `--vlm-models DIR` and fetched only with `--vlm-download`. `--third-reader-budget SECONDS` limits the time it may spend in all. That budget, like the limit of 120 seconds on each line, is wall-clock time, so on a slow or busy machine it can change which lines are read.
 
 It changes `evaluate` in three ways:
 

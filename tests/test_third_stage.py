@@ -51,12 +51,12 @@ def test_a_crop_is_the_line_box_at_300_dpi_in_a_white_frame(scanned_pdf):
 
 def test_a_line_the_reader_gives_up_on_keeps_its_first_decision(scanned_pdf):
     document = disputed(scanned_pdf)
-    reader = FakeLineReader([LineUnreadable("stopped after 20 seconds")])
+    reader = FakeLineReader([LineUnreadable("stopped after 120 seconds")])
     third.read_disputed(document, scanned_pdf.read_bytes(), Config(), reader)
     assert not any(r.source.startswith("vlm:") for line in document.lines() for r in line.readings)
     (flag,) = document.pages[0].flags
     assert flag.rule == "third-reader.unread" and flag.severity == "review"
-    assert "p1-l2" in flag.message and "stopped after 20 seconds" in flag.message
+    assert "p1-l2" in flag.message and "stopped after 120 seconds" in flag.message
 
 
 def test_any_other_failure_is_flagged_by_type_and_not_cached(scanned_pdf, tmp_path):
@@ -106,7 +106,7 @@ def test_readings_and_refusals_are_cached_by_crop(scanned_pdf, tmp_path):
 
     other = tmp_path / "refusals"
     document, fresh = disputed(scanned_pdf), disputed(scanned_pdf)
-    refusing = FakeLineReader([LineUnreadable("stopped after 20 seconds")])
+    refusing = FakeLineReader([LineUnreadable("stopped after 120 seconds")])
     third.read_disputed(document, data, Config(), refusing, cache=other)
     again = FakeLineReader([AssertionError("read again")])
     third.read_disputed(fresh, data, Config(), again, cache=other)

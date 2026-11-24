@@ -32,11 +32,11 @@ def test_no_code_from_the_model_repository_is_fetched():
 
 
 def test_an_unfinished_line_is_given_up():
-    check_finished(40, 160, 3.0, 20.0)  # no error
-    with pytest.raises(LineUnreadable, match="20 seconds"):
-        check_finished(40, 160, 20.0, 20.0)
+    check_finished(40, 160, 3.0, 120.0)  # no error
+    with pytest.raises(LineUnreadable, match="120 seconds"):
+        check_finished(40, 160, 120.0, 120.0)
     with pytest.raises(LineUnreadable, match="160 tokens"):
-        check_finished(160, 160, 3.0, 20.0)
+        check_finished(160, 160, 3.0, 120.0)
 
 
 @pytest.mark.skipif(
@@ -48,4 +48,4 @@ def test_the_real_model_reads_a_clean_line():
     ImageDraw.Draw(image).text((20, 30), text, fill="black", font=ImageFont.load_default(size=48))
     reader = PaddleOcrVl(model_dir=os.environ["RAGNAROQ_VLM_MODELS"])
     reader.prepare()
-    assert reader.read_line(image, 160, 20.0) == text
+    assert reader.read_line(image, 160, 120.0) == text

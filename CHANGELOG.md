@@ -18,7 +18,7 @@ A third reader for the scanned lines the two OCR readers still dispute.
   - `--vlm-models DIR` says where the model files live.
   - `--vlm-download` lets missing files be fetched. Without it a missing model stops the run at the start.
   - `--third-reader-budget SECONDS` limits the time it may spend in all; lines not read stay flagged.
-- **Its cost in time.** About 2.5 seconds for each disputed line on a 4-core CPU with no GPU (3.5 seconds on the 0.1 IRS set, 8.7 on the code table), and nothing for lines the two readers agree on. Each line is limited to 160 new tokens and 20 seconds. Readings are cached, so `evaluate` decides them again in seconds.
+- **Its cost in time.** About 2.5 seconds for each disputed line on a 4-core CPU with no GPU (3.5 seconds on the 0.1 IRS set, 8.7 on the code table), and nothing for lines the two readers agree on. Each line is limited to 160 new tokens, which stops a model that repeats itself, and to 120 seconds, a safety net only. Readings are cached, so `evaluate` decides them again in seconds.
 - **Third reader section in the evaluation report:** lines settled, how many were wrong, how many wrong on a number, date or negation, and how many each check held back.
 
 ### Changed
