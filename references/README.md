@@ -39,7 +39,7 @@ ragnaroq evaluate refs/codes --out results/codes --easyocr-models ~/easyocr-mode
 
 ## Held-out set (0.2.0)
 
-These pages were never used to tune the third-reader rule. They were run once, with the rule frozen, as the release gate for 0.2.0. All five are public-domain IRS documents, downloaded on 24 November 2026.
+These pages were never used to tune the third-reader rule. With the rule frozen, the documents were read once, as the release gate for 0.2.0. The readings were scored twice: the first scoring failed the gate, and the second followed a correction to the answer key (see [the first run](#the-first-run-kept-on-record)). All five are public-domain IRS documents, downloaded on 24 November 2026.
 
 | File | Source | Pages used | SHA-256 |
 | --- | --- | --- | --- |
