@@ -73,6 +73,16 @@ def test_an_agreeing_reading_must_pass_the_validators():
     assert BAD_DATE in flag.message and "date.ordinal-suffix" in flag.message
 
 
+def test_the_validators_see_the_text_the_line_would_carry():
+    # Decomposed, the odd suffix is six characters and the date rule does not see a date;
+    # composed (NFC, as `text` would hold it) it is three, and the rule flags it.
+    odd = "The due date is 31s\u0302s\u0302s\u0302 July 2026."
+    (line,) = decided((MISREAD, odd, odd))
+    assert line.status == "flagged" and line.resolution is None
+    flag = next(f for f in line.flags if f.rule == "crosscheck.third-reader.validators")
+    assert "date.ordinal-suffix on ocr:two" in flag.message
+
+
 def test_a_reader_that_saw_more_text_holds_the_line_back():
     seen = "Designee Designee's Phone Personal identification"
     more = "Designee Designee's name Phone no. Personal identification number (PIN)"

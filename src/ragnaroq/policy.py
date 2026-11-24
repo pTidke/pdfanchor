@@ -82,8 +82,9 @@ def _third_reader(line: Line, neighbours: list[str], policy: Policy) -> None:
     its flag and stops: a number, date or negation is never taken on trust."""
     vlm = next(r for r in line.readings if r.source.startswith(VLM))
     seen = without_marks(vlm.text)
+    # NFC, as `text` would carry it, so the validators judge the text that is kept.
     candidates = [(line.source, unicodedata.normalize("NFC", line.raw))] + [
-        (r.source, r.text)
+        (r.source, unicodedata.normalize("NFC", r.text))
         for r in line.readings
         if r.source != line.source and not r.source.startswith(VLM)
     ]
