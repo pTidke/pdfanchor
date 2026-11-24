@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 from conftest import FakeEngine, FakeLineReader
@@ -78,6 +79,68 @@ def test_the_time_budget_leaves_the_rest_for_a_person(scanned_pdf):
     (flag,) = document.flags
     assert flag.rule == "third-reader.budget" and flag.severity == "review"
     assert "2 disputed lines" in flag.message and "time budget of 0 seconds" in flag.message
+
+
+def disputed_twice(scanned_pdf, tmp_path):
+    """The scanned page twice over, each copy with its due line disputed, and the PDF's bytes."""
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for _ in range(2):
+        writer.add_page(PdfReader(scanned_pdf).pages[0])
+    path = tmp_path / "two.pdf"
+    with path.open("wb") as handle:
+        writer.write(handle)
+    first = FakeEngine("one", [(TITLE, BOX_A), (DUE, BOX_B)])
+    second = FakeEngine("two", [(TITLE, BOX_A), (MISREAD, BOX_B)])
+    return convert(path, engines=[first, second]), path.read_bytes()
+
+
+def test_a_spent_budget_draws_no_more_pages(scanned_pdf, tmp_path, monkeypatch):
+    document, data = disputed_twice(scanned_pdf, tmp_path)
+    assert list(third.candidates(document)) == [1, 2]
+    drawn = []
+
+    def draw(self, number, crosscheck):
+        drawn.append(number)
+        raise AssertionError("drawn although the budget was spent")
+
+    monkeypatch.setattr(PageReader, "read", draw)
+    reader = FakeLineReader([])
+    third.read_disputed(document, data, Config(third_reader=ThirdReaderSettings(budget_seconds=0.0)), reader)
+    assert drawn == [] and reader.crops == []
+    assert all(page.flags == [] for page in document.pages)
+    (flag,) = document.flags
+    assert flag.rule == "third-reader.budget" and "2 disputed lines" in flag.message
+
+
+def test_a_pdf_that_cannot_be_opened_again_flags_every_page_it_would_have_read(
+    scanned_pdf, tmp_path, monkeypatch
+):
+    document, data = disputed_twice(scanned_pdf, tmp_path)
+
+    def refuse(self, data, config):
+        raise BudgetExceeded("budget.open-time", "The PDF could not be opened within the time limit.")
+
+    monkeypatch.setattr(PageReader, "__init__", refuse)
+    reader = FakeLineReader([])
+    third.read_disputed(document, data, Config(), reader)
+    assert reader.crops == [] and reader.prepared == 0
+    for page in document.pages:
+        (flag,) = page.flags
+        assert flag.rule == "third-reader.unread" and "within the time limit" in flag.message
+
+
+@pytest.mark.parametrize("stored", [{"text": 5}, {"unreadable": None}, {"text": None, "unreadable": "x"}])
+def test_a_cached_value_that_is_not_text_is_read_again(scanned_pdf, tmp_path, stored):
+    data = scanned_pdf.read_bytes()
+    third.read_disputed(disputed(scanned_pdf), data, Config(), FakeLineReader([DUE]), cache=tmp_path)
+    (entry,) = tmp_path.iterdir()
+    entry.write_text(json.dumps(stored))
+    document, reader = disputed(scanned_pdf), FakeLineReader([DUE])
+    third.read_disputed(document, data, Config(), reader, cache=tmp_path)
+    assert len(reader.crops) == 1 and document.pages[0].flags == []
+    assert document.pages[0].lines[1].readings[-1] == Reading(source="vlm:fake", text=DUE)
 
 
 def test_a_page_that_cannot_be_drawn_again_keeps_its_first_decisions(scanned_pdf, monkeypatch):
