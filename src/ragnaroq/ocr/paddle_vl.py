@@ -136,15 +136,17 @@ class PaddleOcrVl:
         reading recipe. It keys the cache, so an upgrade of any of them reads crops again.
         Worked out once, without loading the model."""
         if self._version is None:
-            device, kind = self._hardware(self._torch())
+            torch = self._torch()
+            device, kind = self._hardware(torch)
+            # The module's own version carries the build ("+cpu", "+cu132"); its metadata may not.
+            build = getattr(torch, "__version__", None) or _package_version("torch") or "unknown"
             transformers = _package_version("transformers")
             if transformers is None:
                 raise EngineUnavailable(NEEDS)
             vision = _package_version("torchvision")
             self._version = (
-                f"{REPO}@{REVISION[:12]} {kind} {device} torch={_package_version('torch') or 'unknown'} "
-                f"transformers={transformers} {f'torchvision={vision}' if vision else 'no torchvision'} "
-                f"recipe={RECIPE}"
+                f"{REPO}@{REVISION[:12]} {kind} {device} torch={build} transformers={transformers} "
+                f"{f'torchvision={vision}' if vision else 'no torchvision'} recipe={RECIPE}"
             )
         return self._version
 
@@ -178,17 +180,21 @@ class PaddleOcrVl:
                 )
             except Exception as error:
                 raise EngineUnavailable(
-                    f"Could not download {REPO}@{REVISION[:12]} ({type(error).__name__})."
+                    f"Could not download {REPO}@{REVISION[:12]} ({type(error).__name__}: {error})."
                 ) from error
         verify(folder)
         device, kind = self._hardware(torch)
+        # Only the checked files: nothing fetched, no code run, no pickled weights.
+        offline = {"trust_remote_code": False, "local_files_only": True, "use_safetensors": True}
         try:
-            processor = transformers.AutoProcessor.from_pretrained(folder, trust_remote_code=False)
+            processor = transformers.AutoProcessor.from_pretrained(folder, **offline)
             model = transformers.AutoModelForImageTextToText.from_pretrained(
-                folder, dtype=getattr(torch, kind), trust_remote_code=False
+                folder, dtype=getattr(torch, kind), **offline
             )
         except Exception as error:
-            raise EngineUnavailable(f"PaddleOCR-VL could not be loaded ({type(error).__name__}).") from error
+            raise EngineUnavailable(
+                f"PaddleOCR-VL could not be loaded ({type(error).__name__}: {error})."
+            ) from error
         self._loaded = (processor, model.eval().to(device), torch)
 
     def read_line(self, image, max_new_tokens: int, seconds: float) -> str:

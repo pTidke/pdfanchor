@@ -133,6 +133,36 @@ def test_after_a_download_the_files_are_checked_and_loaded_where_they_landed(
     ]
 
 
+def test_the_model_is_loaded_offline_and_from_safetensors_only(fake_stack, tmp_path):
+    for name in FILES:
+        (tmp_path / name).write_text("x")
+    PaddleOcrVl(model_dir=str(tmp_path)).prepare()
+    loads = [kwargs for kind, _, kwargs in fake_stack if kind in ("processor", "model")]
+    assert len(loads) == 2
+    for kwargs in loads:
+        assert kwargs["local_files_only"] is True and kwargs["use_safetensors"] is True
+        assert kwargs["trust_remote_code"] is False
+
+
+def test_a_load_or_download_error_keeps_its_message(fake_stack, monkeypatch, tmp_path):
+    for name in FILES:
+        (tmp_path / name).write_text("x")
+
+    def broken(folder, **kwargs):
+        raise ValueError("config.json is not valid JSON")
+
+    monkeypatch.setattr(sys.modules["transformers"].AutoProcessor, "from_pretrained", broken)
+    with pytest.raises(EngineUnavailable, match="ValueError: config.json is not valid JSON"):
+        PaddleOcrVl(model_dir=str(tmp_path)).prepare()
+
+    def offline(repo, **kwargs):
+        raise ConnectionError("no route to host")
+
+    monkeypatch.setattr(sys.modules["huggingface_hub"], "snapshot_download", offline)
+    with pytest.raises(EngineUnavailable, match="ConnectionError: no route to host"):
+        PaddleOcrVl(model_dir=str(tmp_path / "empty"), download=True).prepare()
+
+
 def test_no_code_from_the_model_repository_is_fetched():
     assert FILES and not any(name.endswith(".py") for name in FILES)
 
