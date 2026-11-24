@@ -146,6 +146,9 @@ def convert(
     name = filename or (Path(source).name if not isinstance(source, bytes) else "document.pdf")
     count, flags, sizes = _preflight(data, config)
     engines = available(config.languages) if engines is None else list(engines)
+    # Asked before any page is read, so a third reader that cannot run (no torch) fails
+    # now; its model is still loaded only when a crop needs it.
+    third_version = third_reader.version() if third_reader is not None else None
     crosscheck = bool(engines and config.native_crosscheck_engines)
     pages: list[Page] = []
     try:
@@ -196,7 +199,7 @@ def convert(
     for engine in engines:
         components[f"ocr:{engine.name}"] = engine.version()
     if third_reader is not None:
-        components[f"vlm:{third_reader.name}"] = third_reader.version()
+        components[f"vlm:{third_reader.name}"] = third_version
     document = Document(
         source=Source(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), filename=name, pages=count),
         engine=Engine(

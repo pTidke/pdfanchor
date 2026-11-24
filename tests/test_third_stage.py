@@ -275,3 +275,13 @@ def test_the_reader_version_is_asked_once_a_run(scanned_pdf):
     reader = Counting([TITLE, DUE])
     third.read_disputed(disputed(scanned_pdf, both=True), scanned_pdf.read_bytes(), Config(), reader)
     assert len(reader.crops) == 2 and reader.asked == 1
+
+
+def test_convert_asks_the_third_reader_for_its_version_before_reading_a_page(scanned_pdf, monkeypatch):
+    class NoTorch(FakeLineReader):
+        def version(self):
+            raise EngineUnavailable("The PaddleOCR-VL reader needs torch and transformers.")
+
+    monkeypatch.setattr("ragnaroq.pipeline.PageReader", None)  # any read would fail loudly
+    with pytest.raises(EngineUnavailable, match="needs torch"):
+        convert(scanned_pdf, engines=[], third_reader=NoTorch([]))
