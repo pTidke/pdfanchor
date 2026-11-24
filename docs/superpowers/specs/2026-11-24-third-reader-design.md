@@ -1,6 +1,6 @@
 # A third reader for disputed lines
 
-Status: design, waiting for approval. Approach A, chosen on 2026-11-24.
+Status: approved on 2026-11-24. Approach A, chosen on 2026-11-24.
 
 ## Why
 
@@ -92,7 +92,7 @@ Running after the first decision, and not inside the page loop, keeps two things
 ### 3. Install and download
 
 - **Install.** A new extra, `ragnaroq[vlm]`, adds `torch` and `transformers>=5,<6`. The README shows how to install the CPU-only torch build first, since the default Linux build pulls several gigabytes of GPU libraries.
-- **Off by default.** It is switched on with `--third-reader` on `ragnaroq run` and `ragnaroq evaluate`, or by passing a reader to `convert()`.
+- **Off by default.** It is switched on with `--third-reader` on `ragnaroq convert` and `ragnaroq evaluate`, or by passing a reader to `convert()`.
 - **Download.** This mirrors the EasyOCR switches:
   - `--vlm-models DIR` says where the model files live (default: the Hugging Face cache);
   - `--vlm-download` lets missing files be fetched;
