@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         third_reader = PaddleOcrVl(model_dir=args.vlm_models, download=args.vlm_download)
         try:
             third_reader.prepare()
-        except EngineUnavailable as error:
+        except (EngineUnavailable, OSError) as error:
             print(json.dumps({"error": str(error)}), file=sys.stderr)
             return 1
 

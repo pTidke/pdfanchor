@@ -47,13 +47,34 @@ def number_format(device: str, cpu_flags: frozenset[str], cuda_bf16: bool = Fals
     return "bfloat16" if cpu_flags & {"avx512_bf16", "amx_bf16"} else "float32"
 
 
+def default_folder() -> Path:
+    """Where huggingface_hub keeps the pinned revision: `HF_HUB_CACHE`, else
+    `HUGGINGFACE_HUB_CACHE`, else `$HF_HOME/hub`, with `HF_HOME` defaulting to
+    `$XDG_CACHE_HOME/huggingface` and that to `~/.cache/huggingface`."""
+    hub = os.environ.get("HF_HUB_CACHE") or os.environ.get("HUGGINGFACE_HUB_CACHE")
+    if not hub:
+        cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+        hub = os.path.join(os.environ.get("HF_HOME") or os.path.join(cache, "huggingface"), "hub")
+    root = Path(os.path.expandvars(os.path.expanduser(hub)))
+    return root / f"models--{REPO.replace('/', '--')}" / "snapshots" / REVISION
+
+
 def verify(folder: Path) -> None:
-    """Raise EngineUnavailable naming the first file whose SHA-256 differs from `FILES`."""
+    """Raise EngineUnavailable naming the files that are missing, or the first file whose
+    SHA-256 differs from `FILES`."""
+    missing = [name for name in FILES if not (folder / name).is_file()]
+    if missing:
+        raise EngineUnavailable(f"PaddleOCR-VL files are missing from {folder} ({', '.join(missing)}).")
     for name, expected in FILES.items():
         digest = hashlib.sha256()
-        with (folder / name).open("rb") as handle:
-            while block := handle.read(1 << 20):
-                digest.update(block)
+        try:
+            with (folder / name).open("rb") as handle:
+                while block := handle.read(1 << 20):
+                    digest.update(block)
+        except OSError as error:
+            raise EngineUnavailable(
+                f"{name} in {folder} could not be read ({type(error).__name__}: {error})."
+            ) from error
         if digest.hexdigest() != expected:
             raise EngineUnavailable(
                 f"{name} in {folder} is not the file of {REPO}@{REVISION[:12]} (its SHA-256 differs)."
@@ -95,10 +116,7 @@ class PaddleOcrVl:
         self._version: str | None = None
 
     def _folder(self) -> Path:
-        if self.model_dir:
-            return Path(self.model_dir)
-        home = Path(os.environ.get("HF_HOME") or Path.home() / ".cache" / "huggingface")
-        return home / "hub" / f"models--{REPO.replace('/', '--')}" / "snapshots" / REVISION
+        return Path(self.model_dir) if self.model_dir else default_folder()
 
     @staticmethod
     def _torch():
@@ -149,11 +167,14 @@ class PaddleOcrVl:
             try:
                 from huggingface_hub import snapshot_download
 
-                snapshot_download(
-                    REPO,
-                    revision=REVISION,
-                    allow_patterns=list(FILES),
-                    **({"local_dir": self.model_dir} if self.model_dir else {}),
+                # Checked and loaded where the files landed, whatever the cache settings.
+                folder = Path(
+                    snapshot_download(
+                        REPO,
+                        revision=REVISION,
+                        allow_patterns=list(FILES),
+                        **({"local_dir": self.model_dir} if self.model_dir else {}),
+                    )
                 )
             except Exception as error:
                 raise EngineUnavailable(

@@ -1,4 +1,7 @@
 import os
+import sys
+import types
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw, ImageFont
@@ -10,11 +13,48 @@ from ragnaroq.ocr.paddle_vl import FILES, PaddleOcrVl, check_finished, number_fo
 @pytest.fixture
 def no_torch_needed(monkeypatch):
     """Stand-ins for torch and the hardware probe, so the reader's bookkeeping runs in CI."""
-    monkeypatch.setattr(PaddleOcrVl, "_torch", staticmethod(lambda: object()))
+    torch = types.SimpleNamespace(bfloat16="bfloat16", float32="float32")
+    monkeypatch.setattr(PaddleOcrVl, "_torch", staticmethod(lambda: torch))
     monkeypatch.setattr(PaddleOcrVl, "_hardware", lambda self, torch: ("cpu", "bfloat16"))
     versions = {"torch": "2.9.1+cpu", "transformers": "5.2.0", "torchvision": "0.24.1+cpu"}
     monkeypatch.setattr(paddle_vl, "_package_version", versions.get)
     return versions
+
+
+@pytest.fixture
+def fake_stack(monkeypatch, tmp_path, no_torch_needed):
+    """transformers and huggingface_hub stand-ins that record what they are asked for. A
+    download lands in `<tmp_path>/landed`, as snapshot_download returns its own folder."""
+    calls = []
+
+    class Loaded:
+        device = "cpu"
+
+        def eval(self):
+            return self
+
+        def to(self, device):
+            return self
+
+    def loader(kind):
+        def from_pretrained(folder, **kwargs):
+            calls.append((kind, Path(folder), kwargs))
+            return Loaded()
+
+        return types.SimpleNamespace(from_pretrained=from_pretrained)
+
+    def snapshot_download(repo, **kwargs):
+        calls.append(("download", None, kwargs))
+        return str(tmp_path / "landed")
+
+    transformers = types.SimpleNamespace(
+        AutoProcessor=loader("processor"), AutoModelForImageTextToText=loader("model")
+    )
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    hub = types.SimpleNamespace(snapshot_download=snapshot_download)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setattr(paddle_vl, "verify", lambda folder: calls.append(("verify", Path(folder), {})))
+    return calls
 
 
 def test_number_format_follows_the_hardware():
@@ -52,6 +92,45 @@ def test_the_version_names_the_libraries_and_the_reading_recipe(no_torch_needed)
     del no_torch_needed["transformers"]
     with pytest.raises(EngineUnavailable, match="transformers"):
         PaddleOcrVl().version()
+
+
+def test_the_default_folder_follows_hf_hub_cache(monkeypatch, tmp_path):
+    snapshot = Path("models--PaddlePaddle--PaddleOCR-VL-1.6", "snapshots", paddle_vl.REVISION)
+    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert PaddleOcrVl()._folder() == tmp_path / "home" / ".cache" / "huggingface" / "hub" / snapshot
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert PaddleOcrVl()._folder() == tmp_path / "xdg" / "huggingface" / "hub" / snapshot
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    assert PaddleOcrVl()._folder() == tmp_path / "hf" / "hub" / snapshot
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "legacy"))
+    assert PaddleOcrVl()._folder() == tmp_path / "legacy" / snapshot
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    assert PaddleOcrVl()._folder() == tmp_path / "hub" / snapshot
+    assert PaddleOcrVl(model_dir=str(tmp_path / "mine"))._folder() == tmp_path / "mine"
+
+
+def test_a_missing_file_is_reported_by_name(tmp_path):
+    for name in FILES:
+        if name != "tokenizer.json":
+            (tmp_path / name).write_text("x")
+    with pytest.raises(EngineUnavailable, match="tokenizer.json") as raised:
+        verify(tmp_path)
+    assert "added_tokens.json" not in str(raised.value)
+
+
+def test_after_a_download_the_files_are_checked_and_loaded_where_they_landed(
+    fake_stack, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty"))
+    PaddleOcrVl(download=True).prepare()
+    assert [(kind, folder) for kind, folder, _ in fake_stack] == [
+        ("download", None),
+        ("verify", tmp_path / "landed"),
+        ("processor", tmp_path / "landed"),
+        ("model", tmp_path / "landed"),
+    ]
 
 
 def test_no_code_from_the_model_repository_is_fetched():

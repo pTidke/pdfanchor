@@ -344,3 +344,12 @@ def test_a_missing_model_stops_the_command_before_reading(scanned_pdf, tmp_path,
          "--third-reader", "--vlm-models", str(tmp_path / "none")]
     )
     assert code == 1 and "--vlm-download" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_a_model_folder_that_cannot_be_read_is_a_plain_error(scanned_pdf, tmp_path, capsys, monkeypatch):
+    def unreadable(self):
+        raise PermissionError(13, "Permission denied", str(tmp_path / "models"))
+
+    monkeypatch.setattr("ragnaroq.ocr.paddle_vl.PaddleOcrVl.prepare", unreadable)
+    code = main(["convert", str(scanned_pdf), "--out", str(tmp_path / "out"), "--third-reader"])
+    assert code == 1 and "Permission denied" in json.loads(capsys.readouterr().err)["error"]
