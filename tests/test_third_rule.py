@@ -99,6 +99,24 @@ def test_text_that_belongs_to_the_next_line_holds_the_line_back():
     assert longer in flag.message
 
 
+def test_text_from_the_line_below_in_the_same_column_holds_the_line_back():
+    longer = "Personal Address name on your social security card? If not, to ensure you get"
+    rows = [  # two columns, read across: the line below in the same column is two lines on
+        (72, 100, "Enter Address Does your name match the", None),
+        (320, 100, "Spouse details are on the next page", None),
+        (72, 120, "Personal name on your social security", longer),
+        (320, 120, "Filing status checkboxes appear here", None),
+        (72, 140, "card? If not, to ensure you get", None),
+    ]
+    document = scanned_document(*[(text, longer if third else text, third) for _, _, text, third in rows])
+    for line, (x0, top, _, _) in zip(document.lines(), rows, strict=True):
+        line.box = Box(x0=x0, top=top, x1=x0 + 220, bottom=top + 12)
+    policy.decide(document, Policy())
+    line = document.pages[0].lines[2]
+    flag = next(f for f in line.flags if f.rule == "crosscheck.third-reader.neighbour")
+    assert longer in flag.message and line.resolution is None
+
+
 def test_an_empty_reading_never_settles_a_line():
     (line,) = decided(("...", "", "☐"))
     assert line.status == "flagged" and line.resolution is None

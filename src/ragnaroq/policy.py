@@ -143,6 +143,22 @@ def _third_reader(line: Line, neighbours: list[str], policy: Policy) -> None:
     line.resolution = Resolution(rule=THIRD, agreed=[source, vlm.source], text_from=source)
 
 
+def _neighbours(ordered: list[Line], i: int) -> list[Line]:
+    """The lines a line's box may have run into: on its page, the nearest line above and
+    the nearest below that overlap it horizontally. The lines just before and after it in
+    reading order are kept too, as before, so this check only ever adds refusals."""
+    box = ordered[i].box
+    found = ordered[max(i - 1, 0) : i] + ordered[i + 1 : i + 2]
+    column = [n for j, n in enumerate(ordered) if j != i and n.box.x0 < box.x1 and box.x0 < n.box.x1]
+    above = [n for n in column if n.box.bottom <= box.top + 1]
+    below = [n for n in column if n.box.top >= box.bottom - 1]
+    if above:
+        found.append(min(above, key=lambda n: box.top - n.box.bottom))
+    if below:
+        found.append(min(below, key=lambda n: n.box.top - box.bottom))
+    return found
+
+
 def decide(document: Document, policy: Policy) -> None:
     """Decide every line and table. Only this decides, so any earlier verdict is
     cleared first: a stored reading can be decided again under new rules."""
@@ -175,7 +191,7 @@ def decide(document: Document, policy: Policy) -> None:
                 and line.status == "flagged"
                 and all(flag.rule == "crosscheck.disagreement" for flag in line.flags)
             ):
-                near = ordered[max(i - 1, 0) : i] + ordered[i + 1 : i + 2]
+                near = _neighbours(ordered, i)
                 _third_reader(line, [unicodedata.normalize("NFC", n.raw) for n in near], policy)
     counted = [line for line in document.lines() if not line.excluded]
     document.summary = {
