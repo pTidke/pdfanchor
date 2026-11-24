@@ -132,6 +132,18 @@ def test_an_empty_reading_never_settles_a_line():
     assert line.status == "flagged" and line.resolution is None
 
 
+def test_a_native_page_is_never_settled_by_the_third_reader():
+    document = scanned_document((DUE, MISREAD, DUE))
+    page = document.pages[0]
+    page.kind = "native"
+    line = page.lines[0]
+    line.source = "native"
+    line.readings = [r for r in line.readings if r.source != "ocr:one"]  # a text layer has no OCR reading
+    policy.decide(document, Policy())
+    assert line.status == "flagged" and rules(line) == {"crosscheck.disagreement"}
+    assert line.resolution is None and line.text == DUE
+
+
 def test_a_line_with_another_flag_is_left_to_a_person():
     (line,) = decided((BAD_DATE, "The earlier order dated 31 March, 2025 is withdrawn.", BAD_DATE))
     assert line.resolution is None
