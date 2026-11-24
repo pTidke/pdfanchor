@@ -3,8 +3,18 @@ import os
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from ragnaroq.ocr import EngineUnavailable, LineUnreadable
+from ragnaroq.ocr import EngineUnavailable, LineUnreadable, paddle_vl
 from ragnaroq.ocr.paddle_vl import FILES, PaddleOcrVl, check_finished, number_format, verify
+
+
+@pytest.fixture
+def no_torch_needed(monkeypatch):
+    """Stand-ins for torch and the hardware probe, so the reader's bookkeeping runs in CI."""
+    monkeypatch.setattr(PaddleOcrVl, "_torch", staticmethod(lambda: object()))
+    monkeypatch.setattr(PaddleOcrVl, "_hardware", lambda self, torch: ("cpu", "bfloat16"))
+    versions = {"torch": "2.9.1+cpu", "transformers": "5.2.0", "torchvision": "0.24.1+cpu"}
+    monkeypatch.setattr(paddle_vl, "_package_version", versions.get)
+    return versions
 
 
 def test_number_format_follows_the_hardware():
@@ -25,6 +35,23 @@ def test_a_changed_file_is_refused(tmp_path):
         (tmp_path / name).write_text("x")
     with pytest.raises(EngineUnavailable, match="added_tokens.json"):
         verify(tmp_path)
+
+
+def test_the_version_names_the_libraries_and_the_reading_recipe(no_torch_needed):
+    reader = PaddleOcrVl()
+    version = reader.version()
+    assert version == (
+        "PaddlePaddle/PaddleOCR-VL-1.6@132c45f52c0a bfloat16 cpu torch=2.9.1+cpu transformers=5.2.0 "
+        "torchvision=0.24.1+cpu recipe=ocr-greedy-1"
+    )
+    no_torch_needed["torch"] = "2.10.0+cpu"
+    assert reader.version() == version  # worked out once for the reader
+    assert "torch=2.10.0+cpu" in PaddleOcrVl().version()  # an upgrade changes it, and so the cache key
+    del no_torch_needed["torchvision"]
+    assert " no torchvision " in PaddleOcrVl().version()
+    del no_torch_needed["transformers"]
+    with pytest.raises(EngineUnavailable, match="transformers"):
+        PaddleOcrVl().version()
 
 
 def test_no_code_from_the_model_repository_is_fetched():

@@ -59,10 +59,10 @@ def crop(image, box: Box, settings: ThirdReaderSettings):
     return canvas
 
 
-def _key(image, reader: LineReader, settings: ThirdReaderSettings) -> str:
+def _key(image, version: str, settings: ThirdReaderSettings) -> str:
     knobs = {k: v for k, v in asdict(settings).items() if k != "budget_seconds"}
     digest = hashlib.sha256()
-    parts = (image.mode, repr(image.size), image.tobytes(), reader.version())
+    parts = (image.mode, repr(image.size), image.tobytes(), version)
     parts += (json.dumps(knobs, sort_keys=True),)
     for part in parts:
         digest.update(part if isinstance(part, bytes) else part.encode())
@@ -103,6 +103,7 @@ def read_disputed(
     if not wanted:
         return
     s = config.third_reader
+    version = reader.version()  # once a run: it may ask the installed libraries
     cache = Path(cache) if cache is not None else None
     pages = {page.number: page for page in document.pages}
     start, skipped, prepared = clock(), 0, False
@@ -122,7 +123,7 @@ def read_disputed(
                 continue
             for line in lines:
                 piece = crop(image, line.box, s)
-                key = _key(piece, reader, s)
+                key = _key(piece, version, s)
                 entry = _cached(cache, key)
                 if entry is None:
                     if s.budget_seconds is not None and clock() - start >= s.budget_seconds:

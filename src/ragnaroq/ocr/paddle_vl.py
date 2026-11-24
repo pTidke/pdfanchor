@@ -9,6 +9,7 @@ repository is ever fetched or run (`trust_remote_code=False`, and `FILES` holds 
 """
 
 import hashlib
+import importlib.metadata
 import os
 import re
 import time
@@ -19,6 +20,10 @@ from . import EngineUnavailable, LineUnreadable
 REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
 REVISION = "132c45f52c0a26ed5a6b2f6bd8e3985794cc27dd"
 PROMPT = "OCR:"
+# Names how a crop is read: the prompt and greedy decoding. Change it when either changes,
+# so stored readings are not reused for a different recipe.
+RECIPE = "ocr-greedy-1"
+NEEDS = "The PaddleOCR-VL reader needs torch and transformers: pip install 'ragnaroq[vlm]'."
 FILES: dict[str, str] = {
     "added_tokens.json": "f59f889088e0fe21c523e7cf121bb6dca3b0bb148cb7159fbb4572c74dfc5644",
     "chat_template.jinja": "2f27812dab7f333e471884e0c803d807f11953d5453140dfb1aaba234f872bc8",
@@ -63,6 +68,13 @@ def check_finished(new_tokens: int, max_new_tokens: int, elapsed: float, seconds
         raise LineUnreadable(f"the model did not finish the line within {max_new_tokens} tokens")
 
 
+def _package_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
 def _cpu_flags() -> frozenset[str]:
     try:
         text = Path("/proc/cpuinfo").read_text()
@@ -80,6 +92,7 @@ class PaddleOcrVl:
     def __init__(self, model_dir: str | None = None, download: bool = False):
         self.model_dir, self.download = model_dir, download
         self._loaded: tuple | None = None  # processor, model, torch
+        self._version: str | None = None
 
     def _folder(self) -> Path:
         if self.model_dir:
@@ -92,9 +105,7 @@ class PaddleOcrVl:
         try:
             import torch
         except ImportError as error:
-            raise EngineUnavailable(
-                "The PaddleOCR-VL reader needs torch and transformers: pip install 'ragnaroq[vlm]'."
-            ) from error
+            raise EngineUnavailable(NEEDS) from error
         return torch
 
     def _hardware(self, torch) -> tuple[str, str]:
@@ -103,8 +114,21 @@ class PaddleOcrVl:
         return device, number_format(device, _cpu_flags(), cuda_bf16)
 
     def version(self) -> str:
-        device, kind = self._hardware(self._torch())
-        return f"{REPO}@{REVISION[:12]} {kind} {device}"
+        """The model, its revision, number format and device, the library versions and the
+        reading recipe. It keys the cache, so an upgrade of any of them reads crops again.
+        Worked out once, without loading the model."""
+        if self._version is None:
+            device, kind = self._hardware(self._torch())
+            transformers = _package_version("transformers")
+            if transformers is None:
+                raise EngineUnavailable(NEEDS)
+            vision = _package_version("torchvision")
+            self._version = (
+                f"{REPO}@{REVISION[:12]} {kind} {device} torch={_package_version('torch') or 'unknown'} "
+                f"transformers={transformers} {f'torchvision={vision}' if vision else 'no torchvision'} "
+                f"recipe={RECIPE}"
+            )
+        return self._version
 
     def prepare(self) -> None:
         if self._loaded:
@@ -120,9 +144,7 @@ class PaddleOcrVl:
         try:
             import transformers
         except ImportError as error:
-            raise EngineUnavailable(
-                "The PaddleOCR-VL reader needs torch and transformers: pip install 'ragnaroq[vlm]'."
-            ) from error
+            raise EngineUnavailable(NEEDS) from error
         if missing:
             try:
                 from huggingface_hub import snapshot_download

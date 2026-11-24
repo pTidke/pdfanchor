@@ -199,3 +199,16 @@ def test_a_corrected_title_line_corrects_the_document_title(scanned_pdf):
     assert document.title == heading
     (chunk,) = to_chunks(document, Config())
     assert chunk["context"] == [heading] and misread not in chunk["embedding_text"]
+
+
+def test_the_reader_version_is_asked_once_a_run(scanned_pdf):
+    class Counting(FakeLineReader):
+        asked = 0
+
+        def version(self):
+            self.asked += 1
+            return "test"
+
+    reader = Counting([TITLE, DUE])
+    third.read_disputed(disputed(scanned_pdf, both=True), scanned_pdf.read_bytes(), Config(), reader)
+    assert len(reader.crops) == 2 and reader.asked == 1
