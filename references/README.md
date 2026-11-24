@@ -76,6 +76,8 @@ The third reader settled 447 lines. 20 of them were not exactly the answer key: 
 
 The accepted-but-wrong count rose from 330 to 350 because more lines were accepted (2,640 to 3,087); the rate fell from 12.5% to 11.3%.
 
+After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check.
+
 ### The first run, kept on record
 
 The first run used the 0.1 answer key. It reported 6 lines settled by the third reader as wrong on a critical token (with the third reader: 27 accepted critical, 362 accepted wrong; without: 21 and 336). All 6 were Schedule C line labels printed "20b", "16b" and "16c" with no visible gap. The PDF stores an overprinted space, so the answer key said "20 b", while every reader read what is printed.

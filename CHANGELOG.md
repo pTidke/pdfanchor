@@ -44,6 +44,7 @@ On a held-out set of 5 IRS documents the rule had never seen (20 references, 3,7
 | Accepted with a wrong number, date or negation | 6 | 6 |
 
 - The third reader settled 447 lines. 20 were not exactly the answer key (spacing, punctuation, or a line box that also covers a neighbouring field's words). None was wrong on a number, date or negation.
+- After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check.
 - The first run used the 0.1 answer key and reported 6 settled lines wrong on a critical token. All were Schedule C labels printed "20b", "16b" and "16c" with no visible gap. The owner chose to fix the answer key and score again; the scans were byte-identical and nothing was read again. No rule or threshold was changed after seeing the held-out set.
 - On the 0.1 IRS and code-table sets, before the build, the same rule was simulated on stored readings: lines sent to a person fell from 1,242 to about 650 (48% fewer) and from 322 to 178 (45% fewer), with no line settled wrong on a number, date or negation. The 0.1 numbers above were measured with the 0.1 answer key.
 

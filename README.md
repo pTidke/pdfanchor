@@ -166,7 +166,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
   - no reading has an underscore inside a word or number, which an underline can hide;
   - the line does not repeat four words of the line above or below it in the same column, or of the line before or after it in reading order, which happens when its box covers two printed lines.
 
-  Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. It costs about 2.5 seconds a disputed line on a CPU with native bfloat16; float32 CPUs are about 2.5 times slower.
+  Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check. It costs about 2.5 seconds a disputed line on a CPU with native bfloat16; float32 CPUs are about 2.5 times slower.
 - **Known limits.**
   - Both engines can read a "1" as "|" and agree, and the line is then accepted before the third reader is consulted. Of the six accepted lines wrong on a number on the held-out set, with or without the third reader, five were this. A follow-up is planned.
   - A digit that one reader saw and the other two missed is outvoted.
@@ -215,6 +215,8 @@ On the held-out set (five other IRS documents, 3,712 lines), without and with th
 | Lines sent to a person | 1,072 | 625 |
 | Accepted but wrong | 12.5% | 11.3% |
 | Accepted with a wrong number, date or negation | 6 | 6 |
+
+After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check.
 
 First results (0.1), on public IRS forms and publications turned into scans (clean, low-res, blurred, tilted), read by Tesseract and EasyOCR:
 
