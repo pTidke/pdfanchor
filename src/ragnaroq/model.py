@@ -6,7 +6,7 @@ Coordinates are PDF points with a top-left origin on the displayed page.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SCHEMA_VERSION = "0.2.0"
 
@@ -124,7 +124,10 @@ class Engine(Model):
 
 
 class Document(Model):
-    schema_version: Literal["0.2.0"] = SCHEMA_VERSION
+    schema_version: Literal["0.1.0", "0.2.0"] = Field(
+        default=SCHEMA_VERSION,
+        description='The contract version. A stored "0.1.0" document loads, and is restamped "0.2.0".',
+    )
     source: Source
     engine: Engine
     created_at: str
@@ -132,6 +135,12 @@ class Document(Model):
     pages: list[Page]
     flags: list[Flag] = Field(default_factory=list)
     summary: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _restamp(cls, value: str) -> str:
+        # 0.2.0 only added fields with defaults, so a 0.1.0 document is a valid 0.2.0 one.
+        return SCHEMA_VERSION
 
     def lines(self):
         return (line for page in self.pages for line in page.lines)

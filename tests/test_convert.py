@@ -337,6 +337,17 @@ def test_a_resolution_records_which_readings_agreed(native_pdf):
     assert next(again.lines()).resolution.text_from == "ocr:two"
 
 
+def test_a_0_1_0_document_still_loads(native_pdf):
+    stored = json.loads(convert(native_pdf, engines=[]).model_dump_json())
+    stored["schema_version"] = "0.1.0"
+    for page in stored["pages"]:
+        for line in page["lines"]:
+            del line["resolution"]  # 0.1.0 had no such field
+    loaded = Document.model_validate(stored)
+    assert loaded.schema_version == "0.2.0"
+    assert json.loads(loaded.model_dump_json())["schema_version"] == "0.2.0"
+
+
 def test_a_missing_model_stops_the_command_before_reading(scanned_pdf, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("ragnaroq.pipeline.PageReader", None)  # any read would fail loudly
     code = main(

@@ -24,7 +24,7 @@ A third reader for the scanned lines the two OCR readers still dispute.
 ### Changed
 
 - **Policy 0.3**, with the third-reader rule.
-- **Schema 0.2.0.** `Line.resolution` is new: the rule, the readings that agreed, and the reading whose text the line carries. `text` is the NFC-normalised `raw`, unless `resolution` names another reading.
+- **Schema 0.2.0.** `Line.resolution` is new: the rule, the readings that agreed, and the reading whose text the line carries. `text` is the NFC-normalised `raw`, unless `resolution` names another reading. A stored 0.1.0 `document.json` still loads, and is restamped `0.2.0`.
 - The comparison used to score and to match readings now lives in `crosscheck.py`, so the policy and `evaluate` use the same one.
 
 ### Fixed
