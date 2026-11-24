@@ -97,6 +97,13 @@ ragnaroq convert scan.pdf --out out/ --easyocr-models ~/easyocr-models --easyocr
 
 The models are fetched once into `--easyocr-models`; leave out `--easyocr-download` afterwards to stay offline. If they are missing, EasyOCR is left out at the start and Tesseract reads alone. EasyOCR confirms scanned pages only: a page with a text layer is cross-checked by the first engine (`Config.native_crosscheck_engines`). A confirming reader that fails on a page flags the page (`ocr.reader-failed`) and the first reader's lines stand.
 
+A third reader for the scanned lines the two readers still dispute, PaddleOCR-VL-1.6 through Hugging Face transformers (an optional extra; about 1.9 GB of model files, checked against pinned SHA-256 sums):
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "ragnaroq[vlm]"
+```
+
 Exit code `0` means every line was accepted by rule, `2` means the files were written and something needs a person, `1` means the file could not be processed.
 
 ```python
