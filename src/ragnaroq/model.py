@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 Status = Literal["accepted", "flagged", "blocked"]
 
@@ -40,13 +40,28 @@ class Reading(Model):
     confidence: float | None = None
 
 
+class Resolution(Model):
+    """How a disputed line was settled by rule.
+
+    `text_from` names the reading whose text `text` now holds."""
+
+    rule: str
+    agreed: list[str]
+    text_from: str
+
+
 class Line(Model):
     id: str
     page: int
     order: int
     box: Box
     raw: str = Field(description="Exactly what the reader returned.")
-    text: str = Field(description="NFC-normalised `raw`. No other change is ever made.")
+    text: str = Field(
+        description=(
+            "NFC-normalised `raw`, unless `resolution.text_from` names another reading, "
+            "whose text it then holds."
+        ),
+    )
     source: str = Field(description='"native" or "ocr:<engine>".')
     readings: list[Reading] = Field(default_factory=list)
     font_size: float | None = None
@@ -57,6 +72,7 @@ class Line(Model):
     table_id: str | None = None
     status: Status = "flagged"
     flags: list[Flag] = Field(default_factory=list)
+    resolution: Resolution | None = None
     excluded: str | None = Field(
         default=None, description="Reason this line is kept as evidence but left out of exports."
     )
@@ -108,7 +124,7 @@ class Engine(Model):
 
 
 class Document(Model):
-    schema_version: Literal["0.1.0"] = SCHEMA_VERSION
+    schema_version: Literal["0.2.0"] = SCHEMA_VERSION
     source: Source
     engine: Engine
     created_at: str

@@ -19,7 +19,7 @@ from pathlib import Path
 from . import policy, reference
 from .config import Config
 from .crosscheck import compare, critical_tokens, normalise
-from .model import Document, Line
+from .model import SCHEMA_VERSION, Document, Line
 from .reference import Truth, Word
 from .structure import scripts_of
 
@@ -329,7 +329,14 @@ def _converted(pdf_path: Path, config: Config, engines, readers: str, cache, con
     if cache is None:
         return convert(pdf_path, config=config, engines=engines)
     key = hashlib.sha256(
-        b"|".join([pdf_path.read_bytes(), config.reading_sha256().encode(), readers.encode()])
+        b"|".join(
+            [
+                pdf_path.read_bytes(),
+                config.reading_sha256().encode(),
+                readers.encode(),
+                SCHEMA_VERSION.encode(),
+            ]
+        )
     ).hexdigest()[:24]
     stored = Path(cache) / f"{pdf_path.stem}.{key}.json"
     if stored.exists():

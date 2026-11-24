@@ -345,3 +345,12 @@ def test_strict_mode_sends_a_one_letter_disagreement_to_a_person(clean_reference
     result = evaluate.score(strict, truth)
     rows = {row["threshold"]: row for row in evaluate.sweep(result.lines, same_letters=True)}
     assert rows[0.90]["accepted"] == 2
+
+
+def test_a_cache_from_another_schema_version_is_read_again(clean_reference, tmp_path, monkeypatch):
+    folder, _, truth_path = clean_reference
+    engines = _readers(reference.load(truth_path), LINES, LINES)
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    monkeypatch.setattr(evaluate, "SCHEMA_VERSION", "0.1.0")
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    assert len(list((tmp_path / "cache").glob("*.json"))) == 2

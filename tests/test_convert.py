@@ -16,6 +16,7 @@ from ragnaroq import Config, ConversionError, Document, Policy, convert, write
 from ragnaroq.cli import main
 from ragnaroq.export.chunks import to_chunks
 from ragnaroq.export.markdown import to_markdown
+from ragnaroq.model import Resolution
 from ragnaroq.ocr import OcrLine
 from ragnaroq.ocr.tesseract import TesseractCli
 from ragnaroq.policy import needs_review
@@ -323,3 +324,14 @@ def test_a_low_resolution_scan_is_read_at_a_higher_resolution(tmp_path):
         # Boxes are in points whatever the reading resolution.
         box = page.lines[0].box
         assert (round(box.x0), round(box.top), round(box.x1), round(box.bottom)) == (72, 72, 300, 90)
+
+
+def test_a_resolution_records_which_readings_agreed(native_pdf):
+    document = convert(native_pdf, engines=[])
+    line = next(document.lines())
+    line.resolution = Resolution(
+        rule="crosscheck.third-reader", agreed=["ocr:two", "vlm:x"], text_from="ocr:two"
+    )
+    again = Document.model_validate_json(document.model_dump_json())
+    assert again.schema_version == "0.2.0"
+    assert next(again.lines()).resolution.text_from == "ocr:two"
