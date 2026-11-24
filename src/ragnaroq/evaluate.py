@@ -12,29 +12,18 @@ differently from the original is still compared with exactly the words it covers
 
 import hashlib
 import json
-import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import policy, reference
 from .config import Config
-from .crosscheck import compare, critical_tokens, normalise
+from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
 from .model import SCHEMA_VERSION, Document, Line
 from .reference import Truth, Word
 from .structure import scripts_of
 
 MARGIN = 3.0  # points around a line's box that still count as inside
 THRESHOLDS = (0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00)
-TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", "−": "-", "…": "..."})
-# Leaders and fill lines: ". . . . 24", "Name ________". Layout, not content.
-LEADERS = re.compile(r"(?:[._-]\s?){3,}")
-
-
-def canonical(text: str) -> str:
-    """The form two texts are compared in: Unicode-normalised, case-folded, single
-    spaces, typographic quotes and dashes made plain, and runs of leader dots, rules
-    and fill underscores removed. Nothing else is forgiven."""
-    return normalise(LEADERS.sub(" ", text.translate(TYPOGRAPHY)))
 
 
 def critical(text: str):

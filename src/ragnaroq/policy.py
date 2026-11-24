@@ -8,10 +8,16 @@ Each line ends as:
 Every outcome other than "accepted" carries the rule that caused it.
 """
 
+import re
+import unicodedata
+
 from . import validators
 from .config import Policy
-from .crosscheck import compare
-from .model import Document, Flag, Line
+from .crosscheck import canonical, compare, letters, shares_words, without_marks
+from .model import Document, Flag, Line, Resolution
+
+VLM = "vlm:"  # sources starting with this are third readings (a local vision model)
+THIRD = "crosscheck.third-reader"
 
 
 def _flag(line: Line, rule: str, message: str, severity="review") -> None:
@@ -20,7 +26,7 @@ def _flag(line: Line, rule: str, message: str, severity="review") -> None:
 
 def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
     line.flags.extend(validators.run(line.text, ocr=line.source != "native"))
-    others = [r for r in line.readings if r.source != line.source]
+    others = [r for r in line.readings if r.source != line.source and not r.source.startswith(VLM)]
     if line.role == "table":
         _flag(line, "table.member", "Part of a table; table structure is never accepted by rule.")
     if others:
@@ -49,6 +55,48 @@ def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
         line.status = "flagged" if line.flags else "accepted"
 
 
+def _third_reader(line: Line, neighbours: list[str], policy: Policy) -> None:
+    """Settle a disputed scanned line when the third reading matches one OCR reading
+    exactly (layout marks, case, spacing and typography aside). The first refusal adds
+    its flag and stops: a number, date or negation is never taken on trust."""
+    vlm = next(r for r in line.readings if r.source.startswith(VLM))
+    seen = without_marks(vlm.text)
+    candidates = [(line.source, unicodedata.normalize("NFC", line.raw))] + [
+        (r.source, r.text)
+        for r in line.readings
+        if r.source != line.source and not r.source.startswith(VLM)
+    ]
+
+    def refuse(name: str, message: str) -> None:
+        _flag(line, f"{THIRD}.{name}", message)
+
+    wanted = canonical(seen)
+    match = next(((src, t) for src, t in candidates if letters(t) and canonical(t) == wanted), None)
+    if match is None or not letters(seen):
+        refuse("no-match", f'{vlm.source} reads "{seen}"; no other reading matches it exactly.')
+        return
+    source, text = match
+    if validators.run(text, ocr=True) or validators.run(seen, ocr=True):
+        refuse("validators", f'{vlm.source} and {source} agree on "{text}", but a validator flags it.')
+        return
+    size = max(len(letters(text)), len(letters(seen)))
+    limit = policy.third_reader_letter_ratio * size
+    for other, other_text in candidates:
+        if canonical(other_text) != wanted and len(letters(other_text)) > limit:
+            refuse("omission", f'{other} reads "{other_text}", which has more text than {vlm.source}.')
+            return
+    if any(re.search(r"\w_\w", t) for t in [seen, *(t for _, t in candidates)]):
+        refuse("underscore", "A reading has an underscore inside a word; it may be a misread character.")
+        return
+    if any(shares_words(text, n, policy.third_reader_neighbour_words) for n in neighbours):
+        refuse("neighbour", f'"{text}" shares words with a neighbouring line; it may run into it.')
+        return
+    line.flags = []
+    line.status = "accepted"
+    line.text = unicodedata.normalize("NFC", text)
+    line.resolution = Resolution(rule=THIRD, agreed=[source, vlm.source], text_from=source)
+
+
 def decide(document: Document, policy: Policy) -> None:
     """Decide every line and table. Only this decides, so any earlier verdict is
     cleared first: a stored reading can be decided again under new rules."""
@@ -57,6 +105,8 @@ def decide(document: Document, policy: Policy) -> None:
         for table in page.tables:
             table.flags = []
         for line in page.lines:
+            line.text = unicodedata.normalize("NFC", line.raw)
+            line.resolution = None
             line.flags = []
         for table in page.tables:
             table.flags.append(
@@ -67,11 +117,20 @@ def decide(document: Document, policy: Policy) -> None:
                 )
             )
             table.status = "flagged"
-        for line in page.lines:
+        ordered = sorted(page.lines, key=lambda line: line.order)
+        for i, line in enumerate(ordered):
             if line.excluded:
                 line.status = "accepted"
                 continue
             decide_line(line, policy, image_backed)
+            if (
+                page.kind == "scanned"
+                and any(r.source.startswith(VLM) for r in line.readings)
+                and line.status == "flagged"
+                and all(flag.rule == "crosscheck.disagreement" for flag in line.flags)
+            ):
+                near = ordered[max(i - 1, 0) : i] + ordered[i + 1 : i + 2]
+                _third_reader(line, [unicodedata.normalize("NFC", n.raw) for n in near], policy)
     counted = [line for line in document.lines() if not line.excluded]
     document.summary = {
         "pages": len(document.pages),

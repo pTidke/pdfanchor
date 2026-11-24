@@ -1,0 +1,128 @@
+"""The third-reader rule: a vlm: reading settles a disputed line only on an exact match."""
+
+from conftest import BAD_DATE
+
+from ragnaroq import policy
+from ragnaroq.config import Policy
+from ragnaroq.crosscheck import shares_words
+from ragnaroq.model import Box, Document, Engine, Line, Page, Reading, Resolution, Source
+
+DUE, MISREAD = "The due date is 31st July 2026.", "The due date is 31st July 2028."
+
+
+def scanned_document(*rows):
+    lines = []
+    for i, (first, second, third) in enumerate(rows):
+        readings = [Reading(source="ocr:one", text=first), Reading(source="ocr:two", text=second)]
+        if third is not None:
+            readings.append(Reading(source="vlm:paddleocr-vl", text=third))
+        lines.append(
+            Line(
+                id=f"p1-l{i + 1}",
+                page=1,
+                order=i,
+                box=Box(x0=72, top=100 + 20 * i, x1=500, bottom=112 + 20 * i),
+                raw=first,
+                text=first,
+                source="ocr:one",
+                readings=readings,
+            )
+        )
+    return Document(
+        source=Source(sha256="0", bytes=0, filename="t.pdf", pages=1),
+        engine=Engine(name="t", version="0", policy_version="0", config_sha256="0", components={}),
+        created_at="2026-01-01T00:00:00Z",
+        pages=[Page(number=1, width=612, height=792, kind="scanned", lines=lines)],
+    )
+
+
+def decided(*rows):
+    document = scanned_document(*rows)
+    policy.decide(document, Policy())
+    return list(document.lines())
+
+
+def test_agreeing_with_the_first_reader_settles_the_line():
+    (line,) = decided((DUE, MISREAD, DUE))
+    assert line.status == "accepted" and line.flags == [] and line.text == DUE
+    assert line.resolution == Resolution(
+        rule="crosscheck.third-reader", agreed=["ocr:one", "vlm:paddleocr-vl"], text_from="ocr:one"
+    )
+
+
+def test_agreeing_with_the_second_reader_takes_its_text_and_keeps_the_raw_reading():
+    (line,) = decided((MISREAD, DUE, DUE))
+    assert line.status == "accepted" and line.text == DUE and line.raw == MISREAD
+    assert line.resolution.text_from == "ocr:two"
+
+
+def test_layout_marks_are_not_text():
+    (line,) = decided((DUE, MISREAD, "☐ " + DUE + " |"))
+    assert line.status == "accepted"
+
+
+def test_no_exact_match_keeps_the_line_for_a_person():
+    (line,) = decided((DUE, MISREAD, "The due date is 31 July 2026."))
+    assert line.status == "flagged" and line.resolution is None
+    assert {f.rule for f in line.flags} == {"crosscheck.disagreement", "crosscheck.third-reader.no-match"}
+
+
+def test_an_agreeing_reading_must_pass_the_validators():
+    (line,) = decided(("The earlier order dated 31 March, 2025 is withdrawn.", BAD_DATE, BAD_DATE))
+    assert "crosscheck.third-reader.validators" in {f.rule for f in line.flags}
+
+
+def test_a_reader_that_saw_more_text_holds_the_line_back():
+    seen = "Designee Designee's Phone Personal identification"
+    more = "Designee Designee's name Phone no. Personal identification number (PIN)"
+    (line,) = decided((seen, more, seen))
+    assert "crosscheck.third-reader.omission" in {f.rule for f in line.flags}
+
+
+def test_an_underscore_inside_a_word_holds_the_line_back():
+    rows = ("See 2026-02 IRB#NOT-2026-3.", "See 2026-02_IRBANOT 2026-3.", "See 2026-02 IRB#NOT-2026-3.")
+    (line,) = decided(rows)
+    assert "crosscheck.third-reader.underscore" in {f.rule for f in line.flags}
+
+
+def test_text_that_belongs_to_the_next_line_holds_the_line_back():
+    longer = "Personal Address name on your social security card? If not, to ensure you get"
+    lines = decided(
+        ("Enter Address Does your name match the", "Enter Address Does your name match the", None),
+        ("Personal name on your social security", longer, longer),
+        ("card? If not, to ensure you get", "card? If not, to ensure you get", None),
+    )
+    assert "crosscheck.third-reader.neighbour" in {f.rule for f in lines[1].flags}
+
+
+def test_an_empty_reading_never_settles_a_line():
+    (line,) = decided(("...", "", "☐"))
+    assert line.status == "flagged" and line.resolution is None
+
+
+def test_a_line_with_another_flag_is_left_to_a_person():
+    (line,) = decided((BAD_DATE, "The earlier order dated 31 March, 2025 is withdrawn.", BAD_DATE))
+    assert line.resolution is None
+    assert not any(f.rule.startswith("crosscheck.third-reader") for f in line.flags)
+
+
+def test_the_third_reading_is_not_compared_like_the_others():
+    (line,) = decided((DUE, DUE, "something else entirely"))
+    assert line.status == "accepted" and line.flags == [] and line.resolution is None
+
+
+def test_deciding_again_starts_from_the_first_reader():
+    document = scanned_document((MISREAD, DUE, DUE))
+    policy.decide(document, Policy())
+    first = document.model_dump()
+    policy.decide(document, Policy())
+    assert document.model_dump() == first
+    line = next(document.lines())
+    line.readings = [r for r in line.readings if not r.source.startswith("vlm:")]
+    policy.decide(document, Policy())
+    assert line.text == MISREAD and line.status == "flagged" and line.resolution is None
+
+
+def test_shares_words():
+    assert shares_words("a card? If not, to b", "card? If not, to ensure", 4)
+    assert not shares_words("card? If not", "card? If not, to", 4)

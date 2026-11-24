@@ -13,7 +13,9 @@ class Policy:
     "passed every rule we have", not as a measured accuracy.
     """
 
-    version: str = "0.2"  # 0.2: codes mixing letters and digits are checked (validators/codes.py)
+    # 0.2: codes mixing letters and digits are checked (validators/codes.py)
+    # 0.3: a third reading (vlm:) settles a disputed scanned line when it matches exactly
+    version: str = "0.3"
     # Two readings of a line agree when their similarity is at least this and
     # every critical token (numbers, dates, section references, negations) matches.
     min_similarity: float = 0.90
@@ -25,6 +27,13 @@ class Policy:
     # and symbols may differ). Without it, readings a letter or two apart can agree,
     # and the line is accepted with the first reader's letters.
     same_letters: bool = False
+    # The third-reader rule (see policy._third_reader). A reading that did not match the
+    # third reader holds the line back when it has more than this many times the letters
+    # of the matched text: it saw text the others missed. And the matched text holds the
+    # line back when it shares this many consecutive words with a neighbouring line:
+    # it probably runs into that line.
+    third_reader_letter_ratio: float = 1.15
+    third_reader_neighbour_words: int = 4
 
 
 @dataclass(frozen=True)
