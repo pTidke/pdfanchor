@@ -16,7 +16,7 @@ from pathlib import Path
 from PIL import Image
 
 from .config import Config, ThirdReaderSettings
-from .isolation import BudgetExceeded, PageReader
+from .isolation import PageReader
 from .model import Box, Document, Flag, Line, Reading
 from .ocr import LineReader, LineUnreadable
 from .policy import VLM
@@ -114,7 +114,7 @@ def read_disputed(
                 image = pages_again.read(number, crosscheck=True).image
                 if image is None:
                     raise RuntimeError("The page could not be drawn again.")
-            except (BudgetExceeded, RuntimeError) as error:
+            except Exception as error:  # one bad page must not lose the others
                 message = getattr(error, "message", None) or str(error) or type(error).__name__
                 page.flags.append(
                     Flag(rule=_RULE, severity="review", message=f"The page could not be redrawn: {message}")
@@ -128,10 +128,10 @@ def read_disputed(
                     if s.budget_seconds is not None and clock() - start >= s.budget_seconds:
                         skipped += 1
                         continue
+                    if not prepared:
+                        reader.prepare()  # a model that will not load fails the run, not a line
+                        prepared = True
                     try:
-                        if not prepared:
-                            reader.prepare()
-                            prepared = True
                         entry = {"text": reader.read_line(piece, s.max_new_tokens, s.line_seconds)}
                     except LineUnreadable as error:
                         entry = {"unreadable": str(error) or "the reader gave up"}

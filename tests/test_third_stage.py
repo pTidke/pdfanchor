@@ -8,7 +8,7 @@ from ragnaroq import third
 from ragnaroq.config import Config, ThirdReaderSettings
 from ragnaroq.isolation import BudgetExceeded, PageReader
 from ragnaroq.model import Reading
-from ragnaroq.ocr import LineUnreadable
+from ragnaroq.ocr import EngineUnavailable, LineUnreadable
 from ragnaroq.pipeline import convert
 
 DUE = "The due date is 31st July 2026."
@@ -136,3 +136,33 @@ def test_running_twice_replaces_the_third_reading(scanned_pdf):
 def test_candidates_are_the_disputed_lines_in_order(scanned_pdf, both, expected):
     found = third.candidates(disputed(scanned_pdf, both=both))
     assert {number: [line.id for line in lines] for number, lines in found.items()} == {1: expected}
+
+
+def test_a_model_that_will_not_load_stops_the_stage(scanned_pdf, tmp_path):
+    class Broken(FakeLineReader):
+        def prepare(self):
+            self.prepared += 1
+            raise EngineUnavailable("no model here")
+
+    reader = Broken([DUE])
+    with pytest.raises(EngineUnavailable):
+        third.read_disputed(
+            disputed(scanned_pdf, both=True), scanned_pdf.read_bytes(), Config(), reader, cache=tmp_path
+        )
+    assert reader.prepared == 1 and reader.crops == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_drawing_error_without_isolation_keeps_the_first_decisions(scanned_pdf, monkeypatch):
+    document = disputed(scanned_pdf)
+
+    def refuse(*args, **kwargs):
+        raise ValueError("Render exceeds the pixel budget")
+
+    monkeypatch.setattr("ragnaroq.native.render", refuse)
+    reader = FakeLineReader([DUE])
+    third.read_disputed(document, scanned_pdf.read_bytes(), Config(isolate_pages=False), reader)
+    assert not any(r.source.startswith("vlm:") for line in document.lines() for r in line.readings)
+    (flag,) = document.pages[0].flags
+    assert flag.rule == "third-reader.unread" and "Render exceeds the pixel budget" in flag.message
+    assert reader.crops == []
