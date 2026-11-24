@@ -84,10 +84,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         command.add_argument("--vlm-models", help="Folder with the third reader's model files")
         command.add_argument(
-            "--vlm-download", action="store_true", help="Fetch missing model files into --vlm-models"
+            "--vlm-download",
+            action="store_true",
+            help="Fetch missing model files into --vlm-models, or the Hugging Face cache when that is "
+            "not given",
         )
         command.add_argument(
-            "--third-reader-budget", type=float, help="Seconds the third reader may spend in all"
+            "--third-reader-budget", type=float, help="Seconds the third reader may spend on each document"
         )
     for command in (run, listing, check):
         command.add_argument(

@@ -353,7 +353,7 @@
     },
     "Reading": {
       "additionalProperties": false,
-      "description": "Another reading of the same place, kept for comparison. Never merged into `text`.",
+      "description": "Another reading of the same place. Its text becomes the line's `text` only through `resolution`.",
       "properties": {
         "source": {
           "title": "Source",

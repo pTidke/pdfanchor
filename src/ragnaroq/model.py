@@ -33,7 +33,7 @@ class Flag(Model):
 
 
 class Reading(Model):
-    """Another reading of the same place, kept for comparison. Never merged into `text`."""
+    """Another reading of the same place. Its text becomes the line's `text` only through `resolution`."""
 
     source: str
     text: str

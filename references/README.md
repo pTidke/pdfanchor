@@ -86,6 +86,11 @@ The owner chose to fix the answer key (words printed with no visible gap are one
 
 The 6 accepted lines wrong on a number in both runs come from the two-reader rule that existed in 0.1, not from the third reader. In 5 of them, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, the Schedule C title, both readers missed the small "(Form 1040)". The 0.1 result of none on the IRS set does not hold on these documents. A follow-up is planned; this release does not fix it.
 
+### Next steps before relying on this result
+
+- The next fresh held-out set includes All About Tax PDFs, and confirms the answer-key change (words printed with no visible gap are one word) on documents it was not made for.
+- The 0.1 sets are scored again under the new answer key, so every published number uses one answer key.
+
 ### From the spike
 
 Before the build, the same rule was simulated on stored readings of the 0.1 reference sets. On the IRS set, lines sent to a person fell from 1,242 to about 650 (48% fewer), and on the code table from 322 to 178 (45% fewer), with no line settled wrong on a number, date or negation. Code-table lines took 8.7 seconds each on average, IRS lines 3.5 seconds.
@@ -115,7 +120,7 @@ Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with t
 
 - **Accepted lines with other mistakes, 6.2% of accepted.** About half are harmless symbols, such as checkbox drawings read as `[_]`. The other half are letter slips, such as `Hf you` for *If you*. A letter slip gets through when the readers differ by a letter or two, because the line is accepted with the first reader's text.
 
-  **Strict mode (`--same-letters`)** requires the readers to have the same letters and digits, not only to be similar. It cuts the letter slips let through from 90 to 8. But in most lines where the readers differ by a letter, the first reader was right and the second slipped. So strict mode sends 324 correct lines to a person to catch 82 slips, and the accepted share falls from 72.3% to 62.8%. It is an option for word-perfect needs, such as legal text and citations, not the default. A third reader would settle such lines by majority instead.
+  **Strict mode (`--same-letters`)** requires the readers to have the same letters and digits, not only to be similar. It cuts the letter slips let through from 90 to 8. But in most lines where the readers differ by a letter, the first reader was right and the second slipped. So strict mode sends 324 correct lines to a person to catch 82 slips, and the accepted share falls from 72.3% to 62.8%. It is an option for word-perfect needs, such as legal text and citations, not the default. Since 0.2.0, the third reader looks only at lines the two readers disagree on, so a letter slip both readers share, or one within the agreement threshold, is still accepted.
 - **Lines sent to a person although right, 58% of flagged.** That is the price of caution; the next experiments should lower it.
 
 The runs in this table were measured with the 0.1 answer key, before words printed with no visible gap were joined into one word (0.2.0). These runs were not scored again. The held-out set above uses the new answer key.

@@ -65,7 +65,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | EasyOCR as a second reader on scanned pages | Working, tested with the real models in CI; English only |
 | Process isolation and resource limits per page | Working: a worker process per document, with a time, memory and character limit per page |
 | Low-resolution scans read at a higher resolution | Working: under 150 dpi, read at 300 |
-| A third reader for lines the two readers dispute | Working, optional (`--third-reader`, `ragnaroq[vlm]`); scanned lines only; about 2.5 seconds a disputed line on a CPU |
+| A third reader for lines the two readers dispute | Working, optional (`--third-reader`, `ragnaroq[vlm]`); scanned lines only; about 2.5 seconds a disputed line on a CPU with native bfloat16; float32 CPUs are about 2.5 times slower |
 | Pinned, hash-checked OCR weights | Partly: the third reader's files are pinned to a revision and checked by SHA-256; EasyOCR checks its own MD5 sums and is not pinned yet |
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
@@ -101,9 +101,12 @@ The models are fetched once into `--easyocr-models`; leave out `--easyocr-downlo
 A third reader for the scanned lines the two readers still dispute, PaddleOCR-VL-1.6 through Hugging Face transformers (an optional extra; about 1.9 GB of model files, checked against pinned SHA-256 sums):
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install "ragnaroq[vlm]"
+ragnaroq convert scan.pdf --out out/ --third-reader --vlm-download
 ```
+
+The files are fetched once, into `--vlm-models` or the Hugging Face cache when it is not given; leave out `--vlm-download` afterwards to stay offline.
 
 Exit code `0` means every line was accepted by rule, `2` means the files were written and something needs a person, `1` means the file could not be processed.
 
@@ -159,12 +162,19 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 
 - **Third reader (optional, `--third-reader`).** A scanned line the two engines disagree on is read again, as a crop, by a local model. The line is accepted only if the model's reading exactly matches one of the two engines' readings and four checks pass:
   - neither matching reading trips a validator;
-  - no other reading has clearly more letters, which would mean both missed small print;
+  - no other reading saw something the agreeing pair missed: clearly more letters (small print both missed), a negation, or a number where the model wrote a layout mark such as a checkbox or `|`;
   - no reading has an underscore inside a word or number, which an underline can hide;
-  - the line does not repeat four words of the line before or after it, which happens when its box covers two printed lines.
+  - the line does not repeat four words of the line above or below it in the same column, or of the line before or after it in reading order, which happens when its box covers two printed lines.
 
-  Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. It costs about 2.5 seconds a disputed line on a CPU.
-- **Known limit.** Both engines can read a "1" as "|" and agree, and the line is then accepted before the third reader is consulted. Of the six accepted lines wrong on a number on the held-out set, with or without the third reader, five were this. A follow-up is planned.
+  Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. It costs about 2.5 seconds a disputed line on a CPU with native bfloat16; float32 CPUs are about 2.5 times slower.
+- **Known limits.**
+  - Both engines can read a "1" as "|" and agree, and the line is then accepted before the third reader is consulted. Of the six accepted lines wrong on a number on the held-out set, with or without the third reader, five were this. A follow-up is planned.
+  - A digit that one reader saw and the other two missed is outvoted.
+  - Where EasyOCR read nothing, Tesseract and the model settle the line between them.
+  - Negations such as "cannot", and contractions such as "don't", are not recognised as negations (this predates 0.2.0).
+  - Superscript digits are folded into plain digits in the two-reader comparison, so "80¹" agrees with "801" there (this predates 0.2.0).
+  - Pages over 16 million pixels at 300 dpi (A3 and larger; A4, Letter and Legal fit) are not read by the third reader; their disputed lines stay with a person.
+  - The per-line time limit and the budget are wall-clock limits, so on a slow or busy machine they can change which lines are read.
 
 Two switches loosen this when you have no second reader: `Policy.accept_native_without_crosscheck` and `Policy.accept_single_ocr_reading`. Both are off by default.
 

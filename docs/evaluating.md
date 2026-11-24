@@ -63,11 +63,11 @@ The **threshold table** re-decides every line at agreement thresholds from 0.80 
 ragnaroq evaluate refs/ --out results/ --easyocr-models ~/easyocr-models --third-reader
 ```
 
-`--third-reader` adds a local model (PaddleOCR-VL-1.6, from `ragnaroq[vlm]`) that reads the crop of each scanned line Tesseract and EasyOCR disagree on. A fixed rule then settles the line or keeps it for a person; see "How it decides" in the [README](../README.md#how-it-decides). The model is chosen with `--vlm-models DIR` and fetched only with `--vlm-download`. `--third-reader-budget SECONDS` limits the time it may spend in all. That budget, like the limit of 120 seconds on each line, is wall-clock time, so on a slow or busy machine it can change which lines are read.
+`--third-reader` adds a local model (PaddleOCR-VL-1.6, from `ragnaroq[vlm]`) that reads the crop of each scanned line Tesseract and EasyOCR disagree on. A fixed rule then settles the line or keeps it for a person; see "How it decides" in the [README](../README.md#how-it-decides). The model is chosen with `--vlm-models DIR` and fetched only with `--vlm-download`. `--third-reader-budget SECONDS` limits the time it may spend on each document. That budget, like the limit of 120 seconds on each line, is wall-clock time, so on a slow or busy machine it can change which lines are read.
 
 It changes `evaluate` in three ways:
 
-- It reads only the disputed lines' crops, about 2.5 seconds a line on a 4-core CPU in the held-out run. Each reading is kept in `<out>/cache/third`, keyed by the crop and the model's settings, so a run decides stored readings again in seconds. It draws pages again only for crops it has not read.
+- It reads only the disputed lines' crops, about 2.5 seconds a line on a 4-core CPU with native bfloat16 in the held-out run; float32 CPUs are about 2.5 times slower. Each reading is kept in `<out>/cache/third`, keyed by the crop and the model's settings, so a run decides stored readings again in seconds. Every page with disputed lines is still drawn again, to work out each crop's key, but only crops not in the cache are read by the model.
 - To compare with and without the third reader on the same base readings, run without it first, then copy the `cache` folder into a new output folder and run again with `--third-reader`. The commands are in [references/](../references/README.md#held-out-set-020).
 - The report gains a **Third reader** section:
 

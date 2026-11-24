@@ -9,16 +9,16 @@ A third reader for the scanned lines the two OCR readers still dispute.
 - **A third reader.** A local model, PaddleOCR-VL-1.6, reads the crop of each scanned line that Tesseract and EasyOCR disagree on. A fixed rule then settles the line, or keeps it for a person. The line is accepted only when:
   - the model's reading matches one of the two OCR readings exactly (in the form `evaluate` scores with);
   - the validators pass;
-  - no reading has clearly more letters than the pair that agree (omission);
+  - no reading saw something the pair that agree missed: clearly more letters, a negation, or a number where the model wrote a layout mark such as a checkbox or `|` (omission);
   - no reading has an underscore inside a word or number (underscore);
-  - the agreeing text does not share four words with the line before or after it (neighbour).
+  - the agreeing text does not share four words with the line above or below it in the same column, or the line before or after it in reading order (neighbour).
 
   A line that fails any check stays flagged, with `crosscheck.third-reader` and the check that held it back. Text is still never repaired: a settled line carries the agreeing OCR reader's text, and `resolution` records which readings agreed.
-- **How to switch it on.** It is off by default. Install the extra, `pip install "ragnaroq[vlm]"` (install CPU-only `torch` first; about 1.9 GB of model files, checked against pinned SHA-256 sums). Then add `--third-reader` to `ragnaroq convert` or `ragnaroq evaluate`.
+- **How to switch it on.** It is off by default. Install the extra, `pip install "ragnaroq[vlm]"` (install CPU-only `torch` and `torchvision` first; about 1.9 GB of model files, checked against pinned SHA-256 sums). Then add `--third-reader` to `ragnaroq convert` or `ragnaroq evaluate`.
   - `--vlm-models DIR` says where the model files live.
   - `--vlm-download` lets missing files be fetched. Without it a missing model stops the run at the start.
-  - `--third-reader-budget SECONDS` limits the time it may spend in all; lines not read stay flagged.
-- **Its cost in time.** About 2.5 seconds for each disputed line on a 4-core CPU with no GPU (3.5 seconds on the 0.1 IRS set, 8.7 on the code table), and nothing for lines the two readers agree on. Each line is limited to 160 new tokens, which stops a model that repeats itself, and to 120 seconds, a safety net only. Readings are cached, so `evaluate` decides them again in seconds.
+  - `--third-reader-budget SECONDS` limits the time it may spend on each document; lines not read stay flagged.
+- **Its cost in time.** About 2.5 seconds for each disputed line on a 4-core CPU with native bfloat16 and no GPU (3.5 seconds on the 0.1 IRS set, 8.7 on the code table), and nothing for lines the two readers agree on; float32 CPUs are about 2.5 times slower. Each line is limited to 160 new tokens, which stops a model that repeats itself, and to 120 seconds, a safety net only. Readings are cached, so `evaluate` decides them again in seconds.
 - **Third reader section in the evaluation report:** lines settled, how many were wrong, how many wrong on a number, date or negation, and how many each check held back.
 
 ### Changed
@@ -53,6 +53,12 @@ Sources, checksums and commands: [references/](references/README.md).
 
 - **A "1" read as "|".** The 6 accepted lines wrong on a number, in both held-out runs, come from the two-reader rule, not the third reader. In 5, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, both missed the small "(Form 1040)" in the Schedule C title. The 0.1 result of none on the IRS set does not hold on these documents. It is not fixed in this release; a follow-up is planned.
 - The third reader covers scanned lines only, and only lines disputed by two readers. Text-layer pages and machines without EasyOCR are unchanged.
+- A digit that one reader saw and the other two missed is outvoted.
+- Where EasyOCR read nothing, Tesseract and the model settle the line between them.
+- Negations such as "cannot", and contractions such as "don't", are not recognised as negations (this predates 0.2.0).
+- Superscript digits are folded into plain digits in the two-reader comparison, so "80¹" agrees with "801" there (this predates 0.2.0).
+- Pages over 16 million pixels at 300 dpi (A3 and larger; A4, Letter and Legal fit) are not read by the third reader; their disputed lines stay with a person.
+- The per-line time limit and the budget are wall-clock limits, so on a slow or busy machine they can change which lines are read.
 - The set is synthetic scans of IRS documents, a best case, as in 0.1.
 
 ## 0.1.1 — 23 November 2026
