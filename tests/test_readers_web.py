@@ -1420,3 +1420,23 @@ def test_r24_declared_charsets_decode_as_browsers_decode_them():
     for label in ("utf-7", "iso-2022-kr", "hz-gb-2312", "x-user-defined"):
         result = read_html(f"<meta charset='{label}'><body><p>Caf\xe9</p>".encode())
         assert texts(result) == ["Caf\xe9"] and rules(result.document.flags) == ["encoding.mismatch"], label
+
+
+# --- fix round 4 (R25) ---------------------------------------------------------------------------
+
+
+def big5_page(body: bytes):
+    return read_html(b'<html><head><meta charset="big5"></head><body><p>' + body + b"</p></body></html>")
+
+
+def test_r25_big5_maps_only_the_euro_and_never_redecodes_with_another_table():
+    plain = big5_page("\u2460\u7a05\u7387 \u2461\u6263\u9664".encode("big5hkscs"))
+    assert texts(plain) == ["\u2460\u7a05\u7387 \u2461\u6263\u9664"] and plain.document.flags == []
+    euro = big5_page("\u2460\u7a05\u7387 \u2461\u6263\u9664 ".encode("big5hkscs") + b"\xa3\xe1100")
+    assert texts(euro) == ["\u2460\u7a05\u7387 \u2461\u6263\u9664 \u20ac100"] and euro.document.flags == []
+    kana = big5_page("\u3059\u3057 ".encode("big5hkscs") + b"\xa3\xe15")
+    assert texts(kana) == ["\u3059\u3057 \u20ac5"] and kana.document.flags == []
+    roman = big5_page("\u2170\u2171 \u4e36 ".encode("big5hkscs") + b"\xa3\xe1")
+    assert texts(roman) == ["\u2170\u2171 \u4e36 \u20ac"] and roman.document.flags == []
+    wrong = big5_page("\u7a05\u7387 \u20ac100 \u2460".encode())  # UTF-8 bytes under a Big5 label
+    assert "\ufffd" in texts(wrong)[0] and rules(wrong.document.flags) == ["encoding.mismatch"]

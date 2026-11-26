@@ -4,6 +4,7 @@ them, and a nested block is a line of its own after it. Scripts, styles, templat
 the head are not read, except the title, which names the page. Text a visitor never sees is
 read and flagged. Images are figures; none is fetched, and none leaves the file's folder."""
 
+import codecs
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -93,7 +94,22 @@ _DECODERS = {
         " utf-32 utf-32be utf-32le ucs-4"
     ),
 }
-_ALSO = {"big5hkscs": "cp950"}
+_BIG5_ERRORS = "ragnaroq-big5"
+_MISMATCH = "The page declares {} but some bytes do not fit it; they were read as replacement characters."
+
+
+def _big5_errors(error):
+    """Python's Big5 lacks the one code browsers map that matters on tax pages, the euro (A3E1).
+    That alone is mapped here; any other byte that does not fit is a replacement character. The
+    page is never decoded again with another table, which reads other characters differently."""
+    if not isinstance(error, UnicodeDecodeError):
+        raise error
+    if error.object[error.start : error.start + 2] == b"\xa3\xe1":
+        return "\u20ac", error.start + 2
+    return "\ufffd", error.end
+
+
+codecs.register_error(_BIG5_ERRORS, _big5_errors)
 _LABEL_DECODER = {label: codec for codec, labels in _DECODERS.items() for label in labels.split()}
 _MAX_COLSPAN, _MAX_ROWSPAN = 1000, 65534  # HTML's own limits; columns past 1000 are not tracked
 
@@ -568,19 +584,18 @@ def _text_of(data: bytes, name: str, document) -> str:
     if declared:
         codec = _codec(declared)
     if codec:
+        if codec == "big5hkscs":
+            text = data.decode(codec, errors=_BIG5_ERRORS)
+            if "\ufffd" in text:  # Big5 has no U+FFFD, so it is a byte that did not fit
+                _note(document, "encoding.mismatch", _MISMATCH.format(declared))
+            return text
         try:
             return data.decode(codec)
         except UnicodeDecodeError:
-            if codec in _ALSO:  # Python's Big5 lacks a few characters that browsers map (the euro)
-                try:
-                    return data.decode(_ALSO[codec])
-                except UnicodeDecodeError:
-                    pass
             _note(
                 document,
                 "encoding.mismatch",
-                f"The page declares {declared} but some bytes do not fit it; they were read as "
-                "replacement characters.",
+                _MISMATCH.format(declared),
             )
             return data.decode(codec, errors="replace")
     try:
