@@ -158,7 +158,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 - A scanned page whose image holds under 150 dots per inch is read at 300 instead of 200. On low-resolution scans this removed the critical errors no text rule can see, such as `113208` read for `11320B`.
 - Anything else is **flagged** with the rule that caused it. Tables are always flagged.
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
-- Text is never repaired. A flag says what looks wrong; the text stays as read.
+- Text is never invented or edited. A flag says what looks wrong. A line the third reader settles carries the text of the OCR reader it agreed with, exactly as that reader read it.
 
 - **Third reader (optional, `--third-reader`).** A scanned line the two engines disagree on is read again, as a crop, by a local model. The line is accepted only if the model's reading exactly matches one of the two engines' readings and four checks pass:
   - neither matching reading trips a validator;

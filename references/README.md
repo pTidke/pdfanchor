@@ -72,7 +72,7 @@ The second run starts from the first run's stored readings, so both runs decide 
 | Accepted but wrong | 330 (12.5%) | 350 (11.3%) |
 | Accepted with a wrong number, date or negation | 6 | 6 |
 
-The third reader settled 447 lines. 20 of them were not exactly the answer key: all spacing, punctuation, or a line box that also covers a neighbouring field's words. None was wrong on a number, date or negation. It held back the lines where its reading failed a check: no match 491, validators 0, omission 47, underscore 10, neighbour 16. It read 1,024 crops in about 43 minutes, about 2.5 seconds a line.
+The third reader settled 447 lines. 20 of them were not exactly the answer key: all spacing, punctuation, or a line box that also covers a neighbouring field's words. None was wrong on a number, date or negation. It held back the lines where its reading failed a check: no match 491, validators 0, omission 47, underscore 10, neighbour 16. It read 1,024 crops in about 43 minutes, about 2.5 seconds a line, on a CPU with native bfloat16 (float32 CPUs are about 2.5 times slower).
 
 The accepted-but-wrong count rose from 330 to 350 because more lines were accepted (2,640 to 3,087); the rate fell from 12.5% to 11.3%.
 
