@@ -118,7 +118,7 @@ def _module(fmt: str):
     except ModuleNotFoundError as error:
         if error.name == f"{__name__}.{fmt}_reader":
             raise ReaderUnavailable(f"There is no reader for {fmt} yet.") from error
-        hint = "pip install ragnaroq[formats]"
+        hint = "pip install 'ragnaroq[formats]'"
         raise ReaderUnavailable(f"The {fmt} reader needs {error.name}: {hint}") from error
 
 

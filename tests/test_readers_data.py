@@ -212,3 +212,77 @@ def test_evaluate_run_scores_a_folder_of_answer_keys(tmp_path):
     markdown = evaluate.to_markdown(report)
     assert "## Exact formats" in markdown and "deductions.json" in markdown
     assert evaluate.write(report, tmp_path / "out")["markdown"].read_text().count("## Exact formats") == 1
+
+
+def _timed(data, name):
+    import time
+
+    start = time.perf_counter()
+    read_bytes(data, name, Config())
+    return time.perf_counter() - start
+
+
+def test_a_wide_file_reads_in_linear_time():
+    xml = ("<r>" + "<a>x</a>" * 20_000 + "</r>").encode()
+    csv_data = ("a,b\n" + "1,2\n" * 20_000).encode()
+    assert _timed(xml, "w.xml") < 3
+    assert _timed(csv_data, "w.csv") < 3
+    records = ('[' + ",".join('{"k": 1}' for _ in range(20_000)) + "]").encode()
+    assert _timed(records, "w.json") < 3
+    flat = ('{"k": [' + ",".join(["1"] * 20_000) + "]}").encode()
+    assert _timed(flat, "f.json") < 3
+
+
+def test_a_crafted_unterminated_string_does_not_stall_the_depth_check():
+    import time
+
+    data = b'{"a":"' + b'\\"' * 200_000
+    start = time.perf_counter()
+    with pytest.raises(ReaderRefused) as e:
+        read_bytes(data, "evil.json", Config())
+    assert time.perf_counter() - start < 1
+    assert e.value.rule == "json.invalid"
+
+
+def test_a_huge_json_integer_is_refused_cleanly():
+    with pytest.raises(ReaderRefused) as e:
+        read_bytes(b'{"a": ' + b"9" * 5000 + b"}", "big.json", Config())
+    assert e.value.rule == "json.invalid"
+
+
+def test_a_truncated_utf16_csv_is_refused_cleanly():
+    data = "a,b\n1,2\n".encode("utf-16") + b"\x00"
+    with pytest.raises(ReaderRefused) as e:
+        read_bytes(data, "odd.csv", Config())
+    assert e.value.rule == "csv.invalid"
+
+
+def test_a_missing_format_library_says_how_to_install_it(monkeypatch):
+    import importlib
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        z.writestr("[Content_Types].xml", "<x/>")
+        z.writestr("xl/workbook.xml", "<x/>")
+
+    def missing(name, *args):
+        raise ModuleNotFoundError("No module named 'openpyxl'", name="openpyxl")
+
+    monkeypatch.setattr(importlib, "import_module", missing)
+    with pytest.raises(readers.ReaderUnavailable) as e:
+        read_bytes(buffer.getvalue(), "a.xlsx", Config())
+    assert "pip install 'ragnaroq[formats]'" in str(e.value)
+
+
+def test_format_reader_limits_do_not_change_the_pdf_reading_key():
+    from dataclasses import replace
+
+    assert Config().reading_sha256() == replace(Config(), max_cells=5, max_depth=3).reading_sha256()
+
+
+def test_json_depth_scan_handles_escapes_and_brackets_in_strings():
+    data = br'{"a": "x\\", "b": "[[[\"[", "c": [1]}'
+    doc = read_bytes(data, "esc.json", Config(max_depth=2)).document
+    assert [line.text for line in doc.lines()] == ["a: x\\", 'b: [[["[', "c", "1"]

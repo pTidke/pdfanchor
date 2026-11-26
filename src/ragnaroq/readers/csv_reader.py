@@ -30,7 +30,10 @@ def _delimiter(text: str) -> str:
 
 
 def read(data: bytes, name: str, config: Config) -> ReadResult:
-    text, guessed = _decode(data)
+    try:
+        text, guessed = _decode(data)
+    except UnicodeDecodeError as error:
+        raise ReaderRefused("csv.invalid", f"{name} is not valid UTF-16 text: {error}") from error
     delimiter = _delimiter(text)
     try:
         rows = list(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter))
@@ -55,7 +58,7 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
         header.append(label)
     cells = []
     for r, row in enumerate(rows, 1):
-        paragraph = max((line.paragraph for line in page.lines), default=0) + 1
+        paragraph = _build.next_paragraph(page)
         for c in range(width):
             value = row[c] if c < len(row) else ""
             anchor = CsvAnchor(row=r, column=header[c])

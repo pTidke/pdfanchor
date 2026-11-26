@@ -29,6 +29,12 @@ def start(data: bytes, name: str, fmt: str, config: Config, components: dict[str
     )
 
 
+def next_paragraph(page: Page) -> int:
+    """The number after the page's last paragraph. Readers add lines in order, so the last
+    line holds the highest number; this avoids rescanning every line."""
+    return page.lines[-1].paragraph + 1 if page.lines else 1
+
+
 def add_line(
     page: Page,
     text: str,
@@ -43,7 +49,7 @@ def add_line(
     """Append a line with id `p{page}-l{n}`. Without `paragraph` it starts a paragraph of its own."""
     n = len(page.lines) + 1
     if paragraph is None:
-        paragraph = max((line.paragraph for line in page.lines), default=0) + 1
+        paragraph = next_paragraph(page)
     line = Line(
         id=f"p{page.number}-l{n}",
         page=page.number,

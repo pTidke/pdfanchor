@@ -10,7 +10,7 @@ from ..config import Config
 from ..model import Cell, Flag, Table
 from . import READER_VERSIONS, ReaderRefused, ReadResult, _build
 
-_TOKENS = re.compile(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', re.DOTALL)
+_MARKS = re.compile(r'[\[\]{}"\\]')
 
 
 def _pointer(parts: tuple) -> str:
@@ -18,10 +18,21 @@ def _pointer(parts: tuple) -> str:
 
 
 def _check_depth(text: str, limit: int) -> None:
-    depth = 0
-    for token in _TOKENS.finditer(text):
-        char = token.group()
-        if char in "[{":
+    """One pass over the text, tracking whether it is inside a string; time grows with its length."""
+    depth, in_string, backslash = 0, False, -2
+    for mark in _MARKS.finditer(text):
+        char = mark.group()
+        if in_string:
+            if mark.start() == backslash + 1:
+                backslash = -2  # directly after a backslash: this mark is escaped
+            elif char == "\\":
+                backslash = mark.start()
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
             depth += 1
             if depth > limit:
                 raise ReaderRefused("json.too-deep", f"JSON is nested more than {limit} levels deep.")
@@ -66,7 +77,7 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
 
     try:
         root = json.loads(text, object_pairs_hook=pairs, parse_float=Decimal, parse_constant=str)
-    except (json.JSONDecodeError, RecursionError) as error:
+    except (ValueError, RecursionError) as error:  # ValueError also covers over-long integers
         raise ReaderRefused("json.invalid", f"{name} is not valid JSON: {error}") from error
 
     document = _build.start(data, name, "json", config, {"reader:json": READER_VERSIONS["json"]})
@@ -84,7 +95,7 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
         table_id = f"p1-t{tables}"
         columns = list(rows[0])
         cells = []
-        paragraph = max((line.paragraph for line in page.lines), default=0)
+        paragraph = _build.next_paragraph(page) - 1
         for c, column in enumerate(columns):  # a header has no pointer of its own: it takes its first value's
             add(column, (*parts, 0, column), "table", table_id=table_id, paragraph=paragraph + 1)
             anchor = JsonAnchor(pointer=_pointer((*parts, 0, column)))
