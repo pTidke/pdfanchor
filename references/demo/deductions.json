@@ -1,0 +1,11 @@
+{
+  "taxpayer": {"name": "Asha Rao", "pan": "ABCDE1234F"},
+  "year": 2026,
+  "limit": 100000,
+  "limit": 150000,
+  "deductions": [
+    {"section": "80C", "amount": 150000, "note": "PPF"},
+    {"section": "80D", "amount": 25000, "note": "Health"},
+    {"section": "80G", "amount": 5000, "note": "Donation"}
+  ]
+}

@@ -1,0 +1,4 @@
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A1"}, "text": "Base"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B1"}, "text": "100"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A2"}, "text": "Tax"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B2"}, "text": "", "flag": "xlsx.no-cached-value"}

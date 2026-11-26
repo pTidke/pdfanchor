@@ -1,0 +1,10 @@
+{"anchor": {"type": "csv", "row": 1, "column": "name"}, "text": "name"}
+{"anchor": {"type": "csv", "row": 1, "column": "rate"}, "text": "rate"}
+{"anchor": {"type": "csv", "row": 1, "column": "note"}, "text": "note"}
+{"anchor": {"type": "csv", "row": 2, "column": "name"}, "text": "Café"}
+{"anchor": {"type": "csv", "row": 2, "column": "rate"}, "text": "5%"}
+{"anchor": {"type": "csv", "row": 2, "column": "note"}, "text": "Paid in €\nmonthly"}
+{"anchor": {"type": "csv", "row": 3, "column": "name"}, "text": "Tea"}
+{"anchor": {"type": "csv", "row": 3, "column": "rate"}, "text": "12%"}
+{"anchor": {"type": "csv", "row": 3, "column": "note"}, "text": "plain"}
+{"document_flag": "encoding.guessed"}

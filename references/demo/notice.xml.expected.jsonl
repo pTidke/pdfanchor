@@ -1,0 +1,8 @@
+{"anchor": {"type": "xml", "path": "/notice/@id"}, "text": "N-7"}
+{"anchor": {"type": "xml", "path": "/notice/@date"}, "text": "2026-07-31"}
+{"anchor": {"type": "xml", "path": "/notice/title"}, "text": "Extension of due date"}
+{"anchor": {"type": "xml", "path": "/notice/body/para[1]"}, "text": "The due date is extended."}
+{"anchor": {"type": "xml", "path": "/notice/body/para[2]/@lang"}, "text": "hi"}
+{"anchor": {"type": "xml", "path": "/notice/body/para[2]"}, "text": "Please file early."}
+{"anchor": {"type": "xml", "path": "/notice/signatory/@role"}, "text": "Commissioner"}
+{"anchor": {"type": "xml", "path": "/notice/signatory"}, "text": "A. Rao"}

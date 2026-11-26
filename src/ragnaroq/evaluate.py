@@ -13,10 +13,11 @@ differently from the original is still compared with exactly the words it covers
 import hashlib
 import json
 import unicodedata
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import policy, reference, structure
+from . import expected, policy, reference, structure
 from .config import Config
 from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
 from .model import SCHEMA_VERSION, Document, Line
@@ -496,3 +497,82 @@ def write(report: Report, out: str | Path) -> dict[str, Path]:
     files["json"].write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=1), encoding="utf8")
     files["markdown"].write_text(to_markdown(report), encoding="utf8")
     return files
+
+
+@dataclass
+class ExactFile:
+    name: str
+    score: expected.ExactScore | None = None
+    error: str | None = None  # the reader raised: nothing was scored
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and self.score is not None and self.score.ok
+
+
+@dataclass
+class ExactReport:
+    files: list[ExactFile]
+
+    @property
+    def ok(self) -> bool:
+        return all(f.ok for f in self.files)
+
+
+def run_exact(folder: str | Path, read: Callable[[bytes, str, Config], object]) -> ExactReport:
+    """Score every file with a `<file>.expected.jsonl` beside it, by anchor.
+
+    `read(data, filename, config)` returns a `Document`, or an object with a `.document`.
+    A file the reader refuses must come back as a document with the refusing flag, which
+    its answer key lists as a `document_flag`; a reader that raises is reported as an error."""
+    config = Config()
+    files = []
+    for key_path in sorted(Path(folder).glob("*.expected.jsonl")):
+        path = key_path.with_name(key_path.name.removesuffix(".expected.jsonl"))
+        if not path.exists():
+            raise FileNotFoundError(f"{key_path.name} has no {path.name} beside it.")
+        items = expected.load(key_path)
+        try:
+            result = read(path.read_bytes(), path.name, config)
+            document = result if isinstance(result, Document) else result.document
+        except Exception as error:  # a reader that fails is a result, not a crash of the run
+            files.append(ExactFile(path.name, error=f"{type(error).__name__}: {error}"))
+            continue
+        files.append(ExactFile(path.name, score=expected.score(document, items)))
+    if not files:
+        raise FileNotFoundError(f"No *.expected.jsonl files in {folder}.")
+    return ExactReport(files)
+
+
+def exact_markdown(report: ExactReport) -> str:
+    out = [
+        "## Exact formats",
+        "",
+        "Each file is scored line by line against a hand-written answer key, matched by anchor.",
+        "",
+        "| File | Result | Right | Wrong | Missing | Flags missing | Extra |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    details = []
+    for f in report.files:
+        if f.score is None:
+            out.append(f"| {f.name} | error | | | | | |")
+            details.append(f"- {f.name}: {f.error}".replace("|", "¦"))
+            continue
+        s = f.score
+        out.append(
+            f"| {f.name} | {'ok' if f.ok else 'FAIL'} | {s.right} | {len(s.wrong)} | {len(s.missing)} | "
+            f"{len(s.flags_missing)} | {len(s.extra)} |"
+        )
+        for kind, rows in (("wrong", s.wrong), ("missing", s.missing), ("flag missing", s.flags_missing)):
+            details += [f"- {f.name}, {kind}: `{json.dumps(row, ensure_ascii=False)}`" for row in rows]
+    return "\n".join(out + ([""] + details if details else [])) + "\n"
+
+
+def write_exact(report: ExactReport, out: str | Path) -> Path:
+    """Write the "Exact formats" section as its own evaluation.md, for `evaluate.run` to merge."""
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "evaluation.md"
+    path.write_text("# RAGnaroq evaluation\n\n" + exact_markdown(report), encoding="utf8")
+    return path

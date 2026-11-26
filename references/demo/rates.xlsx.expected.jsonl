@@ -1,0 +1,13 @@
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A1"}, "text": "Item"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B1:D1"}, "text": "Values"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A2"}, "text": "Rate"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B2"}, "text": "5%"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A3"}, "text": "Amount"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B3"}, "text": "₹1,50,000"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A4"}, "text": "Date"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B4"}, "text": "26-Nov-2026"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A5"}, "text": "Tax"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B5"}, "text": "7500"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "A6"}, "text": "Odd"}
+{"anchor": {"type": "xlsx", "sheet": "Rates", "cell": "B6"}, "text": "1234.5", "flag": "xlsx.format-unknown"}
+{"document_flag": "xlsx.hidden"}
