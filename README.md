@@ -70,7 +70,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
 | Large documents in page groups | Not built |
-| Accuracy measured on reference pages | On public IRS documents turned into scans (0.1): 72.3% of lines accepted, none wrong on a number, date or negation. On a held-out set of five other IRS documents, 6 accepted lines were wrong on a number, with or without the third reader. In 5, both OCR readers read a "1" as "|" and agree. This is a known limitation, not fixed in 0.2.0; a follow-up is planned. See [references/](references/README.md) |
+| Accuracy measured on reference pages | On public IRS documents turned into scans (0.1): 72.3% of lines accepted, none wrong on a number, date or negation. On a held-out set of five other IRS documents, 0.2.0 accepted 6 lines wrong on a number, with or without the third reader; in 5, both OCR readers read a "1" as "|". Since 0.2.1 a lone "|" is flagged, and 1 remains: a title where both readers missed the small "(Form 1040)". See [references/](references/README.md) |
 
 ## Install and run
 
@@ -156,6 +156,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 - A scanned line is **accepted** when two engines agree by the same test.
 - Two engines can agree on the same mistake. In text read from an image, a code that mixes letters and digits is therefore flagged when it holds a letter readers take for a digit: `R28C0` read as `R28CO`, `PAN AABTS1181R`. So is a bracket the line never pairs, as in `4a)` read for `4(a)`. Measured: this cut the critical errors let through from 5 to 3 on the IRS set, and from 30 to 0 on the code table.
 - A scanned page whose image holds under 150 dots per inch is read at 300 instead of 200. On low-resolution scans this removed the critical errors no text rule can see, such as `113208` read for `11320B`.
+- In text read from an image, a "|" standing alone is flagged (`glyph.lone-bar`): it is a printed "1", "I" or "l" both readers mistook, or a box or table border read as text. On the reference sets it was never the right text.
 - Anything else is **flagged** with the rule that caused it. Tables are always flagged.
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
 - Text is never invented or edited. A flag says what looks wrong. A line the third reader settles carries the text of the OCR reader it agreed with, exactly as that reader read it.
@@ -168,7 +169,6 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 
   Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check. It costs about 2.5 seconds a disputed line on a CPU with native bfloat16; float32 CPUs are about 2.5 times slower.
 - **Known limits.**
-  - Both engines can read a "1" as "|" and agree, and the line is then accepted before the third reader is consulted. Of the six accepted lines wrong on a number on the held-out set, with or without the third reader, five were this. A follow-up is planned.
   - A digit that one reader saw and the other two missed is outvoted.
   - Where EasyOCR read nothing, Tesseract and the model settle the line between them.
   - Negations such as "cannot", and contractions such as "don't", are not recognised as negations (this predates 0.2.0).
