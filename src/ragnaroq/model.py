@@ -6,9 +6,9 @@ Coordinates are PDF points with a top-left origin on the displayed page.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 
 Status = Literal["accepted", "flagged", "blocked"]
 
@@ -33,11 +33,21 @@ class Flag(Model):
 
 
 class Reading(Model):
-    """Another reading of the same place, kept for comparison. Never merged into `text`."""
+    """Another reading of the same place. Its text becomes the line's `text` only through `resolution`."""
 
     source: str
     text: str
     confidence: float | None = None
+
+
+class Resolution(Model):
+    """How a disputed line was settled by rule.
+
+    `text_from` names the reading whose text `text` now holds."""
+
+    rule: str
+    agreed: list[str]
+    text_from: str
 
 
 class Line(Model):
@@ -46,7 +56,12 @@ class Line(Model):
     order: int
     box: Box
     raw: str = Field(description="Exactly what the reader returned.")
-    text: str = Field(description="NFC-normalised `raw`. No other change is ever made.")
+    text: str = Field(
+        description=(
+            "NFC-normalised `raw`, unless `resolution.text_from` names another reading, "
+            "whose text it then holds."
+        ),
+    )
     source: str = Field(description='"native" or "ocr:<engine>".')
     readings: list[Reading] = Field(default_factory=list)
     font_size: float | None = None
@@ -57,6 +72,7 @@ class Line(Model):
     table_id: str | None = None
     status: Status = "flagged"
     flags: list[Flag] = Field(default_factory=list)
+    resolution: Resolution | None = None
     excluded: str | None = Field(
         default=None, description="Reason this line is kept as evidence but left out of exports."
     )
@@ -108,7 +124,10 @@ class Engine(Model):
 
 
 class Document(Model):
-    schema_version: Literal["0.1.0"] = SCHEMA_VERSION
+    schema_version: Literal["0.1.0", "0.2.0"] = Field(
+        default=SCHEMA_VERSION,
+        description='The contract version. A stored "0.1.0" document loads, and is restamped "0.2.0".',
+    )
     source: Source
     engine: Engine
     created_at: str
@@ -116,6 +135,12 @@ class Document(Model):
     pages: list[Page]
     flags: list[Flag] = Field(default_factory=list)
     summary: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _restamp(cls, value: str) -> str:
+        # 0.2.0 only added fields with defaults, so a 0.1.0 document is a valid 0.2.0 one.
+        return SCHEMA_VERSION
 
     def lines(self):
         return (line for page in self.pages for line in page.lines)

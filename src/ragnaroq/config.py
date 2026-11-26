@@ -13,7 +13,9 @@ class Policy:
     "passed every rule we have", not as a measured accuracy.
     """
 
-    version: str = "0.2"  # 0.2: codes mixing letters and digits are checked (validators/codes.py)
+    # 0.2: codes mixing letters and digits are checked (validators/codes.py)
+    # 0.3: a third reading (vlm:) settles a disputed scanned line when it matches exactly
+    version: str = "0.3"
     # Two readings of a line agree when their similarity is at least this and
     # every critical token (numbers, dates, section references, negations) matches.
     min_similarity: float = 0.90
@@ -25,6 +27,30 @@ class Policy:
     # and symbols may differ). Without it, readings a letter or two apart can agree,
     # and the line is accepted with the first reader's letters.
     same_letters: bool = False
+    # The third-reader rule (see policy._third_reader). A reading that did not match the
+    # third reader holds the line back when it has more than this many times the letters
+    # of the matched text: it saw text the others missed. And the matched text holds the
+    # line back when it shares this many consecutive words with a neighbouring line:
+    # it probably runs into that line.
+    third_reader_letter_ratio: float = 1.15
+    third_reader_neighbour_words: int = 4
+
+
+@dataclass(frozen=True)
+class ThirdReaderSettings:
+    """How disputed scanned lines are redrawn and cropped for the third reader (third.py)."""
+
+    dpi: int = 300
+    pad_points: float = 2.0  # added left and right of the line's box, none above or below
+    frame_pixels: int = 12  # white border around the crop
+    # The token limit is what stops a model that repeats itself, and it is deterministic.
+    # The time limit is only a safety net: it is wall-clock time, so on a slow or busy
+    # machine it could change which lines get a reading.
+    max_new_tokens: int = 160
+    line_seconds: float = 120.0
+    # Wall-clock limit for the whole stage; lines not reached are left for a person.
+    # Not part of the cache key: it changes how many lines are read, not what a crop reads as.
+    budget_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +88,7 @@ class Config:
     page_memory_mb: int = 2048
     max_page_chars: int = 200_000
     policy: Policy = field(default_factory=Policy)
+    third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 
     def sha256(self) -> str:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
@@ -70,6 +97,6 @@ class Config:
         """The settings that change what is read, leaving out the decision policy: a
         reading can be decided again under another policy without reading it again."""
         # The safety limits decide whether a page is read, not how: left out too.
-        ignored = {"policy", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
+        ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
         settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

@@ -37,6 +37,66 @@ ragnaroq reference make code-table.pdf --pages 1-2 --out refs/codes
 ragnaroq evaluate refs/codes --out results/codes --easyocr-models ~/easyocr-models
 ```
 
+## Held-out set (0.2.0)
+
+These pages were never used to tune the third-reader rule. With the rule frozen, the documents were read once, as the release gate for 0.2.0. The readings were scored twice: the first scoring failed the gate, and the second followed a correction to the answer key (see [the first run](#the-first-run-kept-on-record)). All five are public-domain IRS documents, downloaded on 24 November 2026.
+
+| File | Source | Pages used | SHA-256 |
+| --- | --- | --- | --- |
+| `fw9.pdf` | https://www.irs.gov/pub/irs-pdf/fw9.pdf | 1–2 | `2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53` |
+| `f941.pdf` | https://www.irs.gov/pub/irs-pdf/f941.pdf | 1–2 | `38a3d8cf7a455101d52543c8c48e66202bc25c189ead878627e35c797c88e2ad` |
+| `f1040sc.pdf` | https://www.irs.gov/pub/irs-pdf/f1040sc.pdf | 1–2 | `cc44e7d1150e54d991835814c1191f60a32617730ca9e50e6f532b51293a86b4` |
+| `p596.pdf` | https://www.irs.gov/pub/irs-pdf/p596.pdf | 2–4 | `29e8c6695912318253743210fcd68aaa10ad874c76edcab4aa7dc4b23ff51dbf` |
+| `i1040gi.pdf` | https://www.irs.gov/pub/irs-pdf/i1040gi.pdf | 10–12 | `482e9c487c608f1bbeaceef35bc3c0933e8b35443cfff447e4279d590468364a` |
+
+That makes 20 references (5 documents, 4 profiles each), with 3,712 lines and 36,468 true words.
+
+```bash
+for f in fw9 f941 f1040sc p596 i1040gi; do curl -sO "https://www.irs.gov/pub/irs-pdf/$f.pdf"; done
+sha256sum fw9.pdf f941.pdf f1040sc.pdf p596.pdf i1040gi.pdf   # compare with the table
+ragnaroq reference make fw9.pdf f941.pdf f1040sc.pdf --pages 1-2 --out held-out/refs
+ragnaroq reference make p596.pdf --pages 2-4 --out held-out/refs
+ragnaroq reference make i1040gi.pdf --pages 10-12 --out held-out/refs
+ragnaroq evaluate held-out/refs --out held-out/without --easyocr-models ~/easyocr-models
+mkdir -p held-out/with && cp -r held-out/without/cache held-out/with/cache
+ragnaroq evaluate held-out/refs --out held-out/with --easyocr-models ~/easyocr-models --third-reader
+```
+
+The second run starts from the first run's stored readings, so both runs decide the same base readings. Measured with Tesseract 5.3.4, EasyOCR 1.7.2 and PaddleOCR-VL-1.6 (PaddlePaddle/PaddleOCR-VL-1.6 at revision `132c45f52c0a`, bfloat16, CPU, 4 cores).
+
+| Measure | Without third reader | With third reader |
+| --- | --- | --- |
+| Lines sent to a person | 1,072 | 625 (41.7% fewer) |
+| Sent to a person although right | 467 | 84 |
+| Accepted by rule | 2,640 | 3,087 |
+| Accepted but wrong | 330 (12.5%) | 350 (11.3%) |
+| Accepted with a wrong number, date or negation | 6 | 6 |
+
+The third reader settled 447 lines. 20 of them were not exactly the answer key: all spacing, punctuation, or a line box that also covers a neighbouring field's words. None was wrong on a number, date or negation. It held back the lines where its reading failed a check: no match 491, validators 0, omission 47, underscore 10, neighbour 16. It read 1,024 crops in about 43 minutes, about 2.5 seconds a line, on a CPU with native bfloat16 (float32 CPUs are about 2.5 times slower).
+
+The accepted-but-wrong count rose from 330 to 350 because more lines were accepted (2,640 to 3,087); the rate fell from 12.5% to 11.3%.
+
+After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check.
+
+### The first run, kept on record
+
+The first run used the 0.1 answer key. It reported 6 lines settled by the third reader as wrong on a critical token (with the third reader: 27 accepted critical, 362 accepted wrong; without: 21 and 336). All 6 were Schedule C line labels printed "20b", "16b" and "16c" with no visible gap. The PDF stores an overprinted space, so the answer key said "20 b", while every reader read what is printed.
+
+The owner chose to fix the answer key (words printed with no visible gap are one word, commit `fb2dddc`) and score again. The scans were byte-identical, only Schedule C's four truth files changed, and nothing was read again. No rule or threshold was changed after seeing the held-out set.
+
+### Known limitation found on this set
+
+The 6 accepted lines wrong on a number in both runs come from the two-reader rule that existed in 0.1, not from the third reader. In 5 of them, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, the Schedule C title, both readers missed the small "(Form 1040)". The 0.1 result of none on the IRS set does not hold on these documents. A follow-up is planned; this release does not fix it.
+
+### Next steps before relying on this result
+
+- The next fresh held-out set includes All About Tax PDFs, and confirms the answer-key change (words printed with no visible gap are one word) on documents it was not made for.
+- The 0.1 sets are scored again under the new answer key, so every published number uses one answer key.
+
+### From the spike
+
+Before the build, the same rule was simulated on stored readings of the 0.1 reference sets. On the IRS set, lines sent to a person fell from 1,242 to about 650 (48% fewer), and on the code table from 322 to 178 (45% fewer), with no line settled wrong on a number, date or negation. Code-table lines took 8.7 seconds each on average, IRS lines 3.5 seconds.
+
 ## Results
 
 Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with the default policy (agreement threshold 0.90), on the four profiles: clean, low-res, blurred and tilted.
@@ -62,7 +122,9 @@ Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with t
 
 - **Accepted lines with other mistakes, 6.2% of accepted.** About half are harmless symbols, such as checkbox drawings read as `[_]`. The other half are letter slips, such as `Hf you` for *If you*. A letter slip gets through when the readers differ by a letter or two, because the line is accepted with the first reader's text.
 
-  **Strict mode (`--same-letters`)** requires the readers to have the same letters and digits, not only to be similar. It cuts the letter slips let through from 90 to 8. But in most lines where the readers differ by a letter, the first reader was right and the second slipped. So strict mode sends 324 correct lines to a person to catch 82 slips, and the accepted share falls from 72.3% to 62.8%. It is an option for word-perfect needs, such as legal text and citations, not the default. A third reader would settle such lines by majority instead.
+  **Strict mode (`--same-letters`)** requires the readers to have the same letters and digits, not only to be similar. It cuts the letter slips let through from 90 to 8. But in most lines where the readers differ by a letter, the first reader was right and the second slipped. So strict mode sends 324 correct lines to a person to catch 82 slips, and the accepted share falls from 72.3% to 62.8%. It is an option for word-perfect needs, such as legal text and citations, not the default. Since 0.2.0, the third reader looks only at lines the two readers disagree on, so a letter slip both readers share, or one within the agreement threshold, is still accepted.
 - **Lines sent to a person although right, 58% of flagged.** That is the price of caution; the next experiments should lower it.
+
+The runs in this table were measured with the 0.1 answer key, before words printed with no visible gap were joined into one word (0.2.0). These runs were not scored again. The held-out set above uses the new answer key.
 
 These are synthetic scans of born-digital pages: a best case for real paper. See [the limits](../docs/evaluating.md#limits-of-synthetic-references).

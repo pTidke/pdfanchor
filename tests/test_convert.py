@@ -16,6 +16,7 @@ from ragnaroq import Config, ConversionError, Document, Policy, convert, write
 from ragnaroq.cli import main
 from ragnaroq.export.chunks import to_chunks
 from ragnaroq.export.markdown import to_markdown
+from ragnaroq.model import Resolution
 from ragnaroq.ocr import OcrLine
 from ragnaroq.ocr.tesseract import TesseractCli
 from ragnaroq.policy import needs_review
@@ -323,3 +324,43 @@ def test_a_low_resolution_scan_is_read_at_a_higher_resolution(tmp_path):
         # Boxes are in points whatever the reading resolution.
         box = page.lines[0].box
         assert (round(box.x0), round(box.top), round(box.x1), round(box.bottom)) == (72, 72, 300, 90)
+
+
+def test_a_resolution_records_which_readings_agreed(native_pdf):
+    document = convert(native_pdf, engines=[])
+    line = next(document.lines())
+    line.resolution = Resolution(
+        rule="crosscheck.third-reader", agreed=["ocr:two", "vlm:x"], text_from="ocr:two"
+    )
+    again = Document.model_validate_json(document.model_dump_json())
+    assert again.schema_version == "0.2.0"
+    assert next(again.lines()).resolution.text_from == "ocr:two"
+
+
+def test_a_0_1_0_document_still_loads(native_pdf):
+    stored = json.loads(convert(native_pdf, engines=[]).model_dump_json())
+    stored["schema_version"] = "0.1.0"
+    for page in stored["pages"]:
+        for line in page["lines"]:
+            del line["resolution"]  # 0.1.0 had no such field
+    loaded = Document.model_validate(stored)
+    assert loaded.schema_version == "0.2.0"
+    assert json.loads(loaded.model_dump_json())["schema_version"] == "0.2.0"
+
+
+def test_a_missing_model_stops_the_command_before_reading(scanned_pdf, tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("ragnaroq.pipeline.PageReader", None)  # any read would fail loudly
+    code = main(
+        ["convert", str(scanned_pdf), "--out", str(tmp_path / "out"),
+         "--third-reader", "--vlm-models", str(tmp_path / "none")]
+    )
+    assert code == 1 and "--vlm-download" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_a_model_folder_that_cannot_be_read_is_a_plain_error(scanned_pdf, tmp_path, capsys, monkeypatch):
+    def unreadable(self):
+        raise PermissionError(13, "Permission denied", str(tmp_path / "models"))
+
+    monkeypatch.setattr("ragnaroq.ocr.paddle_vl.PaddleOcrVl.prepare", unreadable)
+    code = main(["convert", str(scanned_pdf), "--out", str(tmp_path / "out"), "--third-reader"])
+    assert code == 1 and "Permission denied" in json.loads(capsys.readouterr().err)["error"]

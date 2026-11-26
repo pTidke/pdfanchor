@@ -15,7 +15,7 @@ The engine can only be scored against text whose correct answer is known. A born
 
 1. Renders the page to an image, as a scanner would, roughened by a profile.
 2. Saves the images as an image-only PDF: `<name>.<profile>.pdf`. It has no text layer, so the engine has to read it like any scan.
-3. Writes `<name>.<profile>.truth.json`, with every word of the original text and its box on the page. The boxes move with the page when the profile tilts it.
+3. Writes `<name>.<profile>.truth.json`, with every word of the original text and its box on the page. The boxes move with the page when the profile tilts it. Words printed with no visible gap between them (a label like "20b", whose space the PDF overprints) are one word in the truth file, as a reader sees them.
 
 | Profile | What it does to the page |
 | --- | --- |
@@ -53,9 +53,34 @@ Reading is the slow part, so each reading is kept in `<out>/cache`, keyed by the
 | True words no line covered | Text the engine never found. |
 | Lines with no true text under them | Text the engine made up, such as noise read as letters. |
 
-The **threshold table** re-decides every line at agreement thresholds from 0.80 to 1.00, with every other rule kept as it is. It shows the trade between mistakes let through and work sent to a person. The policy's thresholds are set from this table, not guessed.
+The **threshold table** re-decides every line at agreement thresholds from 0.80 to 1.00, with every other rule kept as it is. It shows the trade between mistakes let through and work sent to a person. The policy's thresholds are set from this table, not guessed. It shows the two-reader rule only: a line the third reader settled is compared with the other readings by its first reader's reading. Whether it counts as right is still judged on the text it carries after the correction.
 
 `--max-critical-false-accepts 0.001` makes the command exit with code 3 when the critical false-accept rate is above that share. That lets a CI job fail when a change makes the engine less safe.
+
+## The third reader
+
+```bash
+ragnaroq evaluate refs/ --out results/ --easyocr-models ~/easyocr-models --third-reader
+```
+
+`--third-reader` adds a local model (PaddleOCR-VL-1.6, from `ragnaroq[vlm]`) that reads the crop of each scanned line Tesseract and EasyOCR disagree on. A fixed rule then settles the line or keeps it for a person; see "How it decides" in the [README](../README.md#how-it-decides). The model is chosen with `--vlm-models DIR` and fetched only with `--vlm-download`. `--third-reader-budget SECONDS` limits the time it may spend on each document. That budget, like the limit of 120 seconds on each line, is wall-clock time, so on a slow or busy machine it can change which lines are read.
+
+It changes `evaluate` in three ways:
+
+- It reads only the disputed lines' crops, about 2.5 seconds a line on a 4-core CPU with native bfloat16 in the held-out run; float32 CPUs are about 2.5 times slower. Each reading is kept in `<out>/cache/third`, keyed by the crop and the model's settings, so a run decides stored readings again in seconds. Every page with disputed lines is still drawn again, to work out each crop's key, but only crops not in the cache are read by the model.
+- To compare with and without the third reader on the same base readings, run without it first, then copy the `cache` folder into a new output folder and run again with `--third-reader`. The commands are in [references/](../references/README.md#held-out-set-020).
+- The report gains a **Third reader** section:
+
+| Measure | What it means |
+| --- | --- |
+| Settled by the third reader | Lines the rule accepted after the model's reading agreed with one of the two OCR readings. |
+| Of which wrong | Settled lines whose text differs from the truth. |
+| Of which wrong on a number, date or negation | Settled lines whose critical tokens differ from the truth. The release gate requires 0. |
+| Held back: no match, validators, omission, underscore, neighbour | Disputed lines the model read but the rule kept for a person, by the check that held them back. |
+
+The release gate for 0.2.0 was: no settled line wrong on a number, date or negation, and an accepted-but-wrong rate no higher than without the third reader. It was applied to a held-out set the rule was never tuned on, with the rule frozen and the documents read once. The first scoring, under the 0.1 answer key, failed the gate: 6 settled lines were wrong on a critical token. All 6 were Schedule C line labels that the answer key split ("20 b" for the printed "20b"). The answer key was corrected (commit `fb2dddc`) and the same readings were scored again; see [the first run](../references/README.md#the-first-run-kept-on-record). The result below is from the second scoring. On that set 447 lines were settled, none wrong on a number, date or negation, and the rate fell from 12.5% to 11.3% of accepted lines. After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check. See [references/](../references/README.md#held-out-set-020) for the sources, checksums and every number.
+
+The same set found 6 accepted lines wrong on a number with and without the third reader. They come from the two-reader rule: both OCR readers read a "1" as "|" and agree. This is a known limitation, not fixed in 0.2.0.
 
 ## Limits of synthetic references
 

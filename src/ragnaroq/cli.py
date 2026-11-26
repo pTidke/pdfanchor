@@ -76,6 +76,22 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         help="Exit 3 when the share of accepted lines wrong on a critical token is above this, e.g. 0.001",
     )
+    for command in (run, check):
+        command.add_argument(
+            "--third-reader",
+            action="store_true",
+            help="Let a vision-language model settle lines the two readers disagree on",
+        )
+        command.add_argument("--vlm-models", help="Folder with the third reader's model files")
+        command.add_argument(
+            "--vlm-download",
+            action="store_true",
+            help="Fetch missing model files into --vlm-models, or the Hugging Face cache when that is "
+            "not given",
+        )
+        command.add_argument(
+            "--third-reader-budget", type=float, help="Seconds the third reader may spend on each document"
+        )
     for command in (run, listing, check):
         command.add_argument(
             "--easyocr-models", help="Folder with EasyOCR's model files (the second reader)"
@@ -112,6 +128,23 @@ def main(argv: list[str] | None = None) -> int:
                 made.append({"pdf": str(pdf_path), "truth": str(truth_path)})
         print(json.dumps({"references": made}))
         return 0
+    third_reader = None
+    if args.command in ("convert", "evaluate") and args.third_reader:
+        from .ocr.paddle_vl import PaddleOcrVl
+
+        third_reader = PaddleOcrVl(model_dir=args.vlm_models, download=args.vlm_download)
+        try:
+            third_reader.prepare()
+        except (EngineUnavailable, OSError) as error:
+            print(json.dumps({"error": str(error)}), file=sys.stderr)
+            return 1
+
+    def with_budget(config):
+        if args.third_reader_budget is None:
+            return config
+        settings = replace(config.third_reader, budget_seconds=args.third_reader_budget)
+        return replace(config, third_reader=settings)
+
     if args.command == "evaluate":
         config = Config(
             dpi=args.dpi, languages=tuple(args.lang.split("+")), exclude_scripts=tuple(args.exclude_script)
@@ -120,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
             config = replace(config, policy=replace(config.policy, min_similarity=args.min_similarity))
         if args.same_letters:
             config = replace(config, policy=replace(config.policy, same_letters=True))
+        config = with_budget(config)
         try:
             report = evaluate.run(
                 args.folder,
@@ -127,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
                 engines=engines_here(config.languages),
                 progress=lambda done, total, name: print(f"[{done}/{total}] {name}", file=sys.stderr, flush=True),
                 cache=None if args.fresh else Path(args.out) / "cache",
+                third_reader=third_reader,
             )
         except (ConversionError, EngineUnavailable, OSError, ValueError) as error:
             print(json.dumps({"error": str(error)}), file=sys.stderr)
@@ -153,9 +188,10 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(config, page_memory_mb=args.page_memory_mb)
     if args.no_isolation:
         config = replace(config, isolate_pages=False)
+    config = with_budget(config)
     try:
         engines = engines_here(config.languages) if args.ocr == "auto" else []
-        document = convert(args.pdf, config=config, engines=engines)
+        document = convert(args.pdf, config=config, engines=engines, third_reader=third_reader)
     except (ConversionError, EngineUnavailable, OSError) as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 1

@@ -12,29 +12,18 @@ differently from the original is still compared with exactly the words it covers
 
 import hashlib
 import json
-import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import policy, reference
+from . import policy, reference, structure
 from .config import Config
-from .crosscheck import compare, critical_tokens, normalise
-from .model import Document, Line
+from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
+from .model import SCHEMA_VERSION, Document, Line
 from .reference import Truth, Word
-from .structure import scripts_of
 
 MARGIN = 3.0  # points around a line's box that still count as inside
 THRESHOLDS = (0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00)
-TYPOGRAPHY = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", "−": "-", "…": "..."})
-# Leaders and fill lines: ". . . . 24", "Name ________". Layout, not content.
-LEADERS = re.compile(r"(?:[._-]\s?){3,}")
-
-
-def canonical(text: str) -> str:
-    """The form two texts are compared in: Unicode-normalised, case-folded, single
-    spaces, typographic quotes and dashes made plain, and runs of leader dots, rules
-    and fill underscores removed. Nothing else is forgiven."""
-    return normalise(LEADERS.sub(" ", text.translate(TYPOGRAPHY)))
 
 
 def critical(text: str):
@@ -71,6 +60,8 @@ class LineScore:
     min_similarity: float | None  # lowest similarity to the other readings
     critical_agree: bool  # the readings agree on every critical token
     letters_agree: bool = True  # the readings have the same letters and digits
+    settled: bool = False  # the third reader settled the line
+    held_back: str | None = None  # the check that kept the third reader's reading from settling it
 
     def accepted_at(self, threshold: float, same_letters: bool = False) -> bool:
         return (
@@ -97,6 +88,14 @@ class Tally:
     char_errors: int = 0
     char_total: int = 0
     ignored_lines: int = 0  # lines over text the reference cannot vouch for
+    third_settled: int = 0
+    third_settled_wrong: int = 0
+    third_settled_critical_wrong: int = 0
+    third_held_no_match: int = 0
+    third_held_validators: int = 0
+    third_held_omission: int = 0
+    third_held_underscore: int = 0
+    third_held_neighbour: int = 0
 
     def add(self, other: "Tally") -> None:
         for key, value in asdict(other).items():
@@ -126,7 +125,7 @@ class FileScore:
 
 
 def _excluded(word: Word, scripts: tuple[str, ...]) -> bool:
-    found = scripts_of(word.text)
+    found = structure.scripts_of(word.text)
     return bool(found) and set(found) <= set(scripts)
 
 
@@ -168,8 +167,17 @@ def _assign(words: list[Word], lines: list[Line]) -> tuple[dict[str, list[Word]]
 def _line_score(line: Line, words: list[Word]) -> LineScore:
     expected = " ".join(word.text for word in sorted(words, key=lambda word: word.x0))
     read_c, expected_c = canonical(line.text), canonical(expected)
-    others = [reading for reading in line.readings if reading.source != line.source]
-    agreements = [compare(line.text, other.text) for other in others]
+    others = [
+        reading
+        for reading in line.readings
+        if reading.source != line.source and not reading.source.startswith(policy.VLM)
+    ]
+    prefix = f"{policy.THIRD}."
+    held = next((flag.rule.removeprefix(prefix) for flag in line.flags if flag.rule.startswith(prefix)), None)
+    # The first reader's own reading: after a correction `text` holds another reader's,
+    # which would agree with itself at every threshold.
+    first = unicodedata.normalize("NFC", line.raw)
+    agreements = [compare(first, other.text) for other in others]
     return LineScore(
         page=line.page,
         line=line.id,
@@ -180,10 +188,15 @@ def _line_score(line: Line, words: list[Word]) -> LineScore:
         critical_ok=critical(line.text) == critical(expected),
         errors=distance(read_c, expected_c),
         length=len(expected_c),
-        eligible=bool(others) and not any(flag.rule != "crosscheck.disagreement" for flag in line.flags),
+        eligible=bool(others) and not any(
+            flag.rule != "crosscheck.disagreement" and not flag.rule.startswith(policy.THIRD)
+            for flag in line.flags
+        ),
         min_similarity=min((a.similarity for a in agreements), default=None),
         critical_agree=all(a.critical_equal for a in agreements),
         letters_agree=all(a.letters_equal for a in agreements),
+        settled=line.resolution is not None and line.resolution.rule == policy.THIRD,
+        held_back=held,
     )
 
 
@@ -217,6 +230,13 @@ def score(
             tally.char_total += line_score.length
             if not line_score.expected:
                 tally.extra_lines += 1
+            if line_score.settled:
+                tally.third_settled += 1
+                tally.third_settled_wrong += not line_score.exact
+                tally.third_settled_critical_wrong += not line_score.critical_ok
+            elif line_score.held_back:
+                key = f"third_held_{line_score.held_back.replace('-', '_')}"
+                setattr(tally, key, getattr(tally, key) + 1)
             if line.status == "accepted":
                 tally.accepted += 1
                 tally.accepted_wrong += not line_score.exact
@@ -281,6 +301,7 @@ def run(
     engines=None,
     progress=None,
     cache: str | Path | None = None,
+    third_reader=None,
 ) -> Report:
     """Convert every reference in `folder` (`*.truth.json` next to its `.pdf`) and score it.
 
@@ -291,6 +312,7 @@ def run(
     or the scoring takes seconds, not a new reading."""
     from .ocr import available
     from .pipeline import convert
+    from .third import read_disputed
 
     config = config or Config()
     engines = available(config.languages) if engines is None else list(engines)
@@ -304,8 +326,24 @@ def run(
         if not pdf_path.exists():
             raise FileNotFoundError(f"{truth_path.name} has no {pdf_path.name} beside it.")
         document = _converted(pdf_path, config, engines, readers, cache, convert)
+        if third_reader is not None:
+            # After the stored reading, so what is kept is the base reading.
+            read_disputed(
+                document,
+                pdf_path.read_bytes(),
+                config,
+                third_reader,
+                Path(cache) / "third" if cache else None,
+            )
+            policy.decide(document, config.policy)
+            document.title = structure.title(document)  # a settled line may now carry other text
+            document.engine.components[f"vlm:{third_reader.name}"] = third_reader.version()
         names.update(
-            {key: value for key, value in document.engine.components.items() if key.startswith("ocr:")}
+            {
+                key: value
+                for key, value in document.engine.components.items()
+                if key.startswith(("ocr:", policy.VLM))
+            }
         )
         result = score(
             document, reference.load(truth_path), exclude_scripts=config.exclude_scripts, name=pdf_path.name
@@ -329,7 +367,14 @@ def _converted(pdf_path: Path, config: Config, engines, readers: str, cache, con
     if cache is None:
         return convert(pdf_path, config=config, engines=engines)
     key = hashlib.sha256(
-        b"|".join([pdf_path.read_bytes(), config.reading_sha256().encode(), readers.encode()])
+        b"|".join(
+            [
+                pdf_path.read_bytes(),
+                config.reading_sha256().encode(),
+                readers.encode(),
+                SCHEMA_VERSION.encode(),
+            ]
+        )
     ).hexdigest()[:24]
     stored = Path(cache) / f"{pdf_path.stem}.{key}.json"
     if stored.exists():
@@ -346,10 +391,33 @@ def _pct(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:.2f}%"
 
 
+def _third_section(t: Tally) -> list[str]:
+    held = {
+        "no match": t.third_held_no_match,
+        "validators": t.third_held_validators,
+        "omission": t.third_held_omission,
+        "underscore": t.third_held_underscore,
+        "neighbour": t.third_held_neighbour,
+    }
+    if not (t.third_settled or any(held.values())):
+        return []
+    return [
+        "## Third reader",
+        "",
+        "| Measure | Value |",
+        "| --- | --- |",
+        f"| Settled by the third reader | {t.third_settled} |",
+        f"| Of which wrong | {t.third_settled_wrong} |",
+        f"| Of which wrong on a number, date or negation | {t.third_settled_critical_wrong} |",
+        *(f"| Held back: {step} | {count} |" for step, count in held.items()),
+        "",
+    ]
+
+
 def to_markdown(report: Report, examples: int = 20) -> str:
     t, r = report.total, report.total.rates()
     engines = (
-        ", ".join(f"{name.removeprefix('ocr:')} {version}" for name, version in report.engines.items())
+        ", ".join(f"{name.split(':', 1)[-1]} {version}" for name, version in report.engines.items())
         or "none"
     )
     out = [
@@ -370,6 +438,7 @@ def to_markdown(report: Report, examples: int = 20) -> str:
         f"| True words no line covered | {t.missed_words} ({_pct(r['missed_word_share'])}) |",
         f"| Lines with no true text under them | {t.extra_lines} |",
         "",
+        *_third_section(t),
         "## By reference",
         "",
         "| Reference | Profile | Lines | Accepted | Accepted but wrong | Wrong on a critical token | Character errors |",
@@ -386,6 +455,9 @@ def to_markdown(report: Report, examples: int = 20) -> str:
         "## The agreement threshold",
         "",
         "Every other rule kept as it is. A higher threshold accepts fewer lines: fewer mistakes get through, and more work goes to a person.",
+        "",
+        "The table shows the two-reader rule only: a line the third reader settled is compared by "
+        "its first reader's reading.",
         "",
         "| Threshold | Accepted | Accepted but wrong | Wrong on a critical token | Sent to a person |",
         "| --- | --- | --- | --- | --- |",

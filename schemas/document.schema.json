@@ -162,7 +162,7 @@
           "type": "string"
         },
         "text": {
-          "description": "NFC-normalised `raw`. No other change is ever made.",
+          "description": "NFC-normalised `raw`, unless `resolution.text_from` names another reading, whose text it then holds.",
           "title": "Text",
           "type": "string"
         },
@@ -245,6 +245,17 @@
           },
           "title": "Flags",
           "type": "array"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Resolution"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "excluded": {
           "anyOf": [
@@ -342,7 +353,7 @@
     },
     "Reading": {
       "additionalProperties": false,
-      "description": "Another reading of the same place, kept for comparison. Never merged into `text`.",
+      "description": "Another reading of the same place. Its text becomes the line's `text` only through `resolution`.",
       "properties": {
         "source": {
           "title": "Source",
@@ -370,6 +381,34 @@
         "text"
       ],
       "title": "Reading",
+      "type": "object"
+    },
+    "Resolution": {
+      "additionalProperties": false,
+      "description": "How a disputed line was settled by rule.\n\n`text_from` names the reading whose text `text` now holds.",
+      "properties": {
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "agreed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Agreed",
+          "type": "array"
+        },
+        "text_from": {
+          "title": "Text From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "agreed",
+        "text_from"
+      ],
+      "title": "Resolution",
       "type": "object"
     },
     "Source": {
@@ -463,8 +502,12 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "0.1.0",
-      "default": "0.1.0",
+      "default": "0.2.0",
+      "description": "The contract version. A stored \"0.1.0\" document loads, and is restamped \"0.2.0\".",
+      "enum": [
+        "0.1.0",
+        "0.2.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     },

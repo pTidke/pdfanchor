@@ -54,3 +54,26 @@ def available(
             continue
         found.append(engine)
     return found
+
+
+class LineUnreadable(RuntimeError):
+    """A line reader gave up on one crop. The message says why and is shown to a reviewer."""
+
+
+@runtime_checkable
+class LineReader(Protocol):
+    """Reads one cropped line image as text, for the third-reader stage."""
+
+    name: str
+
+    def version(self) -> str:
+        """Identifies the model and its settings. Must work without loading the model."""
+        ...
+
+    def prepare(self) -> None:
+        """Load the model. Idempotent; called before the first read that needs it."""
+        ...
+
+    def read_line(self, image, max_new_tokens: int, seconds: float) -> str:
+        """The text of the line in `image`, or raise LineUnreadable."""
+        ...

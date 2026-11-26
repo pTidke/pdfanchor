@@ -78,6 +78,26 @@ def test_a_reference_is_an_image_only_pdf_with_every_word_and_its_box(clean_refe
     assert meta["format"] == reference.FORMAT and meta["profile"]["name"] == "clean"
 
 
+def test_a_label_printed_without_a_gap_is_one_word(tmp_path):
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    path = tmp_path / "label.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Helvetica-Bold", 8)
+    page.drawString(72, 700, "20")
+    # The "b" starts where the overprinted space starts, so no gap is visible.
+    space = stringWidth(" ", "Helvetica-Bold", 8)
+    page.drawString(72 + stringWidth("20", "Helvetica-Bold", 8) - space, 700, " b")
+    page.drawString(120, 700, "Other business property")
+    page.drawString(72, 600, "Line 20 b")
+    page.save()
+    pdf, truth = reference.make(path, "clean", tmp_path)
+    texts = [w.text for w in reference.load(truth).pages[0].words]
+    assert "20b" in texts and "b" not in texts[: texts.index("20b") + 2]
+    assert ["Other", "business", "property"] == texts[texts.index("20b") + 1 : texts.index("20b") + 4]
+    assert texts[-3:] == ["Line", "20", "b"]  # a visible space still separates words
+
+
 def test_the_same_pdf_always_gives_the_same_reference(three_lines, tmp_path):
     a, truth_a = reference.make(three_lines, "blurred", tmp_path / "a")
     time.sleep(1.1)  # a clock in the file would now show a different second
@@ -345,3 +365,49 @@ def test_strict_mode_sends_a_one_letter_disagreement_to_a_person(clean_reference
     result = evaluate.score(strict, truth)
     rows = {row["threshold"]: row for row in evaluate.sweep(result.lines, same_letters=True)}
     assert rows[0.90]["accepted"] == 2
+
+
+def test_a_cache_from_another_schema_version_is_read_again(clean_reference, tmp_path, monkeypatch):
+    folder, _, truth_path = clean_reference
+    engines = _readers(reference.load(truth_path), LINES, LINES)
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    monkeypatch.setattr(evaluate, "SCHEMA_VERSION", "0.1.0")
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    assert len(list((tmp_path / "cache").glob("*.json"))) == 2
+
+
+def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_reference, tmp_path):
+    from conftest import FakeLineReader
+
+    folder, _, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    misread = "The due date is 31st July 2028."
+
+    def run(answer, cache):
+        engines = _readers(truth, [LINES[0], misread, LINES[2]], LINES)
+        return evaluate.run(
+            folder, engines=engines, cache=cache, third_reader=FakeLineReader([answer])
+        )
+
+    cache = tmp_path / "cache"
+    report = run(LINES[1], cache)
+    assert report.total.third_settled == 1 and report.total.third_settled_wrong == 0
+    assert len(list((cache / "third").iterdir())) == 1
+    assert "## Third reader" in evaluate.to_markdown(report)
+    held = run("something else", tmp_path / "fresh")
+    assert held.total.third_held_no_match == 1 and held.total.third_settled == 0
+
+
+def test_the_threshold_sweep_compares_a_corrected_line_by_its_first_reading(clean_reference):
+    from conftest import FakeLineReader
+
+    _, pdf, truth_path = clean_reference
+    truth = reference.load(truth_path)
+    misread = "The due date is 31st July 2028."
+    engines = _readers(truth, [LINES[0], misread, LINES[2]], LINES)
+    document = convert(pdf, engines=engines, third_reader=FakeLineReader([LINES[1]]))
+    (due,) = [line for line in evaluate.score(document, truth).lines if line.settled]
+    assert due.read == LINES[1] and due.status == "accepted"
+    # The sweep is the two-reader rule: the first reader's 2028 still disagrees.
+    assert due.min_similarity < 1.0 and not due.critical_agree
+    assert all(row["accepted"] == 0 for row in evaluate.sweep([due]))

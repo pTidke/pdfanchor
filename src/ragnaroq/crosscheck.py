@@ -1,5 +1,6 @@
 """Compare two readings of the same place. Agreement is decided by rule, not by confidence."""
 
+import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
@@ -10,10 +11,43 @@ from .ocr import OcrLine
 
 NEGATIONS = {"not", "no", "nor", "never", "without", "except", "unless", "neither", "none"}
 EDGE = ".,;:'\"“”‘’"
+TYPOGRAPHY = str.maketrans(
+    {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", "−": "-", "…": "..."}
+)
+# Leaders and fill lines: ". . . . 24", "Name ________". Layout, not content.
+LEADERS = re.compile(r"(?:[._-]\s?){3,}")
 
 
-def normalise(text: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+def normalise(text: str, fold: bool = True) -> str:
+    """Case-folded, single-spaced. `fold` also applies compatibility folding (NFKC), which
+    turns a superscript or a ligature into the plain characters; off, only NFC is used."""
+    return " ".join(unicodedata.normalize("NFKC" if fold else "NFC", text).casefold().split())
+
+
+def canonical(text: str) -> str:
+    """The form two texts are compared in: Unicode-normalised, case-folded, single
+    spaces, typographic quotes and dashes made plain, and runs of leader dots, rules
+    and fill underscores removed. Nothing else is forgiven."""
+    return normalise(LEADERS.sub(" ", text.translate(TYPOGRAPHY)))
+
+
+# Checkboxes, bullets and stray form rules a reader may draw as characters: layout, not text
+# when they stand alone. Inside a word a mark may stand for a character, so it stays.
+LAYOUT_MARKS = re.compile(r"(?:^|(?<=\s))[☐□■☑☒▢◻◼▪●○◯|](?=\s|$)")
+
+
+def without_marks(text: str) -> str:
+    """`text` with layout marks replaced by spaces and whitespace collapsed."""
+    return " ".join(LAYOUT_MARKS.sub(" ", text).split())
+
+
+def shares_words(a: str, b: str, n: int) -> bool:
+    """True when the canonical texts have `n` consecutive words in common."""
+    first, second = canonical(a).split(), canonical(b).split()
+    if n < 1 or len(first) < n or len(second) < n:
+        return False
+    grams = {tuple(first[i : i + n]) for i in range(len(first) - n + 1)}
+    return any(tuple(second[i : i + n]) in grams for i in range(len(second) - n + 1))
 
 
 def letters(text: str) -> str:
@@ -22,11 +56,12 @@ def letters(text: str) -> str:
     return "".join(ch for ch in normalise(text) if ch.isalnum())
 
 
-def critical_tokens(text: str) -> Counter:
+def critical_tokens(text: str, fold: bool = True) -> Counter:
     """Tokens where one wrong character changes the meaning: anything with a digit
-    (amounts, dates, section and instrument numbers) and negations."""
+    (amounts, dates, section and instrument numbers) and negations. With `fold` off,
+    "80¹" is not "801"."""
     tokens: Counter = Counter()
-    for word in normalise(text).split():
+    for word in normalise(text, fold).split():
         word = word.strip(EDGE)
         if word.count("(") > word.count(")"):
             word = word.lstrip("(")

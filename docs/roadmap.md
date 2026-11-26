@@ -66,11 +66,11 @@ Each file type has a reader that writes the same `document.json` contract, with 
 
 The PDF rules that exist today stay first. Lines that remain doubtful get one more reader: a small document-OCR model from Hugging Face that runs locally, free and offline (`ragnaroq[vlm]`).
 
-- **The model:** the first candidate is PaddleOCR-VL. It has about 0.9 billion parameters, an Apache 2.0 licence and 109 languages including Hindi, and it runs on a CPU. It is to be measured against GLM-OCR on our reference set before it becomes the default.
-- **What it sees:** only the crop of each doubtful line, or of the whole page for a scan, so it runs on the few lines that need it, not on everything.
-- **How its reading is used:** its reading is one more independent reading, like Tesseract's and EasyOCR's, and the existing rule decides. A line is accepted only if the validators pass and two independent readings agree on every critical token (numbers, dates, negations). The model is never trusted on its own, and the text is never rewritten.
-- **Reproducibility:** the weights are pinned to a revision and checked, and decoding is deterministic. The same file gives the same result.
-- **If it still disagrees,** the line stays flagged for a person in the review UI.
+- **The model:** PaddleOCR-VL-1.6, shipped in 0.2.0 as an optional third reader. It has about 0.9 billion parameters, an Apache 2.0 licence and 109 languages including Hindi, and it runs on a CPU. It is still to be measured against GLM-OCR on our reference set.
+- **What it sees:** only the crop of each doubtful line, so it runs on the few lines that need it, not on everything. Reading whole pages is not planned: it takes minutes a page on a CPU. A comparison with GLM-OCR comes later.
+- **How its reading is used:** its reading is one more independent reading, like Tesseract's and EasyOCR's, and the existing rule decides. A line is accepted only if the validators pass and two independent readings agree on every critical token (numbers, dates, negations). The model is never trusted on its own. When it agrees with an OCR reading other than the first reader's, that reading's text can replace the first reader's, and `resolution` records it.
+- **Reproducibility:** the weights are pinned to a revision and checked, and decoding is greedy, so with the same model, number format and versions the same crop gives the same reading. The per-line time limit and the optional budget are wall-clock limits, so on a slow or busy machine they can change which lines are read.
+- **If it still disagrees,** the line stays flagged for a person in the review UI (0.5).
 
 A hosted model (Gemini, OpenAI and others) can be switched in instead for people without the compute. It is optional, with a budget per run and the cost of every call recorded.
 
@@ -109,10 +109,11 @@ Decisions are written to `review.json` and become readings by a person. They als
 | Version | Theme | What it delivers |
 | --- | --- | --- |
 | **0.1** ✓ | Trustworthy PDFs | Done in 0.1.0: reference sets with a known answer and `ragnaroq evaluate` (false-accept rate, overall and on critical tokens); a first measurement on public IRS documents; the code rule and low-resolution reading that brought critical errors to zero on it; per-page time, memory and character limits; on PyPI. Moved on: human-verified real scans, and pinned OCR model versions. |
-| 0.2 | Folders and formats | `ragnaroq index ./folder` writing `.ragnaroq/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
-| 0.3 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
-| 0.4 | Repair and review | A local OCR model as a third reader on doubtful lines (hosted models optional); the local review UI. |
-| 0.5 | Serve | Embeddings and stores; the MCP server, local and remote. |
+| **0.2** ✓ | Third reader | Done in 0.2.0: a local OCR model (PaddleOCR-VL-1.6) reads the crop of each scanned line the two OCR readers dispute, and a fixed rule settles it or keeps it for a person; measured on a held-out set (41.7% fewer lines sent to a person, none settled wrong on a number, date or negation). Open: a "1" read as "|" by both readers. |
+| 0.3 | Folders and formats | `ragnaroq index ./folder` writing `.ragnaroq/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
+| 0.4 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
+| 0.5 | Review UI | The local review UI, where a person settles the flagged lines; hosted models optional. |
+| 0.6 | Serve | Embeddings and stores; the MCP server, local and remote. |
 | Later | Harder PDFs | Scan recovery, tables on scans, very long documents, more languages (see `porting-from-the-lab.md`). |
 
 ## Open questions
