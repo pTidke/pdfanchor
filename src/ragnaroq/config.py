@@ -90,6 +90,9 @@ class Config:
     page_timeout_seconds: float = 60.0
     page_memory_mb: int = 2048
     max_page_chars: int = 200_000
+    # Limits for structured files (JSON, CSV, XML): nesting depth, and cells or lines read.
+    max_depth: int = 200
+    max_cells: int = 200_000
     policy: Policy = field(default_factory=Policy)
     third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 

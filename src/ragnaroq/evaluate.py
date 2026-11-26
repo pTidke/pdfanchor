@@ -21,6 +21,7 @@ from . import expected, policy, reference, structure
 from .config import Config
 from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
 from .model import SCHEMA_VERSION, Document, Line
+from .readers import ReaderRefused, refused_document
 from .reference import Truth, Word
 
 MARGIN = 3.0  # points around a line's box that still count as inside
@@ -274,6 +275,7 @@ class Report:
     files: list[FileScore]
     total: Tally
     sweep: list[dict]
+    exact: "ExactReport | None" = None  # files scored by anchor, from *.expected.jsonl
 
     def accepted_but_wrong(self) -> list[LineScore]:
         """Every accepted line that is wrong, those wrong on a critical token first."""
@@ -292,6 +294,7 @@ class Report:
             ],
             "sweep": self.sweep,
             "accepted_but_wrong": [asdict(line) for line in wrong],
+            **({"exact": [_exact_dict(f) for f in self.exact.files]} if self.exact else {}),
         }
 
 
@@ -311,11 +314,18 @@ def run(
     bytes, the reading settings and the readers' versions. A stored reading is decided
     again under the current rules and policy, so a change to the rules, the threshold
     or the scoring takes seconds, not a new reading."""
+    from . import readers
     from .ocr import available
     from .pipeline import convert
     from .third import read_disputed
 
     config = config or Config()
+    exact = (
+        run_exact(folder, readers.read_bytes) if next(Path(folder).glob("*.expected.jsonl"), None) else None
+    )
+    if exact is not None and next(Path(folder).glob("*.truth.json"), None) is None:
+        return Report(engines={}, min_similarity=config.policy.min_similarity, files=[], total=Tally(),
+                      sweep=[], exact=exact)
     engines = available(config.languages) if engines is None else list(engines)
     readers = "+".join(f"{engine.name}={engine.version()}" for engine in engines)
     files: list[FileScore] = []
@@ -361,6 +371,7 @@ def run(
         files=files,
         total=total,
         sweep=sweep([line for f in files for line in f.lines], same_letters=config.policy.same_letters),
+        exact=exact,
     )
 
 
@@ -416,6 +427,8 @@ def _third_section(t: Tally) -> list[str]:
 
 
 def to_markdown(report: Report, examples: int = 20) -> str:
+    if not report.files and report.exact is not None:  # a folder of answer keys only
+        return "# RAGnaroq evaluation\n\n" + exact_markdown(report.exact)
     t, r = report.total, report.total.rates()
     engines = (
         ", ".join(f"{name.split(':', 1)[-1]} {version}" for name, version in report.engines.items())
@@ -487,6 +500,8 @@ def to_markdown(report: Report, examples: int = 20) -> str:
             out.append(f"| {line.line} | {critical} | {read} | {correct} |")
         if len(wrong) > examples:
             out.append(f"\n…and {len(wrong) - examples} more in evaluation.json.")
+    if report.exact is not None:
+        out += ["", exact_markdown(report.exact).rstrip("\n")]
     return "\n".join(out) + "\n"
 
 
@@ -523,8 +538,9 @@ def run_exact(folder: str | Path, read: Callable[[bytes, str, Config], object]) 
     """Score every file with a `<file>.expected.jsonl` beside it, by anchor.
 
     `read(data, filename, config)` returns a `Document`, or an object with a `.document`.
-    A file the reader refuses must come back as a document with the refusing flag, which
-    its answer key lists as a `document_flag`; a reader that raises is reported as an error."""
+    A file the reader refuses (`ReaderRefused`) is scored as the document `refused_document`
+    makes, with the refusing flag its answer key lists as a `document_flag`; a reader that
+    raises anything else is reported as an error."""
     config = Config()
     files = []
     for key_path in sorted(Path(folder).glob("*.expected.jsonl")):
@@ -532,9 +548,12 @@ def run_exact(folder: str | Path, read: Callable[[bytes, str, Config], object]) 
         if not path.exists():
             raise FileNotFoundError(f"{key_path.name} has no {path.name} beside it.")
         items = expected.load(key_path)
+        data = path.read_bytes()
         try:
-            result = read(path.read_bytes(), path.name, config)
+            result = read(data, path.name, config)
             document = result if isinstance(result, Document) else result.document
+        except ReaderRefused as refusal:  # a refusal is a document with the flag that says why
+            document = refused_document(path.name, data, refusal)
         except Exception as error:  # a reader that fails is a result, not a crash of the run
             files.append(ExactFile(path.name, error=f"{type(error).__name__}: {error}"))
             continue
@@ -542,6 +561,10 @@ def run_exact(folder: str | Path, read: Callable[[bytes, str, Config], object]) 
     if not files:
         raise FileNotFoundError(f"No *.expected.jsonl files in {folder}.")
     return ExactReport(files)
+
+
+def _exact_dict(f: "ExactFile") -> dict:
+    return {"file": f.name, "ok": f.ok, "error": f.error, **(asdict(f.score) if f.score else {})}
 
 
 def exact_markdown(report: ExactReport) -> str:

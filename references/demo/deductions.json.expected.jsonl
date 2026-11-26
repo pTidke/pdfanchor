@@ -1,7 +1,9 @@
-{"anchor": {"type": "json", "pointer": "/taxpayer/name"}, "text": "Asha Rao"}
-{"anchor": {"type": "json", "pointer": "/taxpayer/pan"}, "text": "ABCDE1234F"}
-{"anchor": {"type": "json", "pointer": "/year"}, "text": "2026"}
-{"anchor": {"type": "json", "pointer": "/limit"}, "text": "150000"}
+{"anchor": {"type": "json", "pointer": "/taxpayer"}, "text": "taxpayer"}
+{"anchor": {"type": "json", "pointer": "/taxpayer/name"}, "text": "name: Asha Rao"}
+{"anchor": {"type": "json", "pointer": "/taxpayer/pan"}, "text": "pan: ABCDE1234F"}
+{"anchor": {"type": "json", "pointer": "/year"}, "text": "year: 2026"}
+{"anchor": {"type": "json", "pointer": "/limit"}, "text": "limit: 150000"}
+{"anchor": {"type": "json", "pointer": "/deductions"}, "text": "deductions"}
 {"anchor": {"type": "json", "pointer": "/deductions/0/section"}, "text": "80C"}
 {"anchor": {"type": "json", "pointer": "/deductions/0/amount"}, "text": "150000"}
 {"anchor": {"type": "json", "pointer": "/deductions/0/note"}, "text": "PPF"}
