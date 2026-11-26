@@ -4,6 +4,8 @@ them, and a nested block is a line of its own after it. Scripts, styles, templat
 the head are not read, except the title, which names the page. Text a visitor never sees is
 read and flagged. Images are figures; none is fetched, and none leaves the file's folder."""
 
+import codecs
+import collections
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -20,16 +22,19 @@ DROPPED = frozenset({"script", "style", "template", "noscript", "head"})
 # of HTML that hold words; `img`, `br` and `math` are handled by name.
 _INLINE = frozenset(
     "a abbr b bdi bdo cite code data del dfn em font i ins kbd label mark q s samp small span strong"
-    " sub sup time u var big tt strike nobr ruby rt rp wbr acronym output meter progress picture".split()
+    " sub sup time u var big tt strike nobr ruby wbr acronym output meter progress picture".split()
 )
 _HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+_ANNOTATIONS = frozenset({"rt", "rp"})  # a reading aid, not the text
 _MATH_SKIP = frozenset({"annotation", "annotation-xml"})  # other encodings of the same formula
 _WS = re.compile(r"[ \t\n\r\f]+")
 HIDDEN_STYLE = re.compile(r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b", re.I)
-_META_CHARSET = re.compile(rb"<meta[^>]*?charset", re.I)
+_META_CHARSET = re.compile(rb"<meta\b[^>]*?\bcharset\s*=\s*[\"']?\s*([A-Za-z0-9_.:\-]+)", re.I)
+_COMMENT = re.compile(rb"<!--.*?(?:-->|$)", re.S)
 _UTF8_BOM = b"\xef\xbb\xbf"
 _END_TAGS = re.compile(rb"</(?:body|html)\s*>", re.I)
-_MAX_SPAN = 1000
+_LAST_TAGS = (re.compile(rb"</html\s*>", re.I), re.compile(rb"</body\s*>", re.I))
+_MAX_COLSPAN, _MAX_ROWSPAN = 1000, 65534  # HTML's own limits; columns past 1000 are not tracked
 
 HIDDEN_MESSAGE = "Not shown on the page; a reader of the page never sees it."
 EQUATION_MESSAGE = (
@@ -85,13 +90,13 @@ def _math_text(math) -> str:
 
 
 def _caption(figure) -> str:
-    node = next(figure.iter("figcaption"), None)
+    node = next((child for child in figure if child.tag == "figcaption"), None)
     return collapse("".join(_texts(node, DROPPED, _INLINE))) if node is not None else ""
 
 
-def _span(value) -> int:
+def _span(value, cap: int) -> int:
     try:
-        return min(max(int(value), 1), _MAX_SPAN)
+        return min(max(int(value), 1), cap)
     except (TypeError, ValueError):
         return 1
 
@@ -126,27 +131,30 @@ class _Frame:
     closer: object  # the table or cell to finish when the block ends
     pre: bool
     caption: str
+    element: object  # the block, whose own text the "text" items are
+    path: str
+    hidden: bool
 
 
 class Reader:
-    def __init__(self, page: Page, config: Config, base: Path | None):
+    def __init__(self, page: Page, config: Config, base: Path | None, loader=None):
         self.page = page
         self.config = config
-        self.base = base
+        self.loader = loader or _images.Images(base, config)
         self.images: dict[str, bytes] = {}
+        self.iframe = False
         self.stopped = False
         self.too_deep = False
         self.tables: list[_Table] = []
         self.cells: list[_Cell] = []
         self.table_count = 0
-        self.loaded: dict[str, _images.Loaded] = {}
 
     # -- lines -------------------------------------------------------------------------------
 
     def full(self) -> bool:
         if self.stopped:
             return True
-        if len(self.page.lines) < self.config.max_cells and len(self.page.figures) < self.config.max_cells:
+        if len(self.page.lines) + len(self.page.figures) < self.config.max_cells:
             return False
         self.stopped = True
         self.page.flags.append(
@@ -190,13 +198,7 @@ class Reader:
     def figure(self, element, path, hidden, caption):
         if self.full():
             return
-        src = (element.get("src") or "").strip()
-        key = src if len(src) < 4096 else None  # a long data: URI is not worth remembering
-        loaded = self.loaded.get(key) if key else None
-        if loaded is None:
-            loaded = _images.load(src, self.base, self.config)
-            if key:
-                self.loaded[key] = loaded  # the same file named again is read once
+        loaded = self.loader.load(element.get("src"))
         alt = collapse(element.get("alt") or "")
         description, source = (caption, "caption") if caption else (alt, "alt") if alt else ("", "none")
         flags = [loaded.flag] if loaded.flag else []
@@ -219,10 +221,12 @@ class Reader:
     # -- walking -----------------------------------------------------------------------------
 
     def scan(self, element, path, depth, hidden, pre):
-        """What `element` holds itself: its text, with inline elements and the text between and
-        after nested blocks read in place, and the nested blocks and images, in order."""
+        """What `element` holds itself, in document order: each run of its own text (inline
+        elements read in place) as a ("text", ...) item, then the images in it, with each
+        nested block as a ("block", ...) item between the runs."""
         parts: list[str] = []
         items: list[tuple] = []
+        pending: list[tuple] = []  # images in the run, which follow its line
         state = {"covert": False, "equation": False}
 
         def add(text, hid):
@@ -230,6 +234,19 @@ class Reader:
                 parts.append(text)
                 if hid and not hidden and text.strip():
                     state["covert"] = True  # hidden words inside a visible element
+
+        def flush():
+            text = "".join(parts)
+            if not pre:
+                text = collapse(text)
+            elif text.endswith("\n"):
+                text = text[:-1]
+            if text.strip():
+                items.append(("text", text, state["equation"], state["covert"]))
+            items.extend(pending)
+            parts.clear()
+            pending.clear()
+            state["covert"] = state["equation"] = False
 
         def level(el, el_path, hid):
             return [iter(el), el, el_path, Counter(c.tag for c in el), {}, hid]
@@ -251,7 +268,7 @@ class Reader:
             seen = top[4]
             seen[tag] = number = seen.get(tag, 0) + 1
             child_path = f"{top[2]}/{tag}" + (f"[{number}]" if top[3][tag] > 1 else "")
-            if tag in DROPPED:
+            if tag in DROPPED or tag in _ANNOTATIONS:
                 add(child.tail, top[5])
                 continue
             child_depth = depth + len(stack)
@@ -260,8 +277,10 @@ class Reader:
                 add(child.tail, top[5])
                 continue
             child_hidden = top[5] or is_hidden(child)
+            if tag == "iframe" and child.get("srcdoc") is not None:
+                self.iframe = True
             if tag == "img":
-                items.append(("img", child, child_path, child_hidden))
+                pending.append(("img", child, child_path, child_hidden))
             elif tag == "br":
                 add("\n" if pre else " ", top[5])
             elif tag == "math":
@@ -274,15 +293,11 @@ class Reader:
                 stack.append(level(child, child_path, child_hidden))
                 continue
             else:
+                flush()
                 items.append(("block", child, child_path, child_depth, child_hidden))
-                add(" ", top[5])
             add(child.tail, top[5])
-        text = "".join(parts)
-        if not pre:
-            text = collapse(text)
-        elif text.endswith("\n"):
-            text = text[:-1]
-        return (text if text.strip() else ""), items, state["equation"], state["covert"]
+        flush()
+        return items
 
     def enter(self, element, path, depth, hidden, pre, caption, stack):
         tag = element.tag
@@ -302,10 +317,8 @@ class Reader:
             table.column = 0
         elif tag in ("td", "th") and self.tables:
             closer = self.open_cell(element, path)
-        text, items, equation, covert = self.scan(element, path, depth, hidden, pre)
-        if text:
-            self.line(element, path, text, hidden or covert, equation)
-        stack.append(_Frame(iter(items), closer, pre, caption))
+        items = self.scan(element, path, depth, hidden, pre)
+        stack.append(_Frame(iter(items), closer, pre, caption, element, path, hidden))
 
     def open_cell(self, element, path) -> _Cell:
         table = self.tables[-1]
@@ -314,9 +327,11 @@ class Reader:
         column = table.column
         while table.busy.get(column, 0) >= table.row:
             column += 1
-        columns, rows = _span(element.get("colspan")), _span(element.get("rowspan"))
-        for spanned in range(column, column + columns):
-            table.busy[spanned] = table.row + rows - 1
+        columns = _span(element.get("colspan"), _MAX_COLSPAN)
+        rows = _span(element.get("rowspan"), _MAX_ROWSPAN)
+        if rows > 1:
+            for spanned in range(column, min(column + columns, _MAX_COLSPAN)):
+                table.busy[spanned] = table.row + rows - 1
         table.column = column + columns
         table.columns = max(table.columns, table.column)
         cell = _Cell(table, table.row - 1, column, HtmlAnchor(path=path))
@@ -347,6 +362,8 @@ class Reader:
             if item is None:
                 stack.pop()
                 self.close(frame.closer)
+            elif item[0] == "text":
+                self.line(frame.element, frame.path, item[1], frame.hidden or item[3], item[2])
             elif item[0] == "img":
                 self.figure(item[1], item[2], item[3], frame.caption)
             else:
@@ -354,6 +371,14 @@ class Reader:
         while stack:  # stopped at the line limit: what is open is still finished
             self.close(stack.pop().closer)
         self.page.tables.sort(key=lambda table: int(table.id.rsplit("-t", 1)[1]))
+        if self.iframe:
+            self.page.flags.append(
+                Flag(
+                    rule="html.iframe-not-read",
+                    severity="review",
+                    message="An iframe's srcdoc holds a page of its own; it is not read.",
+                )
+            )
         if self.too_deep:
             self.page.flags.append(
                 Flag(
@@ -366,7 +391,11 @@ class Reader:
 
 def _parser(lxml_html, encoding: str | None):
     options = {"encoding": encoding} if encoding else {}
-    return lxml_html.HTMLParser(no_network=True, remove_comments=True, remove_pis=True, **options)
+    # `huge_tree` lifts libxml2's own size and depth limits, which drop the rest of a page without
+    # a word: the file size is already capped, no entity is expanded, and `max_depth` still applies.
+    return lxml_html.HTMLParser(
+        no_network=True, remove_comments=True, remove_pis=True, huge_tree=True, **options
+    )
 
 
 def _limit_flags(parser) -> list[Flag]:
@@ -387,13 +416,13 @@ def _limit_flags(parser) -> list[Flag]:
     return found
 
 
-def fragment(content: str, config: Config, base: Path | None, hidden: bool = False) -> Reader:
+def fragment(content: str, config: Config, base: Path | None, hidden: bool = False, loader=None) -> Reader:
     """Raw HTML found inside another file, read as a page of its own. Its lines, figures and
     images are in the returned reader's `page` and `images`."""
     import lxml.html
     from lxml import etree
 
-    reader = Reader(Page(number=1, kind="body"), config, base)
+    reader = Reader(Page(number=1, kind="body"), config, base, loader)
     parser = _parser(lxml.html, "utf-8")
     try:
         root = lxml.html.document_fromstring(content.encode("utf-8"), parser=parser)
@@ -406,6 +435,71 @@ def fragment(content: str, config: Config, base: Path | None, hidden: bool = Fal
     return reader
 
 
+def _declared(data: bytes) -> str | None:
+    """The charset a `<meta>` tag near the top names; text that merely mentions one, and a
+    tag in a comment, do not count."""
+    found = _META_CHARSET.search(_COMMENT.sub(b"", data[:8192]))
+    return found.group(1).decode("ascii", "ignore") if found else None
+
+
+def _text_of(data: bytes, name: str, document) -> str:
+    """The page as text. A byte-order mark decides; else a declared charset that Python knows;
+    else UTF-8 when the bytes are, and Windows-1252 when they are not. UTF-16 and UTF-32 cannot
+    be declared for bytes that are not, so they count as no declaration. Anything that did not
+    fit is flagged."""
+    utf8 = data.startswith(_UTF8_BOM)
+    declared = None if utf8 or data.startswith((b"\xff\xfe", b"\xfe\xff")) else _declared(data)
+    codec = None
+    if declared:
+        try:
+            codec = codecs.lookup(declared).name
+        except LookupError:
+            codec = ""
+        if codec.startswith(("utf-16", "utf-32", "utf_16", "utf_32")):
+            codec = None
+        elif codec in ("iso8859-1", "ascii"):
+            codec = "cp1252"  # what browsers read a Latin-1 or ASCII declaration as
+    if codec:
+        try:
+            return data.decode(codec)
+        except UnicodeDecodeError:
+            _note(
+                document,
+                "encoding.mismatch",
+                f"The page declares {declared} but some bytes do not fit it; they were read as "
+                "replacement characters.",
+            )
+            return data.decode(codec, errors="replace")
+    try:
+        text, guessed = _build.decode(data)
+    except UnicodeDecodeError as error:
+        raise ReaderRefused("html.invalid", f"{name} is not valid UTF-16 text: {error}") from error
+    if codec == "":
+        _note(
+            document,
+            "encoding.mismatch",
+            f"The declared encoding {declared} is not known; read as "
+            f"{'Windows-1252' if guessed else 'UTF-8'}.",
+        )
+    elif guessed:
+        _note(document, "encoding.guessed", "Not UTF-8; read as Windows-1252.")
+    return text
+
+
+def _note(document, rule: str, message: str) -> None:
+    document.flags.append(Flag(rule=rule, severity="review", message=message))
+
+
+def _trim_end_tags(payload: bytes) -> bytes:
+    """libxml2 stops at `</html>` and drops what follows; browsers do not. The last `</html>` and
+    the last `</body>` are removed when something other than closing tags follows them."""
+    for pattern in _LAST_TAGS:
+        last = next(iter(collections.deque(pattern.finditer(payload), maxlen=1)), None)
+        if last and _END_TAGS.sub(b"", payload[last.end() :]).strip():
+            payload = payload[: last.start()] + payload[last.end() :]
+    return payload
+
+
 def read(data: bytes, name: str, config: Config, base: Path | None = None) -> ReadResult:
     try:
         import lxml.html
@@ -416,24 +510,9 @@ def read(data: bytes, name: str, config: Config, base: Path | None = None) -> Re
     page = document.pages[0]
     if not data.replace(_UTF8_BOM, b"").strip() or data in (b"\xff\xfe", b"\xfe\xff"):
         return ReadResult(document)
-    # A declared encoding is for lxml to honour. Without one the bytes are UTF-8, UTF-16 with a
-    # byte-order mark, or else Windows-1252, said so; lxml is then told which.
-    utf16 = data.startswith((b"\xff\xfe", b"\xfe\xff"))
-    if _META_CHARSET.search(data[:4096]) and not utf16:
-        encoding, payload = None, data
-    else:
-        try:
-            text, guessed = _build.decode(data)
-        except UnicodeDecodeError as error:
-            raise ReaderRefused("html.invalid", f"{name} is not valid UTF-16 text: {error}") from error
-        encoding = "utf-8"
-        payload = data if not (guessed or utf16 or data.startswith(_UTF8_BOM)) else text.encode("utf-8")
-        if guessed:
-            document.flags.append(
-                Flag(rule="encoding.guessed", severity="review", message="Not UTF-8; read as Windows-1252.")
-            )
-    # libxml2 stops at `</html>` and drops what follows; browsers do not.
-    payload = _END_TAGS.sub(b"", payload)
+    text = _text_of(data, name, document)
+    payload = _trim_end_tags(text.encode("utf-8"))
+    encoding = "utf-8"
     parser = _parser(lxml.html, encoding)
     try:
         root = lxml.html.document_fromstring(payload, parser=parser)
@@ -452,13 +531,4 @@ def read(data: bytes, name: str, config: Config, base: Path | None = None) -> Re
     for flag in _limit_flags(parser):
         if all(flag.rule != f.rule for f in page.flags):
             page.flags.append(flag)
-    unusable = {error.type_name for error in parser.error_log}
-    if unusable & {"ERR_INVALID_ENCODING", "ERR_UNSUPPORTED_ENCODING"} and not document.flags:
-        document.flags.append(
-            Flag(
-                rule="encoding.guessed",
-                severity="review",
-                message="The declared encoding does not fit the bytes; some characters may be wrong.",
-            )
-        )
     return ReadResult(document, reader.images)

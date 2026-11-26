@@ -4,6 +4,7 @@ leave the file's folder, and the limits that stop a hostile page."""
 import base64
 import socket
 import struct
+import time
 import zlib
 from functools import partial
 from pathlib import Path
@@ -295,14 +296,16 @@ def test_a_own_text_excludes_nested_blocks_which_follow_as_lines_of_their_own():
         "<span>lead<div>wrapped</div>trail</span>"
     )
     assert lines(result) == [
-        ("/html/body", "lead trail"),
         ("/html/body/ul/li[1]", "one"),
         ("/html/body/ul/li[1]/ul/li[1]", "two"),
         ("/html/body/ul/li[1]/ul/li[2]", "three"),
         ("/html/body/ul/li[2]", "four"),
-        ("/html/body/div", "before after"),
+        ("/html/body/div", "before"),
         ("/html/body/div/p", "mid"),
+        ("/html/body/div", "after"),
+        ("/html/body", "lead"),
         ("/html/body/span/div", "wrapped"),
+        ("/html/body", "trail"),
     ]
     assert [line.role for line in result.document.lines()][0] == "body"
 
@@ -413,16 +416,17 @@ def test_e_table_cells_are_lines_at_their_paths_and_a_nested_table_is_its_own():
         (f"{p}/tbody/tr[1]/td[2]", "1"),
         (f"{p}/tbody/tr[1]/td[3]", "2"),
         (f"{p}/tbody/tr[2]/td[1]", "3"),
-        (f"{p}/tbody/tr[2]/td[2]", "tail"),
         (f"{p}/tbody/tr[2]/td[2]/table/tr/td", "in"),
+        (f"{p}/tbody/tr[2]/td[2]", "tail"),
         ("/html/body/table[2]/tr/td/p[1]", "para"),
         ("/html/body/table[2]/tr/td/p[2]", "two"),
     ]
     found = result.document.lines()
     assert [(line.role, line.table_id) for line in found] == [
         ("body", None),
-        *[("table", "p1-t1")] * 7,
+        *[("table", "p1-t1")] * 6,
         ("table", "p1-t2"),
+        ("table", "p1-t1"),
         ("table", "p1-t3"),
         ("table", "p1-t3"),
     ]
@@ -516,13 +520,16 @@ def test_g_elements_deeper_than_max_depth_are_not_read_and_flag_the_page():
 
 
 def test_g_markdown_nested_beyond_the_parsers_limit_is_flagged_never_silently_lost():
-    deep = read_md(">" * 40 + " deep text\n\nafter\n")
-    assert "md.too-deep" in page_flags(deep)
+    forty = read_md(">" * 40 + " deep text\n\nafter\n")
+    assert texts(forty) == ["deep text", "after"] and page_flags(forty) == []
+    deep = read_md(">" * 150 + " deep text\n\nafter\n")
+    assert page_flags(deep) == ["md.too-deep"]
+    assert "the rest of the file from that point is not read" in deep.document.pages[0].flags[0].message
     assert "after" in texts(deep)
     shallow = read_md(">" * 5 + " shallow text\n")
     assert texts(shallow) == ["shallow text"] and page_flags(shallow) == []
     lists = read_md("".join("  " * i + "- item\n" for i in range(40)))
-    assert "md.too-deep" in page_flags(lists) or len(texts(lists)) == 40
+    assert texts(lists) == ["item"] * 40 and page_flags(lists) == []
 
 
 # --- R18 (h): the line cap -----------------------------------------------------------------------
@@ -816,7 +823,7 @@ def test_l_raw_html_hidden_text_is_flagged_even_when_it_spans_blocks():
         "visible": [],
         "middle": ["html.hidden"],
         "end": [],
-        "Text secret more done": ["html.hidden"],
+        "Text secret more done": ["md.raw-html", "html.hidden"],
     }
 
 
@@ -911,15 +918,11 @@ def test_a_declared_encoding_the_bytes_do_not_fit_is_flagged():
     wrong = read_html(
         b'<html><head><meta charset="utf-8"></head><body><p>caf\xe9</p><p>next</p></body></html>'
     )
-    assert texts(wrong) == ["caf\ufffd", "next"] and rules(wrong.document.flags) == ["encoding.guessed"]
+    assert texts(wrong) == ["caf\ufffd", "next"] and rules(wrong.document.flags) == ["encoding.mismatch"]
+    assert "replacement" in wrong.document.flags[0].message
     unknown = read_html(b'<html><head><meta charset="x-nope"></head><body><p>caf\xc3\xa9</p></body></html>')
-    assert rules(unknown.document.flags) == ["encoding.guessed"]
-
-
-def test_a_text_node_over_the_parsers_size_limit_is_flagged_not_lost_silently():
-    big = b"<html><body><p>before</p><p>" + b"x" * 11_000_000 + b"</p><p>after</p></body></html>"
-    result = read_html(big)
-    assert "html.parse-limit" in page_flags(result)
+    assert texts(unknown) == ["caf\xe9"] and rules(unknown.document.flags) == ["encoding.mismatch"]
+    assert "UTF-8" in unknown.document.flags[0].message
 
 
 def test_a_setext_heading_is_anchored_to_both_of_its_lines():
@@ -934,8 +937,222 @@ def test_a_setext_heading_is_anchored_to_both_of_its_lines():
 def test_markdown_inline_html_drops_scripts_and_keeps_the_words_around_it():
     result = read_md("a <script>bad()</script> b <style>x</style> c <b>d</b> <!-- x --> e<br>f\n")
     assert texts(result) == ["a b c d e f"]
-    assert lines_flags(result) == [[]]
+    assert lines_flags(result) == [["md.raw-html"]]
 
 
 def lines_flags(result):
     return [rules(line.flags) for line in result.document.lines()]
+
+
+# --- fix round 1 (R22) ---------------------------------------------------------------------------
+
+
+def timed(function, *args, **kwargs):
+    start = time.perf_counter()
+    result = function(*args, **kwargs)
+    return result, time.perf_counter() - start
+
+
+def test_c1_markdown_prose_naming_head_script_template_noscript_drops_nothing():
+    head = read_md("The <head> element holds metadata.\n\nNext paragraph.\n\n# Heading\n")
+    assert [(line.anchor.lines, line.text) for line in head.document.lines()] == [
+        ((1, 1), "The element holds metadata."),
+        ((3, 3), "Next paragraph."),
+        ((5, 5), "Heading"),
+    ]
+    assert lines_flags(head) == [[], [], []]
+    script = read_md("Put code in <script> tags.\n\nNext paragraph.\n\n![a](a.png)\n")
+    assert [(line.anchor.lines, line.text) for line in script.document.lines()] == [
+        ((1, 1), "Put code in tags."),
+        ((3, 3), "Next paragraph."),
+    ]
+    assert lines_flags(script)[0] == ["md.raw-html"] and [f.anchor.lines for f in figures(script)] == [(5, 5)]
+    for tag in ("template", "noscript", "style"):
+        result = read_md(f"A <{tag}> tag.\n\nNext.\n")
+        assert texts(result) == ["A tag.", "Next."], tag
+        assert lines_flags(result) == [["md.raw-html"], []]
+    closed = read_md("a <template>gone</template> b\n\nnext\n")
+    assert texts(closed) == ["a b", "next"] and lines_flags(closed) == [["md.raw-html"], []]
+    block = read_md("<head>\n\nstill read\n")
+    assert texts(block)[-1] == "still read"
+
+
+def test_i1_one_file_named_many_ways_is_held_once_and_the_total_is_capped(tmp_path):
+    (tmp_path / "big.png").write_bytes(png() * 3)
+    result = body("".join(f'<img src="big.png?{i}">' for i in range(40)), base=tmp_path)
+    assert len(result.images) == 40 and len({id(data) for data in result.images.values()}) == 1
+    md = read_md("\n\n".join(f"![a](big.png?{i})" for i in range(40)), base=tmp_path)
+    assert len({id(data) for data in md.images.values()}) == 1
+    blocks = read_md("\n\n".join('<div><img src="big.png"></div>' for _ in range(40)), base=tmp_path)
+    assert len(blocks.images) == 40 and len({id(data) for data in blocks.images.values()}) == 1
+    for name in "abc":
+        (tmp_path / f"{name}.png").write_bytes(b"x" * 100)
+    small = Config(max_unzipped_bytes=250)
+    capped = body(
+        '<img src="a.png"><img src="b.png"><img src="c.png"><img src="a.png">', base=tmp_path, config=small
+    )
+    assert [own(f) for f in figures(capped)] == [[], [], ["image.too-large"], []]
+    assert sorted(capped.images) == ["p1-f1", "p1-f2", "p1-f4"]
+    assert len({id(capped.images[k]) for k in ("p1-f1", "p1-f4")}) == 1
+
+
+def test_i1_figures_count_toward_the_cap():
+    result = body("<p>a</p>" + "<img src=x.png>" * 5, config=Config(max_cells=3))
+    assert texts(result) == ["a"] and len(figures(result)) == 2
+    assert page_flags(result) == ["html.line-limit"]
+    md = read_md("a\n\n" + "\n\n".join(["![x](x.png)"] * 5), config=Config(max_cells=3))
+    assert texts(md) == ["a"] and len(figures(md)) == 2 and page_flags(md) == ["md.line-limit"]
+
+
+def test_i2_quadratic_inputs_finish_in_seconds():
+    cases = {
+        "script block": ("<pre>\n" + "<script" * 10000 + "\n", "a.md"),
+        "bare tags": ("<pre>\n" + "<a" * 20000 + "\n", "b.md"),
+        "quotes": ("<pre>\n" + "<a '" * 20000 + "\n", "c.md"),
+        "open inline": ("<b>x " * 20000, "d.md"),
+        "close misses": ("<b>x " * 10000 + "</i>y " * 10000, "e.md"),
+    }
+    for label, (source, _name) in cases.items():
+        _, seconds = timed(read_md, source)
+        assert seconds < 10, (label, seconds)
+    result, seconds = timed(read_md, "<b>x " * 20000)
+    assert "md.too-deep" in page_flags(result)
+    huge = "a" * 200_000
+    result, seconds = timed(read_html, f'<img src="{huge}"><img src="../{huge}">')
+    assert seconds < 10
+    assert [own(f) for f in figures(result)] == [["image.unreadable"]] * 2
+
+
+def test_i2_table_spans_are_linear():
+    row = "<tr>" + '<td colspan="1000" rowspan="1000"></td>' * 800 + "</tr>"
+    _, seconds = timed(read_html, "<table>" + row * 40 + "</table><p>after</p>")
+    assert seconds < 5
+    one = "<table><tr>" + '<td colspan="1000" rowspan="65534"></td>' * 33000 + "</tr></table><p>x</p>"
+    result, seconds = timed(read_html, one)
+    assert seconds < 5 and texts(result) == ["x"]
+    spans = body(
+        "<table><tr><td colspan=99999 rowspan=99999>a</td><td>b</td></tr><tr><td>c</td></tr></table>"
+    )
+    (table,) = spans.document.pages[0].tables
+    assert [(c.row, c.column, c.text) for c in table.cells] == [(0, 0, "a"), (0, 1000, "b"), (1, 1000, "c")]
+
+
+def test_i3_each_run_of_text_is_a_line_in_document_order():
+    result = body("<div>before<p>mid</p>after</div>")
+    assert lines(result) == [
+        ("/html/body/div", "before"),
+        ("/html/body/div/p", "mid"),
+        ("/html/body/div", "after"),
+    ]
+    stray = body("one<p>two</p>three<p>four</p>five")
+    assert [text for _, text in lines(stray)] == ["one", "two", "three", "four", "five"]
+    cell = body("<table><tr><td>lead<p>para one</p>tail</td></tr></table>")
+    assert [text for _, text in lines(cell)] == ["lead", "para one", "tail"]
+    (table,) = cell.document.pages[0].tables
+    assert [c.text for c in table.cells] == ["lead\npara one\ntail"]
+    picture = body("<div>a<img src=x.png>b<p>c</p>d</div>")
+    assert [text for _, text in lines(picture)] == ["ab", "c", "d"]
+    assert [f.order for f in figures(picture)] == [1]
+
+
+def test_i4_declared_charsets_are_found_in_meta_tags_only_and_honoured():
+    cafe = "<p>caf\xe9 \u20ac</p>"
+    utf16 = read_html(f"<meta charset='utf-16'><body>{cafe}".encode())
+    assert texts(utf16) == ["caf\xe9 \u20ac"] and utf16.document.flags == []
+    utf32 = read_html(
+        f'<meta http-equiv="Content-Type" content="text/html; charset=utf-32"><body>{cafe}'.encode()
+    )
+    assert texts(utf32) == ["caf\xe9 \u20ac"] and utf32.document.flags == []
+    mention = read_html(f"<meta name=d content='how to set the charset'><body>{cafe}".encode())
+    assert texts(mention) == ["caf\xe9 \u20ac"] and mention.document.flags == []
+    commented = read_html(f"<!-- <meta charset='iso-8859-2'> --><body>{cafe}".encode())
+    assert texts(commented) == ["caf\xe9 \u20ac"] and commented.document.flags == []
+    late = read_html(f"<!--{'x' * 9000}--><meta charset='windows-1252'><body>{cafe}".encode())
+    assert texts(late) == ["caf\xe9 \u20ac"]
+    sjis = read_html("<meta charset='shift_jis'><body><p>\u65e5\u672c\u8a9e</p>".encode("shift_jis"))
+    assert texts(sjis) == ["\u65e5\u672c\u8a9e"] and sjis.document.flags == []
+    http = (
+        '<meta http-equiv="Content-Type" content="text/html; charset=shift_jis"><body><p>\u65e5\u672c</p>'
+    ).encode("shift_jis")
+    http = read_html(http)
+    assert texts(http) == ["\u65e5\u672c"]
+    latin = read_html("<meta charset='iso-8859-1'><body><p>\u201cq\u201d</p>".encode("cp1252"))
+    assert texts(latin) == ["\u201cq\u201d"]  # browsers read Latin-1 as Windows-1252
+    bom = read_html(b"\xef\xbb\xbf" + f"<meta charset='windows-1252'><body>{cafe}".encode())
+    assert texts(bom) == ["caf\xe9 \u20ac"]
+    bad = read_html(b"<meta charset=utf-8><p>ok</p><p>bad \xff\xfe byte</p><p>after</p>")
+    assert texts(bad) == ["ok", "bad \ufffd\ufffd byte", "after"]
+    assert rules(bad.document.flags) == ["encoding.mismatch"]
+    assert "utf-8" in bad.document.flags[0].message and "replacement" in bad.document.flags[0].message
+
+
+def test_i5_the_parsers_size_limits_do_not_drop_the_rest_of_the_page():
+    big = base64.b64encode(b"\x89PNG" + b"x" * 8_000_000).decode()
+    result = read_html(f'<p>before</p><img src="data:image/png;base64,{big}"><p>after</p>')
+    assert texts(result) == ["before", "after"] and len(result.images["p1-f1"]) == 8_000_004
+    text = read_html(b"<html><body><p>before</p><p>" + b"x" * 11_000_000 + b"</p><p>after</p></body></html>")
+    assert [len(t) for t in texts(text)] == [6, 11_000_000, 5] and page_flags(text) == []
+    nested = f"<p>top</p>{'<div>' * 300}bottom{'</div>' * 300}<p>after</p>"
+    cut = read_html(nested)
+    assert texts(cut) == ["top", "after"] and page_flags(cut) == ["html.too-deep"]
+    full = read_html(nested, config=Config(max_depth=1000))
+    assert texts(full) == ["top", "bottom", "after"] and page_flags(full) == []
+
+
+def test_m1_an_iframe_srcdoc_is_flagged_not_parsed():
+    result = body('<p>a</p><iframe srcdoc="<p>inside</p>">fallback</iframe>')
+    assert texts(result) == ["a", "fallback"] and page_flags(result) == ["html.iframe-not-read"]
+
+
+def test_m2_ruby_annotations_are_not_line_text():
+    result = body("<p><ruby>\u6f22<rt>kan</rt><rp>(</rp>\u5b57<rt>ji</rt></ruby> tail</p>")
+    assert texts(result) == ["\u6f22\u5b57 tail"]
+
+
+def test_m3_only_the_last_closing_tags_are_removed_and_only_when_text_follows():
+    alt = (
+        '<html><body><img src="a.png" alt="see </body> tag"><textarea></html></textarea>'
+        "<p>x</p></body></html>"
+    )
+    result = read_html(alt)
+    assert [f.description for f in figures(result)] == ["see </body> tag"]
+    assert texts(result) == ["</html>", "x"]
+    plain = read_html("<html><body><p>a</p></body></html>\n")
+    assert texts(plain) == ["a"]
+    trailing = read_html("<html><body><p>a</p></body></html>\n<p>b</p>")
+    assert texts(trailing) == ["a", "b"]
+
+
+def test_m4_markdown_empty_cells_are_skipped_like_word_and_html():
+    result = read_md("| a | b |\n|---|---|\n| x | |\n")
+    (table,) = result.document.pages[0].tables
+    assert [(c.row, c.column, c.text) for c in table.cells] == [(0, 0, "a"), (0, 1, "b"), (1, 0, "x")]
+    assert (table.rows, table.columns) == (2, 2)
+
+
+def test_m6_blank_markdown_and_html_files_are_empty_documents_through_read_bytes():
+    for name in ("e.md", "e.markdown", "e.html", "e.htm"):
+        for data in (b"", b"  \n\t", b"\xef\xbb\xbf", b"\xef\xbb\xbf \n"):
+            result = read_bytes(data, name, Config())
+            assert result.document.pages[0].lines == [] and result.document.flags == [], (name, data)
+    with pytest.raises(ReaderRefused) as refused:
+        read_bytes(b"\x00\x01\x02", "binary.md", Config())
+    assert refused.value.rule == "format.unknown"
+
+
+def test_m8_a_caption_must_be_a_direct_child_of_the_figure():
+    result = body(
+        "<figure><div><figcaption>Nested</figcaption></div><img src=a.png alt='Alt'></figure>"
+        "<figure><img src=b.png alt='Alt2'><figcaption>Direct</figcaption></figure>"
+    )
+    assert [(f.description, f.description_source) for f in figures(result)] == [
+        ("Alt", "alt"),
+        ("Direct", "caption"),
+    ]
+
+
+def test_m9_control_characters_around_a_src_are_stripped_before_the_scheme_check():
+    result = body('<img src="\x01http://example.org/x.png\x02"><img src="\x1f data:image/png,%89PNG ">')
+    first, second = figures(result)
+    assert own(first) == ["image.remote-not-fetched"] and first.path == "http://example.org/x.png"
+    assert own(second) == [] and result.images["p1-f2"] == b"\x89PNG"

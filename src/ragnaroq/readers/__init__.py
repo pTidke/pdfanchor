@@ -95,7 +95,12 @@ def detect(name: str, data: bytes) -> str | None:
         return suffix if suffix in found else (found[0] if len(found) == 1 else None)
     head = _head(data)
     if not head:
-        return None
+        # A file with nothing in it is an empty document, if its name says what it would be.
+        blank = not data.strip(b" \t\r\n\x0b\x0c\x00\xef\xbb\xbf\xff\xfe\xfe")
+        suffix = Path(name).suffix.lower()
+        if blank and suffix in (".html", ".htm", ".xhtml"):
+            return "html"
+        return "md" if blank and suffix in (".md", ".markdown") else None
     suffix = Path(name).suffix.lower()
     if suffix == ".json":
         return "json" if head[0] in "{[" else None

@@ -12,15 +12,18 @@ from ..anchors import MdAnchor
 from ..config import Config
 from ..model import Cell, Figure, Flag, Table
 from . import READER_VERSIONS, ReaderRefused, ReaderUnavailable, ReadResult, _build, _images
-from .html_reader import DROPPED, HIDDEN_MESSAGE, HIDDEN_STYLE, collapse, fragment
+from .html_reader import HIDDEN_MESSAGE, HIDDEN_STYLE, collapse, fragment
 
+MAX_NESTING = 100  # markdown-it's own is 20 for CommonMark
 _NEWLINE = re.compile(r"\r\n?|\n")
-_TAG = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9:-]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*)>")
+_TAG = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9:-]*)(?=[\s/>])((?:[^<>\"']|\"[^\"<]*\"|'[^'<]*')*)>")
 _ATTRIBUTE = re.compile(r"([^\s=/\"'>]+)(?:\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+)))?")
 _COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.S)
-_CODE = re.compile(r"<(script|style)\b.*?</\1\s*>", re.S | re.I)
 _WORDS = ("text", "text_special", "code_inline")
+# Raw-HTML elements whose content is code or markup, not text, when the tag is closed in the same block.
+_CODE = ("script", "style", "template", "noscript")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
+_RAW_HTML = Flag(rule="md.raw-html", severity="review", message="Raw HTML; read as its visible text.")
 
 
 def _attributes(text: str) -> dict[str, str]:
@@ -32,35 +35,63 @@ def _attributes(text: str) -> dict[str, str]:
 
 class _Tags:
     """The raw-HTML tags left open so far in the file, across blocks: text between `<div hidden>`
-    and `</div>` is hidden, and text inside an open `<template>` is not read, though the tags
-    sit in other blocks than the text."""
+    and `</div>` is hidden though the tags sit in other blocks than the text. Never more than
+    `limit` are kept, and every step is constant time."""
 
-    def __init__(self):
-        self.open: list[tuple[str, bool, bool]] = []  # tag name, hides, drops
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.open: list[tuple[str, bool]] = []  # tag name, whether it hides
+        self.counts: dict[str, int] = {}
+        self.hiding = 0
+        self.overflow = False
 
     @property
     def hidden(self) -> bool:
-        return any(hides for _, hides, _ in self.open)
+        return self.hiding > 0
 
-    @property
-    def dropped(self) -> bool:
-        return any(drops for _, _, drops in self.open)
+    def close(self, name: str) -> None:
+        if not self.counts.get(name):
+            return
+        while self.open:
+            last, hides = self.open.pop()
+            self.counts[last] -= 1
+            self.hiding -= hides
+            if last == name:
+                break
 
     def feed(self, content: str):
-        """Apply every tag in `content`; yields (name, attributes) of each start tag."""
-        content = _CODE.sub("", _COMMENT.sub("", content))
-        for closing, name, rest in _TAG.findall(content):
+        """Apply every tag in `content`; yields (name, attributes) of each start tag. A script or
+        style closed in the same content is skipped whole, so its code is not read as tags."""
+        content = _COMMENT.sub("", content)
+        position, unclosed = 0, set()
+        while match := _TAG.search(content, position):
+            position = match.end()
+            closing, name, rest = match.groups()
             name = name.lower()
             if closing:
-                names = [entry[0] for entry in self.open]
-                if name in names:
-                    del self.open[len(names) - 1 - names[::-1].index(name) :]
+                self.close(name)
                 continue
+            if name in ("script", "style") and name not in unclosed:
+                end = re.compile(rf"</{name}\s*>", re.I).search(content, position)
+                if end:
+                    position = end.end()
+                    continue
+                unclosed.add(name)
             attributes = _attributes(rest)
             if name not in _VOID and not rest.rstrip().endswith("/"):
                 hides = "hidden" in attributes or bool(HIDDEN_STYLE.search(attributes.get("style", "")))
-                self.open.append((name, hides, name in DROPPED))
+                if len(self.open) >= self.limit:
+                    self.overflow = True
+                else:
+                    self.open.append((name, hides))
+                    self.counts[name] = self.counts.get(name, 0) + 1
+                    self.hiding += hides
             yield name, attributes
+
+
+def _closes(content: str, name: str) -> bool:
+    match = _TAG.match(content)
+    return bool(match and match.group(1) and match.group(2).lower() == name)
 
 
 @dataclass
@@ -83,8 +114,8 @@ class _Reader:
         self.config = config
         self.base = base
         self.images: dict[str, bytes] = {}
-        self.loaded: dict[str, _images.Loaded] = {}
-        self.tags = _Tags()
+        self.loader = _images.Images(base, config)
+        self.tags = _Tags(config.max_depth)
         self.stopped = False
         self.nested_too_deep = False
         self.tables = 0
@@ -92,7 +123,7 @@ class _Reader:
     def full(self) -> bool:
         if self.stopped:
             return True
-        if len(self.page.lines) < self.config.max_cells and len(self.page.figures) < self.config.max_cells:
+        if len(self.page.lines) + len(self.page.figures) < self.config.max_cells:
             return False
         self.stopped = True
         self.page.flags.append(
@@ -117,13 +148,7 @@ class _Reader:
     def figure(self, src, alt, lines, hidden):
         if self.full():
             return
-        src = (src or "").strip()
-        key = src if len(src) < 4096 else None
-        loaded = self.loaded.get(key) if key else None
-        if loaded is None:
-            loaded = _images.load(src, self.base, self.config)
-            if key:
-                self.loaded[key] = loaded
+        loaded = self.loader.load(src)
         alt = collapse(alt)
         flags = [loaded.flag] if loaded.flag else []
         if hidden or self.tags.hidden:
@@ -147,23 +172,50 @@ class _Reader:
     def inline(self, token, lines, role="body", table_id=None) -> str:
         """The block's text from its inline children, and its images and hidden words; makes
         the line, then the figures. Returns the text."""
-        out = [""]  # one running string; a space that would follow a space is dropped
+        out: list[str] = []
         images: list[tuple] = []
         hidden = self.tags.hidden
+        raw = False
+        children = token.children or []
+        unclosed: set[str] = set()
+        spaced = True  # the text so far ends in a space, or is empty
 
         def add(piece):
-            out[0] += piece.lstrip(" ") if out[0].endswith(" ") else piece
+            nonlocal spaced
+            if spaced:
+                piece = piece.lstrip(" ")
+            if piece:
+                out.append(piece)
+                spaced = piece.endswith(" ")
 
-        for child in token.children or []:
+        index = 0
+        while index < len(children):
+            child = children[index]
+            index += 1
             kind = child.type
             if kind == "html_inline":
+                start = _TAG.match(child.content)
+                name = start.group(2).lower() if start and not start.group(1) else ""
+                if name in _CODE:
+                    raw = True  # code inside the tag is not text, if the tag is closed in this block
+                    if name not in unclosed:
+                        end = next(
+                            (
+                                k
+                                for k in range(index, len(children))
+                                if children[k].type == "html_inline" and _closes(children[k].content, name)
+                            ),
+                            None,
+                        )
+                        if end is not None:
+                            index = end + 1
+                            continue
+                        unclosed.add(name)
                 for name, attributes in self.tags.feed(child.content):
-                    if name == "br" and not self.tags.dropped:
+                    if name == "br":
                         add(" ")
-                    elif name == "img" and not self.tags.dropped:
+                    elif name == "img":
                         images.append((attributes.get("src"), attributes.get("alt", ""), self.tags.hidden))
-                continue
-            if self.tags.dropped:
                 continue
             if kind == "image":
                 alt = "".join(c.content for c in child.children or [] if c.type in _WORDS)
@@ -173,8 +225,8 @@ class _Reader:
                 hidden = hidden or (self.tags.hidden and bool(child.content.strip()))
             elif kind in ("softbreak", "hardbreak"):
                 add(" ")
-        text = out[0].strip()
-        self.line(text, lines, role, table_id, hidden=hidden)
+        text = "".join(out).strip()
+        self.line(text, lines, role, table_id, flags=[_RAW_HTML] if raw else (), hidden=hidden)
         for src, alt, hid in images:
             self.figure(src, alt, lines, hid)
         return text
@@ -183,26 +235,21 @@ class _Reader:
 
     def raw_html(self, token, lines):
         content = token.content
-        if not self.tags.dropped:
-            try:
-                reader = fragment(content, self.config, self.base, hidden=self.tags.hidden)
-            except ModuleNotFoundError as error:
-                raise ReaderUnavailable(
-                    "Raw HTML in Markdown needs lxml: pip install 'ragnaroq[formats]'"
-                ) from error
-            text = collapse(" ".join(line.text for line in reader.page.lines))
-            seen = {flag.rule: flag for line in reader.page.lines for flag in line.flags}
-            flags = [
-                Flag(rule="md.raw-html", severity="review", message="Raw HTML; read as its visible text.")
-            ]
-            flags += [seen[rule] for rule in ("html.equation",) if rule in seen]
-            self.line(text, lines, flags=flags, hidden="html.hidden" in seen)
-            for flag in reader.page.flags:
-                if all(flag.rule != existing.rule for existing in self.page.flags):
-                    self.page.flags.append(flag)
-            for found in reader.page.figures:
-                data = reader.images.get(found.id)
-                self.figure_from(found, data, lines)
+        try:
+            reader = fragment(content, self.config, self.base, self.tags.hidden, self.loader)
+        except ModuleNotFoundError as error:
+            raise ReaderUnavailable(
+                "Raw HTML in Markdown needs lxml: pip install 'ragnaroq[formats]'"
+            ) from error
+        text = collapse(" ".join(line.text for line in reader.page.lines))
+        seen = {flag.rule: flag for line in reader.page.lines for flag in line.flags}
+        flags = [_RAW_HTML] + [seen[rule] for rule in ("html.equation",) if rule in seen]
+        self.line(text, lines, flags=flags, hidden="html.hidden" in seen)
+        for flag in reader.page.flags:
+            if all(flag.rule != existing.rule for existing in self.page.flags):
+                self.page.flags.append(flag)
+        for found in reader.page.figures:
+            self.figure_from(found, reader.images.get(found.id), lines)
         for _ in self.tags.feed(content):
             pass
 
@@ -265,14 +312,15 @@ class _Reader:
             elif kind == "inline":
                 if table:
                     text = self.inline(token, row_lines, "table", table.id)
-                    table.cells.append(
-                        Cell(
-                            row=table.row - 1,
-                            column=table.column - 1,
-                            text=text,
-                            anchor=MdAnchor(lines=row_lines),
+                    if text:  # an empty cell is left out, as in Word and HTML
+                        table.cells.append(
+                            Cell(
+                                row=table.row - 1,
+                                column=table.column - 1,
+                                text=text,
+                                anchor=MdAnchor(lines=row_lines),
+                            )
                         )
-                    )
                     table.columns = max(table.columns, table.column)
                 else:
                     self.inline(token, block_lines, role)
@@ -283,8 +331,7 @@ class _Reader:
                     )
                 table = None
             elif kind in ("fence", "code_block"):
-                if not self.tags.dropped:
-                    self.line(token.content.removesuffix("\n"), lines, hidden=self.tags.hidden)
+                self.line(token.content.removesuffix("\n"), lines, hidden=self.tags.hidden)
             elif kind == "html_block":
                 self.raw_html(token, lines)
         if table and table.cells:  # stopped inside a table
@@ -310,7 +357,7 @@ def read(data: bytes, name: str, config: Config, base: Path | None = None) -> Re
             Flag(rule="encoding.guessed", severity="review", message="Not UTF-8; read as Windows-1252.")
         )
     reader = _Reader(document, config, base)
-    markdown = MarkdownIt("commonmark").enable("table")
+    markdown = MarkdownIt("commonmark", {"maxNesting": MAX_NESTING}).enable("table")
     markdown.validateLink = lambda url: True  # a path that is refused later is a flagged figure, not text
     plain_tokenize = markdown.block.tokenize
 
@@ -331,7 +378,19 @@ def read(data: bytes, name: str, config: Config, base: Path | None = None) -> Re
             Flag(
                 rule="md.too-deep",
                 severity="review",
-                message=f"Nested more than {markdown.options.maxNesting} levels; what is below is not read.",
+                message=(
+                    f"Nested more than {MAX_NESTING} levels; the rest of the file from that point "
+                    "is not read."
+                ),
+            )
+        )
+    if reader.tags.overflow:
+        document.pages[0].flags.append(
+            Flag(
+                rule="md.too-deep",
+                severity="review",
+                message=f"More than {config.max_depth} raw HTML tags are left open; hidden text past "
+                "them may not be flagged.",
             )
         )
     return ReadResult(document, reader.images)

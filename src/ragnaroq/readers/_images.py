@@ -6,6 +6,7 @@ inside `base` after symlinks are followed. Core only."""
 
 import base64
 import binascii
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -71,48 +72,101 @@ def _data_uri(src: str, config: Config) -> Loaded:
     return Loaded(data=data) if data else _unreadable()
 
 
-def _local(src: str, base: Path | None, config: Config) -> Loaded:
-    relative = unquote(re.split(r"[?#]", src, maxsplit=1)[0])
-    if not relative.strip():
-        return _not_found()
-    if "\0" in relative:
-        return _outside()
-    if PurePosixPath(relative).is_absolute() or PureWindowsPath(relative).anchor:
-        return _outside()
-    if base is None:
-        return _not_found()
-    try:
-        root = Path(base).resolve()
-        path = (root / relative).resolve()
-    except (OSError, RuntimeError):  # a symlink loop, or a path the system cannot hold
-        return _outside()
-    if not path.is_relative_to(root):
-        return _outside()
-    try:
-        if not path.is_file():
-            return _not_found()
-        if path.stat().st_size > config.max_image_bytes:
+_C0 = "".join(chr(code) for code in range(0x21))  # controls and the space, trimmed from a src
+_LONG = 4096
+
+
+class Images:
+    """Loads the images one file names. Bytes are held once per real file, and the distinct
+    bytes of a document together stay under `max_unzipped_bytes`."""
+
+    def __init__(self, base: Path | None, config: Config):
+        self.base = base
+        self.config = config
+        self.files: dict[str, bytes] = {}  # real path -> bytes
+        self.total = 0
+        self.seen: dict[str, Loaded] = {}  # a short src -> what it came to
+
+    def _room(self, size: int) -> bool:
+        return self.total + size <= self.config.max_unzipped_bytes
+
+    def _data_uri(self, src: str) -> Loaded:
+        config = self.config
+        header, comma, payload = src[5:].partition(",")
+        if not comma:
+            return _unreadable()
+        # The limit is on the encoded length, so nothing large is ever decoded.
+        if len(payload) > config.max_image_bytes or not self._room(len(payload)):
             return _too_large(config)
-        with path.open("rb") as handle:
-            data = handle.read(config.max_image_bytes + 1)
-    except OSError:
-        return _unreadable()
-    return _too_large(config) if len(data) > config.max_image_bytes else Loaded(data=data)
+        try:
+            if header.rstrip().lower().endswith(";base64"):
+                text = "".join(unquote(payload).split())
+                data = base64.b64decode(text + "=" * (-len(text) % 4), validate=True)
+            else:
+                data = unquote_to_bytes(payload)
+        except (binascii.Error, ValueError):
+            return _unreadable()
+        if not data:
+            return _unreadable()
+        self.total += len(data)
+        return Loaded(data=data)
 
+    def _local(self, src: str) -> Loaded:
+        config = self.config
+        relative = unquote(re.split(r"[?#]", src, maxsplit=1)[0])
+        if not relative.strip():
+            return _not_found()
+        if "\0" in relative or PurePosixPath(relative).is_absolute() or PureWindowsPath(relative).anchor:
+            return _outside()
+        if self.base is None:
+            return _not_found()
+        try:
+            root = os.path.realpath(self.base)
+            path = os.path.realpath(os.path.join(root, relative))
+            inside = os.path.commonpath([root, path]) == root
+        except (OSError, ValueError, RuntimeError):  # a symlink loop, or a path the system cannot hold
+            return _outside()
+        if not inside:
+            return _outside()
+        if path in self.files:
+            return Loaded(data=self.files[path])
+        try:
+            if not os.path.isfile(path):
+                return _not_found()
+            size = os.stat(path).st_size
+            if size > config.max_image_bytes or not self._room(size):
+                return _too_large(config)
+            with open(path, "rb") as handle:
+                data = handle.read(config.max_image_bytes + 1)
+        except OSError:
+            return _unreadable()
+        if len(data) > config.max_image_bytes or not self._room(len(data)):
+            return _too_large(config)
+        self.files[path] = data
+        self.total += len(data)
+        return Loaded(data=data)
 
-def load(src: str | None, base: Path | None, config: Config) -> Loaded:
-    """The image `src` names, as a page or Markdown file at `base` would see it."""
-    src = (src or "").strip()
-    if not src:
-        return _not_found()
-    if src.startswith("//"):
-        return _remote(src)
-    scheme = _SCHEME.match(src)
-    if scheme and len(scheme.group(1)) > 1:  # a single letter is a drive, not a scheme
-        name = scheme.group(1).lower()
-        if name in ("http", "https"):
+    def load(self, src: str | None) -> Loaded:
+        """The image `src` names, as a page or Markdown file at `base` would see it."""
+        src = (src or "").strip(_C0)
+        if not src:
+            return _not_found()
+        if src in self.seen:
+            return self.seen[src]
+        loaded = self._load(src)
+        if len(src) <= _LONG:
+            self.seen[src] = loaded
+        return loaded
+
+    def _load(self, src: str) -> Loaded:
+        scheme = _SCHEME.match(src)
+        name = scheme.group(1).lower() if scheme and len(scheme.group(1)) > 1 else ""
+        if name == "data":
+            return self._data_uri(src)
+        if len(src) > _LONG:  # no real path or address is this long
+            return _unreadable()
+        if src.startswith("//") or name in ("http", "https"):
             return _remote(src)
-        return _data_uri(src, config) if name == "data" else _outside()
-    if src.startswith(("/", "\\")):
-        return _outside()
-    return _local(src, base, config)
+        if name or src.startswith(("/", "\\")):  # a single letter is a drive, not a scheme
+            return _outside()
+        return self._local(src)
