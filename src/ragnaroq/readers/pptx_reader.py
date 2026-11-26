@@ -11,6 +11,7 @@ from ..config import Config
 from ..model import Cell, Figure, Flag, Page, Table
 from . import READER_VERSIONS, ReaderRefused, ReaderUnavailable, ReadResult, _build, _zip
 
+_M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 _A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -26,20 +27,46 @@ _NOT_READ = {
 }
 
 
-def _paragraph_text(paragraph) -> str:
-    """The paragraph's text; a line break or a tab element is a space."""
-    parts = []
+class _Text(str):
+    """A paragraph's text; `equation` says whether some of it came from an equation."""
+
+    equation = False
+
+
+def _paragraph_text(paragraph) -> _Text:
+    """The paragraph's text; a line break or a tab element is a space. An equation is read in
+    place from the `m:t` symbols of the first `mc:Choice`, never the fallback copy."""
+    parts, equation = [], False
     for child in paragraph:
         if child.tag in (_A + "r", _A + "fld"):
             parts.extend(t.text or "" for t in child.findall(_A + "t"))
         elif child.tag in (_A + "br", _A + "tab"):
             parts.append(" ")
-    return "".join(parts).strip()
+        elif child.tag == _MC + "AlternateContent":
+            choice = child.find(_MC + "Choice")
+            symbols = (
+                [t.text.strip() for t in choice.iter(_M + "t") if (t.text or "").strip()]
+                if (choice is not None)
+                else []
+            )
+            if symbols:
+                parts.append(" ".join(symbols))
+                equation = True
+    text = _Text("".join(parts).strip())
+    text.equation = equation
+    return text
 
 
-def _paragraphs(body) -> list[str]:
+def _paragraphs(body) -> list[_Text]:
     """Every paragraph of a text body, empty ones included, so an index is the paragraph's number."""
     return [_paragraph_text(p) for p in body.findall(_A + "p")] if body is not None else []
+
+
+def _number(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _props(element):
@@ -87,10 +114,21 @@ class _Reader:
             )
         return True
 
-    def line(self, text, anchor, role="body", table_id=None):
+    def line(self, text, anchor, role="body", table_id=None, equation=False):
         if text and not self.full():
             self.count += 1
-            _build.add_line(self.page, text, "pptx", anchor, role=role, table_id=table_id)
+            line = _build.add_line(self.page, text, "pptx", anchor, role=role, table_id=table_id)
+            if equation:
+                line.flags.append(
+                    Flag(
+                        rule="pptx.equation",
+                        severity="review",
+                        message=(
+                            "An equation is read as its plain symbols; fractions, powers and layout "
+                            "are lost; compare with the slide."
+                        ),
+                    )
+                )
 
     def flag(self, rule, message):
         self.page.flags.append(Flag(rule=rule, severity="review", message=message))
@@ -103,19 +141,37 @@ class _Reader:
         for child in parent:
             tag = child.tag
             if tag == _P + "grpSp":
+                self.image_fill(child)
                 self.shapes(child)
             elif tag == _MC + "AlternateContent":
                 choice = child.find(_MC + "Choice")
                 if choice is not None:
                     self.shapes(choice)
+                else:
+                    self.flag(
+                        "pptx.object-not-read",
+                        f"Content at slide {self.number} has no usable choice; it is not read.",
+                    )
             elif tag == _P + "sp":
+                self.image_fill(child)
                 self.text_shape(child)
             elif tag == _P + "pic":
+                self.image_fill(child)
                 self.picture(child)
+            elif tag == _P + "cxnSp":
+                self.image_fill(child)
             elif tag == _P + "graphicFrame":
                 self.graphic_frame(child)
             elif tag == _P + "contentPart":
                 self.flag("pptx.object-not-read", f"An object at slide {self.number} is not read.")
+
+    def image_fill(self, element):
+        """A picture used as a shape's fill is not a figure; say that it is not read."""
+        properties = element.find(_P + "spPr")
+        if properties is None:
+            properties = element.find(_P + "grpSpPr")
+        if properties is not None and properties.find(_A + "blipFill") is not None:
+            self.flag("pptx.image-fill", "An image fill is not read.")
 
     def text_shape(self, element):
         kind = _placeholder(element)
@@ -130,6 +186,7 @@ class _Reader:
                 text,
                 PptxAnchor(slide=self.number, shape=name, paragraph=index),
                 "heading" if title else "body",
+                equation=text.equation,
             )
         if title and self.title is None and any(paragraphs):
             self.title = " ".join(text for text in paragraphs if text)
@@ -160,8 +217,8 @@ class _Reader:
             page=self.number,
             order=len(self.page.lines),
             anchor=anchor,
-            width=int(extent.get("cx", 0)) // _EMU_PER_PIXEL if extent is not None else 0,
-            height=int(extent.get("cy", 0)) // _EMU_PER_PIXEL if extent is not None else 0,
+            width=_number(extent.get("cx")) // _EMU_PER_PIXEL if extent is not None else 0,
+            height=_number(extent.get("cy")) // _EMU_PER_PIXEL if extent is not None else 0,
             description=alt,
             description_source="alt" if alt else "none",
         )
@@ -197,10 +254,12 @@ class _Reader:
                     continue  # merged away; the cell it merges into holds the text
                 if self.full():
                     continue
-                text = "\n".join(t for t in _paragraphs(cell.find(_A + "txBody")) if t)
+                own = [t for t in _paragraphs(cell.find(_A + "txBody")) if t]
+                text = "\n".join(own)
                 if text:
                     where = anchor.model_copy(update={"cell": (r, c)})
-                    self.line(text, where, "table", table_id)
+                    equation = any(t.equation for t in own)
+                    self.line(text, where, "table", table_id, equation=equation)
                     cells.append(Cell(row=r - 1, column=c - 1, text=text, anchor=where))
         if cells:
             self.page.tables.append(
@@ -219,12 +278,14 @@ class _Reader:
             self.flag(
                 "pptx.hidden-slide", f"Slide {number} is hidden in the slideshow; it is read all the same."
             )
+        if slide.element.cSld.find(f"{_P}bg//{_A}blip") is not None:
+            self.flag("pptx.image-fill", "An image fill is not read.")
         self.shapes(slide.element.cSld.spTree)
         if slide.has_notes_slide:
             frame = slide.notes_slide.notes_text_frame
             for index, text in enumerate(_paragraphs(frame._txBody) if frame is not None else []):
                 anchor = PptxAnchor(slide=number, shape="Notes", paragraph=index, notes=True)
-                self.line(text, anchor)
+                self.line(text, anchor, equation=text.equation)
         self.page.name = self.title or ""
 
 
@@ -265,14 +326,15 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
     document = _build.start(data, name, "pptx", config, {"reader:pptx": READER_VERSIONS["pptx"]})
     document.pages = []
     reader = _Reader(config, document)
-    try:
+    try:  # only opening the package can show an invalid file; reading it afterwards is our own code
         deck = pptx.Presentation(io.BytesIO(data))
-        for number, slide in enumerate(deck.slides, 1):
-            reader.slide(number, slide)
+        slides = list(deck.slides)
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             names = archive.namelist()
     except (zipfile.BadZipFile, KeyError, etree.XMLSyntaxError, PackageNotFoundError, ValueError) as error:
         raise ReaderRefused("pptx.invalid", f"{name} could not be read as a presentation: {error}") from error
+    for number, slide in enumerate(slides, 1):
+        reader.slide(number, slide)
     document.source.pages = len(document.pages)
     document.flags.extend(_document_flags(reader, names))
     return ReadResult(document, reader.images)

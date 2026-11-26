@@ -15,6 +15,7 @@ _WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 _C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+_M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 _RUN_PARTS = (_W + "t", _W + "tab", _W + "br", _W + "cr")
 # Text under these is not the paragraph's own: deleted or moved away, a text box, or a fallback copy.
 _NOT_OWN = (_W + "del", _W + "moveFrom", _W + "txbxContent", _MC + "Fallback")
@@ -32,12 +33,27 @@ def _inside(node, root, tags) -> bool:
     return False
 
 
+def _math(paragraph):
+    """The paragraph's own equation symbols, `m:t` in document order."""
+    return [
+        node
+        for node in paragraph.iter(_M + "t")
+        if node.getparent().tag == _M + "r"
+        and (node.text or "").strip()
+        and not _inside(node, paragraph, _NOT_OWN)
+    ]
+
+
 def _text(paragraph) -> str:
     """The paragraph's own text, as if each tracked change were accepted: `w:delText` is not
-    `w:t`, and moved-away text and text boxes are not read here."""
+    `w:t`, and moved-away text and text boxes are not read here. An equation's symbols are
+    read in place, each followed by a space."""
     parts = []
-    for node in paragraph.iter(*_RUN_PARTS):
-        if node.getparent().tag == _W + "r" and not _inside(node, paragraph, _NOT_OWN):
+    for node in paragraph.iter(*_RUN_PARTS, _M + "t"):
+        if node.tag == _M + "t":
+            if node.getparent().tag == _M + "r" and not _inside(node, paragraph, _NOT_OWN):
+                parts.append((node.text or "").strip() + " ")
+        elif node.getparent().tag == _W + "r" and not _inside(node, paragraph, _NOT_OWN):
             parts.append((node.text or "") if node.tag == _W + "t" else " ")
     return "".join(parts).strip()
 
@@ -146,15 +162,26 @@ class _Reader:
             self.images[figure.id] = self.document.part.related_parts[embed].blob
             self.page.figures.append(figure)
 
-    def line(self, text, anchor, role="body", table_id=None):
+    def line(self, text, anchor, role="body", table_id=None, equation=False):
         if text and not self.full():
-            _build.add_line(self.page, text, "docx", anchor, role=role, table_id=table_id)
+            line = _build.add_line(self.page, text, "docx", anchor, role=role, table_id=table_id)
+            if equation:
+                line.flags.append(
+                    Flag(
+                        rule="docx.equation",
+                        severity="review",
+                        message=(
+                            "An equation is read as its plain symbols; fractions, powers and layout "
+                            "are lost; compare with the page."
+                        ),
+                    )
+                )
 
     def paragraph(self, element, anchor, role="body", table_id=None, caption=None, own_line=True):
         """The paragraph's pictures and text, then each text box's paragraphs as lines of their own."""
         self.pictures(element, anchor, caption)
         if own_line:
-            self.line(_text(element), anchor, role, table_id)
+            self.line(_text(element), anchor, role, table_id, equation=bool(_math(element)))
         for box in _boxes(element):
             self.blocks(_blocks(box), anchor, "table" if table_id else "body", table_id)
 
@@ -186,7 +213,8 @@ class _Reader:
                 text = "\n".join(t for t in (_text(para) for para in own) if t)
                 anchor = DocxAnchor(table=number, cell=(r, start))
                 if text:
-                    self.line(text, anchor, "table", table_id)
+                    equation = any(_math(para) for para in own)
+                    self.line(text, anchor, "table", table_id, equation=equation)
                     cells.append(Cell(row=r - 1, column=start - 1, text=text, anchor=anchor))
                 for item in items:
                     if item.tag == _W + "tbl":
@@ -246,7 +274,8 @@ class _Reader:
             anchor = DocxAnchor(note=f"{kind} {number}")
             items = list(_blocks(notes[note_id]))
             own = [item for item in items if item.tag == _W + "p"]
-            self.line(" ".join(t for t in (_text(para) for para in own) if t), anchor)
+            text = " ".join(t for t in (_text(para) for para in own) if t)
+            self.line(text, anchor, equation=any(_math(para) for para in own))
             for item in items:
                 if item.tag == _W + "tbl":
                     self.blocks([item], anchor)

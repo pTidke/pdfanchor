@@ -31,7 +31,9 @@ NS = (
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
     'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
     'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
-    'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"'
+    'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+    'xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" '
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
 )
 TABLE_URI = "http://schemas.openxmlformats.org/drawingml/2006/table"
 
@@ -540,3 +542,108 @@ def test_a_deck_with_no_slides_reads_as_no_pages():
     result = read_pptx(save(Presentation()))
     assert result.document.source.pages == 0
     assert list(result.document.lines()) == []
+
+
+# --- R19: fix round 1 ----------------------------------------------------------------------------
+
+EQUATION_FLAG = (
+    "An equation is read as its plain symbols; fractions, powers and layout are lost; compare with the slide."
+)
+
+
+def equation(*symbols, fallback="FALLBACK"):
+    pieces = "".join(f"<m:r><m:t>{s}</m:t></m:r>" for s in symbols)
+    return (
+        '<mc:AlternateContent><mc:Choice Requires="a14"><a14:m><m:oMathPara><m:oMath>'
+        f"{pieces}</m:oMath></m:oMathPara></a14:m></mc:Choice>"
+        f"<mc:Fallback><a:r><a:t>{fallback}</a:t></a:r></mc:Fallback></mc:AlternateContent>"
+    )
+
+
+def test_i1_an_equation_is_read_in_place_and_its_line_is_flagged():
+    deck = new_deck("Slide")
+    lead = "<a:r><a:t>Tax = </a:t></a:r>"
+    add(deck.slides[0], sp("Body", f"<a:p>{lead}{equation('x', '+', 'y')}</a:p>"))
+    result = read_pptx(save(deck))
+    (line,) = [line for line in result.document.lines() if line.role == "body"]
+    assert (line.text, line.anchor) == ("Tax = x + y", PptxAnchor(slide=1, shape="Body", paragraph=0))
+    assert [(f.rule, f.message) for f in line.flags] == [("pptx.equation", EQUATION_FLAG)]
+    assert line.status == "flagged"
+    assert "FALLBACK" not in "".join(texts(result))
+
+
+def test_i1_a_paragraph_holding_only_an_equation_is_a_line():
+    deck = new_deck("Slide")
+    add(deck.slides[0], sp("Body", f"<a:p>{equation('E', '=', 'mc')}</a:p>", para("after")))
+    result = read_pptx(save(deck))
+    assert lines(result)[1:] == [
+        (PptxAnchor(slide=1, shape="Body", paragraph=0), "E = mc"),
+        (PptxAnchor(slide=1, shape="Body", paragraph=1), "after"),
+    ]
+    flagged = [line.text for line in result.document.lines() if line.flags]
+    assert flagged == ["E = mc"]
+
+
+def test_i1_an_equation_in_a_table_cell_flags_the_cell_line():
+    deck = new_deck("Slide")
+    cell = cell_xml(f"<a:p>{equation('a', '+', 'b')}</a:p>")
+    add(deck.slides[0], table("Grid", [[cell]]))
+    result = read_pptx(save(deck))
+    line = list(result.document.lines())[1]
+    assert (line.text, [f.rule for f in line.flags]) == ("a + b", ["pptx.equation"])
+
+
+def test_m1_an_image_fill_or_background_is_flagged_not_a_figure():
+    deck = new_deck("Slide")
+    slide = deck.slides[0]
+    rid = with_image(slide)
+    fill = f'<a:blipFill><a:blip r:embed="{rid}"/></a:blipFill>'
+    shape = sp("Filled", para("over the fill")).replace("<p:spPr/>", f"<p:spPr>{fill}</p:spPr>")
+    add(slide, shape)
+    background = parse_xml(
+        f'<p:bg {NS}><p:bgPr><a:blipFill><a:blip r:embed="{rid}"/></a:blipFill></p:bgPr></p:bg>'
+    )
+    slide.element.cSld.insert(0, background)
+    result = read_pptx(save(deck))
+    found = [f for f in result.document.pages[0].flags if f.rule == "pptx.image-fill"]
+    assert [f.message for f in found] == ["An image fill is not read."] * 2
+    assert result.document.pages[0].figures == []
+    assert "over the fill" in texts(result)
+
+
+def test_m2_alternate_content_with_no_choice_is_flagged():
+    deck = new_deck("Slide")
+    add(
+        deck.slides[0],
+        f"<mc:AlternateContent {NS}><mc:Fallback>{sp('F', para('lost'))}</mc:Fallback></mc:AlternateContent>",
+    )
+    result = read_pptx(save(deck))
+    assert "pptx.object-not-read" in page_flags(result)
+    assert "lost" not in texts(result)
+
+
+def test_m3_a_bad_extent_is_zero_and_a_walk_error_is_not_an_invalid_file(monkeypatch):
+    from ragnaroq.readers import pptx_reader
+
+    deck = new_deck("Slide")
+    slide = deck.slides[0]
+    blip = f'<a:blip r:embed="{with_image(slide)}"/>'
+    add(slide, pic("Odd", blip).replace('cx="952500"', 'cx="wide"'))
+    (figure,) = read_pptx(save(deck)).document.pages[0].figures
+    assert (figure.width, figure.height) == (0, 50)
+
+    def boom(self, *args, **kwargs):
+        raise KeyError("bug")
+
+    monkeypatch.setattr(pptx_reader._Reader, "slide", boom)
+    with pytest.raises(KeyError):
+        pptx_reader.read(save(new_deck("Slide")), "t.pptx", Config())
+
+
+def test_m4_a_table_inside_a_group_inside_a_group_is_read():
+    deck = new_deck("Slide")
+    inner = table("Deep", [[cell_xml(para("buried"))]])
+    add(deck.slides[0], group("Outer", group("Inner", inner)))
+    result = read_pptx(save(deck))
+    assert lines(result)[1:] == [(PptxAnchor(slide=1, shape="Deep", cell=(1, 1)), "buried")]
+    assert len(result.document.pages[0].tables) == 1

@@ -25,7 +25,8 @@ NS = (
     'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
     'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
     'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
-    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
 )
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 STYLES = (
@@ -433,3 +434,31 @@ def test_alternate_content_reads_the_choice_and_skips_the_fallback():
     )
     result = read_docx(docx_bytes(host))
     assert lines(result) == [("¶1", "host"), ("¶1", "boxed")]
+
+
+def math(*symbols):
+    return "<m:oMath>" + "".join(f"<m:r><m:t>{s}</m:t></m:r>" for s in symbols) + "</m:oMath>"
+
+
+def test_an_equation_is_read_in_place_and_its_line_is_flagged():
+    message = (
+        "An equation is read as its plain symbols; fractions, powers and layout are lost; "
+        "compare with the page."
+    )
+    lead = '<w:r><w:t xml:space="preserve">Tax = </w:t></w:r>'
+    body = f"<w:p>{lead}{math('x', '+', 'y')}</w:p><w:p>{math('E', '=', 'mc')}</w:p>" + p("Plain.")
+    result = read_docx(docx_bytes(body))
+    first, second, plain = result.document.lines()
+    assert (first.text, second.text) == ("Tax = x + y", "E = mc")
+    assert [(f.rule, f.message) for f in first.flags] == [("docx.equation", message)]
+    assert [f.rule for f in second.flags] == ["docx.equation"]
+    assert first.status == "flagged" and plain.flags == []
+
+
+def test_an_equation_under_a_fallback_is_not_read_twice():
+    body = (
+        f'<w:p><w:r><w:t>Real </w:t></w:r><mc:AlternateContent><mc:Choice Requires="x">{math("a")}'
+        f"</mc:Choice><mc:Fallback>{math('copy')}</mc:Fallback></mc:AlternateContent></w:p>"
+    )
+    result = read_docx(docx_bytes(body))
+    assert [line.text for line in result.document.lines()] == ["Real a"]
