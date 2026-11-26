@@ -196,6 +196,9 @@ def _decide_lines(lines: list[Line], scanned: bool, image_backed: bool, policy: 
             _third_reader(line, [unicodedata.normalize("NFC", n.raw) for n in near], policy)
 
 
+_FIGURE_RULES = {"image.no-description", "image.ocr-unverified"}
+
+
 def _decide_figure(figure: Figure, policy: Policy) -> None:
     """A figure is accepted when its description is the file's own (caption or alt text) or
     every line OCR read from it is accepted. `model_description` is never consulted."""
@@ -203,7 +206,8 @@ def _decide_figure(figure: Figure, policy: Policy) -> None:
         line.text = unicodedata.normalize("NFC", line.raw)
         line.resolution = None
         line.flags = []
-    figure.flags = []
+    # The two verdicts below are this function's own; any other flag was set by the reader.
+    figure.flags = [flag for flag in figure.flags if flag.rule not in _FIGURE_RULES]
     _decide_lines(figure.ocr_lines, True, False, policy)
     if figure.description_source == "ocr" and figure.ocr_lines:
         if any(line.status != "accepted" for line in figure.ocr_lines):

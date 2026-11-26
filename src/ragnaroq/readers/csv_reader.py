@@ -12,16 +12,6 @@ from . import READER_VERSIONS, ReaderRefused, ReadResult, _build
 DELIMITERS = ",;\t|"
 
 
-def _decode(data: bytes) -> tuple[str, bool]:
-    """The text, and whether the encoding was a guess."""
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return data.decode("utf-16"), False
-    try:
-        return data.decode("utf-8-sig"), False
-    except UnicodeDecodeError:
-        return data.decode("cp1252", errors="replace"), True
-
-
 def _delimiter(text: str) -> str:
     try:
         return csv.Sniffer().sniff(text[:65536], delimiters=DELIMITERS).delimiter
@@ -31,7 +21,7 @@ def _delimiter(text: str) -> str:
 
 def read(data: bytes, name: str, config: Config) -> ReadResult:
     try:
-        text, guessed = _decode(data)
+        text, guessed = _build.decode(data)
     except UnicodeDecodeError as error:
         raise ReaderRefused("csv.invalid", f"{name} is not valid UTF-16 text: {error}") from error
     delimiter = _delimiter(text)

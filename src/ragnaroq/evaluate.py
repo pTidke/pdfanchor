@@ -10,6 +10,7 @@ the line whose box contains its centre. So a line the engine split or merged
 differently from the original is still compared with exactly the words it covers.
 """
 
+import functools
 import hashlib
 import json
 import unicodedata
@@ -320,9 +321,9 @@ def run(
     from .third import read_disputed
 
     config = config or Config()
-    exact = (
-        run_exact(folder, readers.read_bytes) if next(Path(folder).glob("*.expected.jsonl"), None) else None
-    )
+    # HTML and Markdown read a local image from beside the file, so they are told the folder.
+    read_exact = functools.partial(readers.read_bytes, base=Path(folder))
+    exact = run_exact(folder, read_exact) if next(Path(folder).glob("*.expected.jsonl"), None) else None
     if exact is not None and next(Path(folder).glob("*.truth.json"), None) is None:
         return Report(engines={}, min_similarity=config.policy.min_similarity, files=[], total=Tally(),
                       sweep=[], exact=exact)

@@ -97,6 +97,8 @@ class Config:
     # and how many entries it may hold.
     max_unzipped_bytes: int = 500 * 1024**2
     max_zip_entries: int = 10_000
+    # Largest image a reader will take from a file's folder or a data: URI.
+    max_image_bytes: int = 20 * 1024**2
     policy: Policy = field(default_factory=Policy)
     third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 
@@ -109,6 +111,6 @@ class Config:
         # The safety limits decide whether a page is read, not how: left out too.
         ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
         # The limits for JSON, CSV, XML and zip-based files do not change how a PDF is read.
-        ignored |= {"max_depth", "max_cells", "max_unzipped_bytes", "max_zip_entries"}
+        ignored |= {"max_depth", "max_cells", "max_unzipped_bytes", "max_zip_entries", "max_image_bytes"}
         settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

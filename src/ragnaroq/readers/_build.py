@@ -29,6 +29,17 @@ def start(data: bytes, name: str, fmt: str, config: Config, components: dict[str
     )
 
 
+def decode(data: bytes) -> tuple[str, bool]:
+    """The text of a text file, and whether the encoding was a guess: UTF-16 with a byte-order
+    mark, else UTF-8 (a BOM is dropped), else Windows-1252."""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16"), False
+    try:
+        return data.decode("utf-8-sig"), False
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace"), True
+
+
 def next_paragraph(page: Page) -> int:
     """The number after the page's last paragraph. Readers add lines in order, so the last
     line holds the highest number; this avoids rescanning every line."""
