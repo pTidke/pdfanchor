@@ -82,6 +82,28 @@ def test_a_reading_a_validator_flags_before_normalisation_is_still_refused():
     assert "crosscheck.third-reader.validators" in {f.rule for f in line.flags}
 
 
+def test_a_lone_bar_two_readers_agree_on_goes_to_a_person():
+    bar = "box at the top of page | of Form 1040"
+    (line,) = decided((bar, bar, "box at the top of page 1 of Form 1040"))
+    assert line.status == "flagged" and line.resolution is None
+    assert "glyph.lone-bar" in {f.rule for f in line.flags}
+
+
+def test_the_third_reader_can_settle_a_line_whose_first_reader_read_a_bar():
+    right = "box at the top of page 1 of Form 1040"
+    (line,) = decided(("box at the top of page | of Form 1040", right, right))
+    assert line.status == "accepted" and line.text == right
+    assert line.resolution.text_from == "ocr:two"
+
+
+def test_an_agreed_reading_with_a_lone_bar_is_never_kept():
+    # The model's bar is a layout mark and is removed, so it can never match a reading
+    # that keeps one: the line stays with the first reader and a person.
+    right, bar = "box at the top of page 1 of Form 1040", "box at the top of page | of Form 1040"
+    (line,) = decided((right, bar, bar))
+    assert line.status == "flagged" and line.resolution is None and line.text == right
+
+
 def test_the_validators_see_the_text_the_line_would_carry():
     # Decomposed, the odd suffix is six characters and the date rule does not see a date;
     # composed (NFC, as `text` would hold it) it is three, and the rule flags it.

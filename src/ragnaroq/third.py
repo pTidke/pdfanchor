@@ -1,6 +1,7 @@
 """The third reader: a model reads the crops of lines the two OCR engines disagree on.
 
-Only scanned lines whose sole flag is `crosscheck.disagreement` are read. Their pages are
+Only disputed scanned lines are read: flagged for the disagreement, and for nothing
+else but a lone "|" (`policy.settleable`). Their pages are
 drawn again at a higher resolution in the isolated page worker, each line is cut out, and
 the reader's text is stored as a `vlm:<name>` reading. This stage never decides anything:
 `policy.decide` does, afterwards. A line the reader cannot read keeps its first decision
@@ -19,7 +20,7 @@ from .config import Config, ThirdReaderSettings
 from .isolation import PageReader
 from .model import Box, Document, Flag, Line, Reading
 from .ocr import LineReader, LineUnreadable
-from .policy import VLM
+from .policy import VLM, settleable
 
 _RULE = "third-reader.unread"
 
@@ -34,9 +35,7 @@ def candidates(document: Document) -> dict[int, list[Line]]:
             line
             for line in sorted(page.lines, key=lambda line: line.order)
             if not line.excluded
-            and line.status == "flagged"
-            and line.flags
-            and all(flag.rule == "crosscheck.disagreement" for flag in line.flags)
+            and settleable(line)
         ]
         if lines:
             found[page.number] = lines

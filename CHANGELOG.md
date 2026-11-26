@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.1 — 26 November 2026
+
+### Fixed
+
+- **A "1" read as "|" is no longer accepted.** In text read from an image, a "|" standing alone (with a space or the line's edge on both sides) is now flagged for a person (`glyph.lone-bar`, policy 0.4). It is a printed "1", "I" or "l" that both readers mistook ("January |", "| declare that"), or a box or table border read as text. Two readers often make the same mistake, so their agreement did not catch it. The text layer is not affected: a "|" there is real text.
+- The third reader can still settle such a line when the two readers disagree on it ("page |" against "page 1"). Its existing checks refuse any agreed reading that keeps a lone "|", and a "|" both readers agree on goes to a person.
+
+### Known limits
+
+- The third reader only sees lines the two readers disagree on, and never overrules two readers that agree. A "|" both readers agree on (most often a printed "1" both misread) therefore always goes to a person, even though the model could likely read it. Letting the model settle that one ambiguous character is a possible next step, to be measured first.
+
+### Measured
+
+On the stored readings, with nothing read again:
+
+| Set | Accepted with a wrong number, date or negation | Lines sent to a person | Right lines newly sent to a person |
+| --- | --- | --- | --- |
+| Held-out, two readers | 6 → 1 | 1,072 → 1,126 | 0 |
+| Held-out, with the third reader | 6 → 1 | 632 → 686 | 0 |
+| IRS (0.1 set) | 0 → 0 | 1,237 → 1,255 | 0 |
+| Code table | 0 → 0 | unchanged | 0 |
+
+Every line newly sent to a person was already wrong. On the reference sets, a lone "|" never matched the answer key. The accepted-but-wrong rate on the held-out set falls from 12.5% to 10.7% with two readers, and from 11.4% to 9.8% with the third reader. The one remaining accepted error is the Schedule C title, where both readers missed the small "(Form 1040)". The held-out set had been used once for the 0.2.0 gate; this check only adds refusals, so it cannot make that result worse.
+
 ## 0.2.0 — 24 November 2026
 
 A third reader for the scanned lines the two OCR readers still dispute.
@@ -52,7 +76,7 @@ Sources, checksums and commands: [references/](references/README.md).
 
 ### Known limits
 
-- **A "1" read as "|".** The 6 accepted lines wrong on a number, in both held-out runs, come from the two-reader rule, not the third reader. In 5, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, both missed the small "(Form 1040)" in the Schedule C title. The 0.1 result of none on the IRS set does not hold on these documents. It is not fixed in this release; a follow-up is planned.
+- **A "1" read as "|".** The 6 accepted lines wrong on a number, in both held-out runs, come from the two-reader rule, not the third reader. In 5, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, both missed the small "(Form 1040)" in the Schedule C title. The 0.1 result of none on the IRS set does not hold on these documents. Fixed in 0.2.1.
 - The third reader covers scanned lines only, and only lines disputed by two readers. Text-layer pages and machines without EasyOCR are unchanged.
 - A digit that one reader saw and the other two missed is outvoted.
 - Where EasyOCR read nothing, Tesseract and the model settle the line between them.

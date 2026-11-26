@@ -285,3 +285,13 @@ def test_convert_asks_the_third_reader_for_its_version_before_reading_a_page(sca
     monkeypatch.setattr("ragnaroq.pipeline.PageReader", None)  # any read would fail loudly
     with pytest.raises(EngineUnavailable, match="needs torch"):
         convert(scanned_pdf, engines=[], third_reader=NoTorch([]))
+
+
+def test_a_disputed_line_with_a_lone_bar_is_read(scanned_pdf):
+    barred = "The due date is | July 2026."
+    first = FakeEngine("one", [(TITLE, BOX_A), (barred, BOX_B)])
+    second = FakeEngine("two", [(TITLE, BOX_A), (DUE, BOX_B)])
+    document = convert(scanned_pdf, engines=[first, second])
+    due = document.pages[0].lines[1]
+    assert {f.rule for f in due.flags} == {"crosscheck.disagreement", "glyph.lone-bar"}
+    assert [line.id for line in third.candidates(document)[1]] == [due.id]

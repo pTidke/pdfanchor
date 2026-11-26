@@ -86,7 +86,7 @@ The owner chose to fix the answer key (words printed with no visible gap are one
 
 ### Known limitation found on this set
 
-The 6 accepted lines wrong on a number in both runs come from the two-reader rule that existed in 0.1, not from the third reader. In 5 of them, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, the Schedule C title, both readers missed the small "(Form 1040)". The 0.1 result of none on the IRS set does not hold on these documents. A follow-up is planned; this release does not fix it.
+The 6 accepted lines wrong on a number in both runs come from the two-reader rule that existed in 0.1, not from the third reader. In 5 of them, Tesseract and EasyOCR both read a "1" as "|" ("January |", "page |") and agree, so the line is accepted before the third reader is consulted. In the sixth, the Schedule C title, both readers missed the small "(Form 1040)". The 0.1 result of none on the IRS set does not hold on these documents. Fixed in 0.2.1: a lone "|" in text read from an image is flagged (`glyph.lone-bar`). Re-scored on the same readings, accepted lines wrong on a number fall from 6 to 1 with and without the third reader; 54 more lines go to a person, all of them already wrong, and no right line does.
 
 ### Next steps before relying on this result
 

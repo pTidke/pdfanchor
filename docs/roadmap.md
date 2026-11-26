@@ -109,7 +109,7 @@ Decisions are written to `review.json` and become readings by a person. They als
 | Version | Theme | What it delivers |
 | --- | --- | --- |
 | **0.1** ✓ | Trustworthy PDFs | Done in 0.1.0: reference sets with a known answer and `ragnaroq evaluate` (false-accept rate, overall and on critical tokens); a first measurement on public IRS documents; the code rule and low-resolution reading that brought critical errors to zero on it; per-page time, memory and character limits; on PyPI. Moved on: human-verified real scans, and pinned OCR model versions. |
-| **0.2** ✓ | Third reader | Done in 0.2.0: a local OCR model (PaddleOCR-VL-1.6) reads the crop of each scanned line the two OCR readers dispute, and a fixed rule settles it or keeps it for a person; measured on a held-out set (41.7% fewer lines sent to a person, none settled wrong on a number, date or negation). Open: a "1" read as "|" by both readers. |
+| **0.2** ✓ | Third reader | Done in 0.2.0, and in 0.2.1 a lone "|" in OCR text is flagged: a local OCR model (PaddleOCR-VL-1.6) reads the crop of each scanned line the two OCR readers dispute, and a fixed rule settles it or keeps it for a person; measured on a held-out set (41.7% fewer lines sent to a person, none settled wrong on a number, date or negation). Open: a "1" read as "|" by both readers. |
 | 0.3 | Folders and formats | `ragnaroq index ./folder` writing `.ragnaroq/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
 | 0.4 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
 | 0.5 | Review UI | The local review UI, where a person settles the flagged lines; hosted models optional. |
