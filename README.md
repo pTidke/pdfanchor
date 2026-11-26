@@ -169,6 +169,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 
   Otherwise the line stays flagged for a person, with the model's reading and the check that held it back. The line keeps the agreeing engine's text, and `resolution` records which readings agreed. On a held-out set it cut lines sent to a person by 41.7% and settled 447 lines, none wrong on a number, date or negation. After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check. It costs about 2.5 seconds a disputed line on a CPU with native bfloat16; float32 CPUs are about 2.5 times slower.
 - **Known limits.**
+  - The third reader only sees lines the two readers disagree on, and never overrules two readers that agree. A "|" both readers agree on (most often a printed "1" both misread) therefore always goes to a person, even though the model could likely read it. Letting the model settle that one ambiguous character is a possible next step, to be measured first.
   - A digit that one reader saw and the other two missed is outvoted.
   - Where EasyOCR read nothing, Tesseract and the model settle the line between them.
   - Negations such as "cannot", and contractions such as "don't", are not recognised as negations (this predates 0.2.0).

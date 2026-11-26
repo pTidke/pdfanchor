@@ -7,6 +7,10 @@
 - **A "1" read as "|" is no longer accepted.** In text read from an image, a "|" standing alone (with a space or the line's edge on both sides) is now flagged for a person (`glyph.lone-bar`, policy 0.4). It is a printed "1", "I" or "l" that both readers mistook ("January |", "| declare that"), or a box or table border read as text. Two readers often make the same mistake, so their agreement did not catch it. The text layer is not affected: a "|" there is real text.
 - The third reader can still settle such a line when the two readers disagree on it ("page |" against "page 1"). Its existing checks refuse any agreed reading that keeps a lone "|", and a "|" both readers agree on goes to a person.
 
+### Known limits
+
+- The third reader only sees lines the two readers disagree on, and never overrules two readers that agree. A "|" both readers agree on (most often a printed "1" both misread) therefore always goes to a person, even though the model could likely read it. Letting the model settle that one ambiguous character is a possible next step, to be measured first.
+
 ### Measured
 
 On the stored readings, with nothing read again:
