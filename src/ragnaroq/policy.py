@@ -243,6 +243,7 @@ def decide(document: Document, policy: Policy) -> None:
                 )
         for figure in page.figures:
             _decide_figure(figure, policy)
+    figures = [figure for page in document.pages for figure in page.figures]
     counted = [line for line in document.lines() if not line.excluded]
     document.summary = {
         "pages": len(document.pages),
@@ -254,6 +255,9 @@ def decide(document: Document, policy: Policy) -> None:
         "blocked": sum(line.status == "blocked" for line in counted),
         "excluded": sum(1 for line in document.lines() if line.excluded),
         "tables": sum(len(page.tables) for page in document.pages),
+        "figures": len(figures),
+        "figures_flagged": sum(f.status == "flagged" for f in figures),
+        "figures_blocked": sum(f.status == "blocked" for f in figures),
     }
 
 
@@ -262,6 +266,8 @@ def needs_review(document: Document) -> bool:
         document.summary.get("flagged")
         or document.summary.get("blocked")
         or document.summary.get("tables")
+        or document.summary.get("figures_flagged")
+        or document.summary.get("figures_blocked")
         or any(flag.severity == "blocking" for flag in document.flags)
         or any(flag.severity == "blocking" for page in document.pages for flag in page.flags)
     )

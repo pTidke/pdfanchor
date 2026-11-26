@@ -14,7 +14,7 @@ from ragnaroq.model import (
     Source,
     Table,
 )
-from ragnaroq.policy import EXACT_SOURCES, decide
+from ragnaroq.policy import EXACT_SOURCES, decide, needs_review
 
 KINDS = {"docx": "body", "xlsx": "sheet", "pptx": "slide", "csv": "body"}
 
@@ -168,3 +168,19 @@ def test_a_body_marker_and_a_flagged_figure_comment():
 
 def test_the_policy_version_is_0_6():
     assert Policy().version == "0.6"
+
+
+def test_a_flagged_figure_alone_makes_the_document_need_review():
+    fig = figure(description="", description_source="none")
+    doc = decided(exact_document("pptx", ["All fine"], figures=[fig]))
+    assert {line.status for line in doc.lines()} == {"accepted"}
+    assert needs_review(doc) is True
+    assert doc.summary["figures"] == 1 and doc.summary["figures_flagged"] == 1
+    assert doc.summary["figures_blocked"] == 0
+
+
+def test_an_alt_text_figure_does_not_need_review():
+    fig = figure(description="Bar chart", description_source="alt")
+    doc = decided(exact_document("pptx", ["All fine"], figures=[fig]))
+    assert needs_review(doc) is False
+    assert doc.summary["figures"] == 1 and doc.summary["figures_flagged"] == 0
