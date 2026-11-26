@@ -1,6 +1,6 @@
 # 0.3: Folders and formats
 
-Status: design, waiting for approval. Approach A, chosen on 2026-11-26.
+Status: approved on 2026-11-26. Approach A.
 
 ## Why
 
