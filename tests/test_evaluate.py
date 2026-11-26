@@ -137,6 +137,20 @@ def test_a_scan_with_a_hidden_text_layer_is_not_an_answer_key(tmp_path):
         reference.make(only_scan, "clean", tmp_path / "out2")
 
 
+def test_a_visible_gap_separates_words_even_without_a_space(tmp_path):
+    # Some PDFs place the next word after a gap instead of drawing a space: "2." then
+    # "Violation" a quarter of an em later. A reader sees a space there.
+    path = tmp_path / "gap.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Times-Roman", 10)
+    page.drawString(72, 760, "2.")
+    page.drawString(72 + page.stringWidth("2.", "Times-Roman", 10) + 2.5, 760, "Violation of any of the conditions")
+    page.save()
+    _, truth = reference.make(path, "clean", tmp_path / "out")
+    texts = [w.text for w in reference.load(truth).pages[0].words]
+    assert texts[:3] == ["2.", "Violation", "of"]
+
+
 def test_the_same_pdf_always_gives_the_same_reference(three_lines, tmp_path):
     a, truth_a = reference.make(three_lines, "blurred", tmp_path / "a")
     time.sleep(1.1)  # a clock in the file would now show a different second

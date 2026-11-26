@@ -96,6 +96,10 @@ def _tilted(word: Word, page_width: float, page_height: float, degrees: float) -
     return Word(word.text, word.x0 + shift_x, word.top + shift_y, word.x1 + shift_x, word.bottom + shift_y)
 
 
+# A gap wider than this share of the type size separates two words.
+WORD_GAP = 0.2
+
+
 def _joined(words: list[Word]) -> list[Word]:
     """Join words a reader sees as one, such as a label "20b" whose space the PDF overprints.
 
@@ -177,7 +181,12 @@ def make(
             origin_x, origin_y = raw.bbox[0], raw.bbox[1]
             words, ignored = [], []
             # Some PDFs draw text twice, slightly offset, to fake bold. Count it once.
-            for found in raw.dedupe_chars().extract_words(keep_blank_chars=False, use_text_flow=False):
+            # A gap of a fifth of the type size is a space a reader sees, whether or not the PDF
+            # draws a space character there ("2." and "Violation" placed 2.5 pt apart).
+            found_words = raw.dedupe_chars().extract_words(
+                keep_blank_chars=False, use_text_flow=False, x_tolerance_ratio=WORD_GAP
+            )
+            for found in found_words:
                 text = unicodedata.normalize("NFC", found["text"]).strip()
                 # Text with no size is never drawn (hidden labels, link text): no
                 # scanner could see it, so it is not part of the answer.
