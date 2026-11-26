@@ -27,7 +27,7 @@ def test_qdrant_loads_the_chunks_and_an_upsert_replaces_them(chunks):
     client = qdrant.QdrantClient(":memory:")
     client.create_collection("chunks", vectors_config=VectorParams(size=3, distance=Distance.COSINE))
     points = [
-        PointStruct(id=c["id"], vector=vector(c["embedding_text"]), 
+        PointStruct(id=c["id"], vector=vector(c["embedding_text"]),
             payload={"text": c["text"], **c["metadata"]})
         for c in chunks
     ]

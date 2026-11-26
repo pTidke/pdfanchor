@@ -16,7 +16,7 @@ from ..config import Config
 from ..model import SCHEMA_VERSION, Document, Line
 from . import Unit, units
 
-NAMESPACE = uuid.UUID("5d0c2b1e-7a64-4d3b-9f0e-2a8c6f1b4e37")
+NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/pTidke/ragnaroq")
 
 METADATA_KEYS = (
     "schema_version",
@@ -40,7 +40,7 @@ METADATA_KEYS = (
     "image_path",
 )
 
-ANCHORS_JSON_LIMIT = 20_000
+ANCHORS_JSON_LIMIT = 20_000  # UTF-8 bytes
 TRUNCATED = "chunk.anchors-truncated"
 CELL = re.compile(r"([A-Z]+)(\d+)")
 
@@ -134,19 +134,23 @@ def _citation(lines: list[Line]) -> str:
     return cite(first) if first == last else f"{cite(first)}–{cite(last)}"
 
 
+def _json(value) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def _limited(anchors: list[dict]) -> tuple[str, bool]:
-    """The anchors as JSON text within ANCHORS_JSON_LIMIT characters, dropping whole anchors from the end."""
-    text = json.dumps(anchors, ensure_ascii=False, separators=(",", ":"))
-    if len(text) <= ANCHORS_JSON_LIMIT:
+    """The anchors as JSON text within ANCHORS_JSON_LIMIT UTF-8 bytes, dropping whole anchors from the end."""
+    text = _json(anchors)
+    if len(text.encode("utf8")) <= ANCHORS_JSON_LIMIT:
         return text, False
     kept, size = 0, 2
     for anchor in anchors:
-        cost = len(json.dumps(anchor, ensure_ascii=False, separators=(",", ":"))) + (1 if kept else 0)
+        cost = len(_json(anchor).encode("utf8")) + (1 if kept else 0)
         if size + cost > ANCHORS_JSON_LIMIT:
             break
         size += cost
         kept += 1
-    return json.dumps(anchors[:kept], ensure_ascii=False, separators=(",", ":")), True
+    return _json(anchors[:kept]), True
 
 
 def _figure_text(unit: Unit) -> str:
@@ -188,11 +192,11 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
         rules = sorted({*rules, TRUNCATED})
     pdf = document.source.format == "pdf"
     kind = "image" if figure else "table" if members[0].kind == "table" else "text"
+    file_id = str(uuid.uuid5(NAMESPACE, path))
     what = figure.id if figure else ",".join(line.id for line in lines)
-    identity = f"{document.source.sha256}|{what}"
     metadata = {
         "schema_version": SCHEMA_VERSION,
-        "file_id": str(uuid.uuid5(NAMESPACE, path)),
+        "file_id": file_id,
         "path": path,
         "file_type": document.source.format,
         "file_sha256": document.source.sha256,
@@ -213,7 +217,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
     }
     assert tuple(metadata) == METADATA_KEYS
     return {
-        "id": str(uuid.uuid5(NAMESPACE, kind + "|" + identity)),
+        "id": str(uuid.uuid5(NAMESPACE, f"{file_id}|{document.source.sha256}|{what}")),
         "text": text,
         "embedding_text": "\n".join([" > ".join(context), text]) if context else text,
         "metadata": metadata,

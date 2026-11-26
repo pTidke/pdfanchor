@@ -85,7 +85,7 @@ index.upsert(vectors=[
 ])
 ```
 
-Pinecone limits metadata to 40 KB a record; `anchors_json` is capped well under that.
+Pinecone limits a record's metadata to 40 KB, including `text` if you store it there. `anchors_json` is capped at 20,000 bytes, so it leaves room; keep the rest under the limit too.
 
 ## pgvector
 

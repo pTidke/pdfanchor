@@ -39,6 +39,18 @@ def assert_flat(chunk):
     assert chunk["metadata"]["cite"]
 
 
+def test_the_namespace_is_pinned():
+    assert str(NAMESPACE) == "bbc5afe7-b0fc-54ab-9334-33219fb1b9c5"
+
+
+def test_identical_files_at_two_paths_get_different_chunk_ids(native_pdf):
+    document = convert(native_pdf, config=TRUSTING, engines=[])
+    a = to_chunks(document, Config(), path="a/x.pdf")
+    b = to_chunks(document, Config(), path="b/x.pdf")
+    assert a and not {c["id"] for c in a} & {c["id"] for c in b}
+    assert [c["id"] for c in a] == [c["id"] for c in to_chunks(document, Config(), path="a/x.pdf")]
+
+
 def test_every_chunk_has_a_uuid_id_and_the_same_flat_metadata(native_pdf):
     chunks = to_chunks(convert(native_pdf, config=TRUSTING, engines=[]), Config())
     assert chunks
@@ -165,4 +177,20 @@ def test_anchors_json_is_cut_with_a_flag_when_too_long():
     meta = chunk["metadata"]
     kept = json.loads(meta["anchors_json"])
     assert 0 < len(meta["anchors_json"]) <= 20_000 and kept == chunk["anchors"][: len(kept)]
+    assert "chunk.anchors-truncated" in meta["rules"].split(",")
+
+
+def test_anchors_json_is_cut_at_20000_bytes_not_characters():
+    pages = [
+        Page(number=n, kind="sheet", name="दरें", lines=[Line(
+            id=f"l{n}", page=n, order=0, raw="x", text="x", source="xlsx", status="accepted",
+            anchor=XlsxAnchor(sheet="दरें", cell="A1"))])
+        for n in range(1, 1001)
+    ]
+    document = hand_built("xlsx", "rates.xlsx", pages)
+    (chunk,) = to_chunks(document, replace(Config(), chunk_chars=10**9))
+    meta = chunk["metadata"]
+    assert len(json.dumps(chunk["anchors"], ensure_ascii=False).encode()) > 20_000
+    assert len(meta["anchors_json"].encode("utf8")) <= 20_000
+    assert len(json.loads(meta["anchors_json"])) > 0
     assert "chunk.anchors-truncated" in meta["rules"].split(",")
