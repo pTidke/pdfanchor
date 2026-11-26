@@ -18,6 +18,14 @@ DATE = re.compile(
     re.IGNORECASE,
 )
 SUFFIXES = {"st", "nd", "rd", "th"}
+# A day where a reader put a letter for a digit: "Sth January" for "5th", "lst" for "1st",
+# "3Oth" for "30th". DATE needs a digit first, so it never sees these; two readers often
+# make the same confusion, so their agreement does not catch it either.
+CONFUSED = "SOoIlBZGQD"
+CONFUSABLE_DAY = re.compile(
+    rf"(?<![\w/.-])(?=[0-9]?[{CONFUSED}])(?P<day>[0-9{CONFUSED}]{{1,2}})(?:st|nd|rd|th)\s*,?\s+"
+    rf"(?:day\s+of\s+)?(?i:{MONTHS})\b"
+)
 
 
 def expected_suffix(day: int) -> str:
@@ -65,4 +73,13 @@ def check_dates(text: str) -> list[Flag]:
                     message=f'"{shown}": the year is outside 1900 to 2100.',
                 )
             )
+    for match in CONFUSABLE_DAY.finditer(text):
+        flags.append(
+            Flag(
+                rule="date.confusable-day",
+                severity="review",
+                message=f'"{match.group(0)}": the day "{match.group("day")}" holds a letter readers '
+                "take for a digit.",
+            )
+        )
     return flags

@@ -136,6 +136,23 @@ def test_a_lone_bar_in_text_read_from_an_image_is_flagged(text, flagged):
     assert ("glyph.lone-bar" in [flag.rule for flag in run(text, ocr=True)]) is flagged
 
 
+@pytest.mark.parametrize(
+    "text, flagged",
+    [
+        ("New Delhi, the Sth January, 2026", True),
+        ("on or before the 3lst day of March, 2030", True),
+        ("with effect from the lst April", True),
+        ("dated 3Oth June, 2025", True),
+        ("New Delhi, the 5th January, 2026", False),
+        ("on or before the 31st day of March, 2030", False),
+        ("the Ist amendment", False),  # no month: not a date
+        ("Sth is not a word", False),
+    ],
+)
+def test_a_letter_read_for_a_digit_in_a_day_is_flagged(text, flagged):
+    assert ("date.confusable-day" in [flag.rule for flag in run(text, ocr=True)]) is flagged
+
+
 def test_a_bar_in_a_text_layer_is_text():
     assert run("A | B", ocr=False) == []
 
