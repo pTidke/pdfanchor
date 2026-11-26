@@ -73,6 +73,15 @@ def test_an_agreeing_reading_must_pass_the_validators():
     assert BAD_DATE in flag.message and "date.ordinal-suffix" in flag.message
 
 
+def test_a_reading_a_validator_flags_before_normalisation_is_still_refused():
+    # Decomposed, the code ends in a plain "O" (a letter readers take for 0) plus an accent,
+    # and the code rule flags it; composed, "Ö" is not on that list. Either form refuses.
+    decomposed, composed = "Form R28CO\u0308 is due.", "Form R28C\u00d6 is due."
+    (line,) = decided(("Form R28C0 is due.", decomposed, composed))
+    assert line.status == "flagged" and line.resolution is None
+    assert "crosscheck.third-reader.validators" in {f.rule for f in line.flags}
+
+
 def test_the_validators_see_the_text_the_line_would_carry():
     # Decomposed, the odd suffix is six characters and the date rule does not see a date;
     # composed (NFC, as `text` would hold it) it is three, and the rule flags it.

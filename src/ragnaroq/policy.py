@@ -106,9 +106,12 @@ def _third_reader(line: Line, neighbours: list[str], policy: Policy) -> None:
         refuse("no-match", "no other reading matches it exactly.")
         return
     source, text = match
-    fired = [
-        (who, f.rule) for who, t in ((source, text), (vlm.source, seen)) for f in validators.run(t, ocr=True)
-    ]
+    # Each reading is checked as the reader gave it and as `text` would carry it (NFC):
+    # normalising must never hide what a validator would flag.
+    given = {line.source: line.raw} | {r.source: r.text for r in line.readings if r.source != line.source}
+    forms = {(source, text), (source, given[source]), (vlm.source, seen)}
+    forms.add((vlm.source, unicodedata.normalize("NFC", seen)))
+    fired = sorted({(who, f.rule) for who, t in forms for f in validators.run(t, ocr=True)})
     if fired:
         names = ", ".join(f"{rule} on {who}" for who, rule in fired)
         refuse("validators", f'agrees with {source} on "{text}", but a validator flags it ({names}).')
