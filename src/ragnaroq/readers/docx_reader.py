@@ -204,7 +204,7 @@ class _Reader:
             for cell in _children(row, "tc"):
                 span = cell.find(f"{_W}tcPr/{_W}gridSpan")
                 start = column + 1
-                column += int(span.get(_W + "val", 1)) if span is not None else 1
+                column += min(max(int(span.get(_W + "val", 1)), 1), 1000) if span is not None else 1
                 columns = max(columns, column)
                 if self.full():
                     continue

@@ -163,10 +163,16 @@ class Images:
         name = scheme.group(1).lower() if scheme and len(scheme.group(1)) > 1 else ""
         if name == "data":
             return self._data_uri(src)
-        if len(src) > _LONG:  # no real path or address is this long
-            return _unreadable()
         if src.startswith("//") or name in ("http", "https"):
+            if len(src) > _LONG:
+                loaded = _refused(
+                    "image.remote-not-fetched",
+                    "The image is on another site; it was not fetched, and its address is too long to keep.",
+                )
+                return loaded
             return _remote(src)
+        if len(src) > _LONG:  # no real path is this long
+            return _unreadable()
         if name or src.startswith(("/", "\\")):  # a single letter is a drive, not a scheme
             return _outside()
         return self._local(src)

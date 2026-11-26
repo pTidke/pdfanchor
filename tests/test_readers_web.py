@@ -911,7 +911,15 @@ def test_r19_mathml_is_read_in_place_and_flagged():
 
 def test_text_after_the_closing_html_tag_is_still_read():
     result = read_html("<html><body><p>a</p></body></html><p>after</p><!-- c --><div>more</div>")
-    assert texts(result) == ["a", "after", "more"]
+    assert lines(result) == [
+        ("/html[1]/body/p", "a"),
+        ("/html[2]/p", "after"),
+        ("/html[2]/div", "more"),
+    ]
+    script = read_html('<html><body><p>a</p></body></html><p>after</p><script>s="</html>"</script>')
+    assert lines(script) == [("/html[1]/body/p", "a"), ("/html[2]/p", "after")]
+    tree = lxml.html.document_fromstring(b"<html><body><p>a</p></body></html><p>b</p>").getroottree()
+    assert tree.getpath(tree.getroot()) == "/html[1]"
 
 
 def test_a_declared_encoding_the_bytes_do_not_fit_is_flagged():
@@ -1016,7 +1024,7 @@ def test_i2_quadratic_inputs_finish_in_seconds():
         _, seconds = timed(read_md, source)
         assert seconds < 10, (label, seconds)
     result, seconds = timed(read_md, "<b>x " * 20000)
-    assert "md.too-deep" in page_flags(result)
+    assert "md.tag-limit" in page_flags(result)
     huge = "a" * 200_000
     result, seconds = timed(read_html, f'<img src="{huge}"><img src="../{huge}">')
     assert seconds < 10
@@ -1109,18 +1117,16 @@ def test_m2_ruby_annotations_are_not_line_text():
     assert texts(result) == ["\u6f22\u5b57 tail"]
 
 
-def test_m3_only_the_last_closing_tags_are_removed_and_only_when_text_follows():
+def test_m3_the_bytes_are_never_rewritten_so_text_that_looks_like_a_closing_tag_reads_unchanged():
     alt = (
         '<html><body><img src="a.png" alt="see </body> tag"><textarea></html></textarea>'
         "<p>x</p></body></html>"
     )
     result = read_html(alt)
     assert [f.description for f in figures(result)] == ["see </body> tag"]
-    assert texts(result) == ["</html>", "x"]
+    assert lines(result) == [("/html/body/textarea", "</html>"), ("/html/body/p", "x")]
     plain = read_html("<html><body><p>a</p></body></html>\n")
-    assert texts(plain) == ["a"]
-    trailing = read_html("<html><body><p>a</p></body></html>\n<p>b</p>")
-    assert texts(trailing) == ["a", "b"]
+    assert lines(plain) == [("/html/body/p", "a")]
 
 
 def test_m4_markdown_empty_cells_are_skipped_like_word_and_html():
@@ -1156,3 +1162,144 @@ def test_m9_control_characters_around_a_src_are_stripped_before_the_scheme_check
     first, second = figures(result)
     assert own(first) == ["image.remote-not-fetched"] and first.path == "http://example.org/x.png"
     assert own(second) == [] and result.images["p1-f2"] == b"\x89PNG"
+
+
+# --- fix round 2 (R23) ---------------------------------------------------------------------------
+
+
+def test_n1_a_row_never_rescans_the_columns_a_rowspan_holds():
+    source = (
+        "<table><tr>"
+        + "<td rowspan=65534></td>" * 1000
+        + "</tr>"
+        + "<tr><td>" * 150_000
+        + "</table><p>after</p>"
+    )
+    result, seconds = timed(read_html, source)
+    assert seconds < 4 and texts(result) == ["after"]  # about 2 s; it was 8 s
+    held = body(
+        "<table><tr><td rowspan=3>a</td><td rowspan=2>b</td><td>c</td></tr>"
+        "<tr><td>d</td></tr><tr><td>e</td><td>f</td></tr><tr><td>g</td></tr></table>"
+    )
+    (table,) = held.document.pages[0].tables
+    assert [(c.text, c.row, c.column) for c in table.cells] == [
+        ("a", 0, 0),
+        ("b", 0, 1),
+        ("c", 0, 2),
+        ("d", 1, 2),
+        ("e", 2, 1),
+        ("f", 2, 2),
+        ("g", 3, 0),
+    ]
+
+
+def test_n3_only_known_charset_labels_are_honoured_and_none_can_crash_or_alter_text():
+    for label in (
+        "rot13",
+        "base64",
+        "zlib",
+        "hex",
+        "uu",
+        "bz2",
+        "quopri",
+        "undefined",
+        "idna",
+        "unicode_escape",
+        "raw_unicode_escape",
+        "x-bogus",
+    ):
+        result = read_html(f"<meta charset='{label}'><body><p>caf\xe9 \\u0041</p>".encode())
+        assert texts(result) == ["caf\xe9 \\u0041"], label
+        assert rules(result.document.flags) == ["encoding.mismatch"], label
+    for label, raw in (
+        ("windows-1251", "\u043f\u0440"),
+        ("koi8-r", "\u043f\u0440"),
+        ("euc-kr", "\ud55c"),
+        ("gb2312", "\u4e2d"),
+        ("big5", "\u4e2d"),
+        ("iso-8859-2", "\u0105"),
+        ("macintosh", "\xe9"),
+        ("windows-874", "\u0e01"),
+    ):
+        result = read_html(
+            f"<meta charset='{label}'><body><p>{raw}</p>".encode(
+                {"macintosh": "mac-roman", "windows-874": "cp874"}.get(label, label)
+            )
+        )
+        assert texts(result) == [raw] and result.document.flags == [], label
+
+
+def test_n4_a_colspan_stops_stretching_the_grid_and_an_export_stays_small():
+    from ragnaroq.export import table_markdown
+
+    source = (
+        "<table><tr>" + "<td colspan=1000>x</td>" * 1000 + "</tr>" + "<tr><td>y</td></tr>" * 20 + "</table>"
+    )
+    result, seconds = timed(read_html, source)
+    (table,) = result.document.pages[0].tables
+    assert "html.table-limit" in page_flags(result)
+    assert table.columns <= Config().max_cells + 1000
+    assert len(texts(result)) == 1020 and seconds < 5
+    markdown, seconds = timed(table_markdown, table)
+    assert len(markdown) < 200_000 and seconds < 5 and "row 1, column 1: x" in markdown
+    small = body("<table><tr><td>a</td><td>b|c</td></tr><tr><td>d</td></tr></table>")
+    assert table_markdown(small.document.pages[0].tables[0]) == "| a | b\\|c |\n| --- | --- |\n| d |  |"
+
+
+def test_n4_the_word_readers_gridspan_is_clamped():
+    docx = pytest.importorskip("docx")
+    import io
+
+    document = docx.Document()
+    table = document.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "a"
+    table.cell(0, 1).text = "b"
+    from docx.oxml.ns import qn
+
+    for cell in table.rows[0].cells:
+        properties = cell._tc.get_or_add_tcPr()
+        span = properties.makeelement(qn("w:gridSpan"), {qn("w:val"): "999999999"})
+        properties.append(span)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    result = read_bytes(buffer.getvalue(), "t.docx", Config())
+    (word_table,) = result.document.pages[0].tables
+    assert word_table.columns <= 2000 and max(c.column for c in word_table.cells) <= 1000
+
+
+def test_m1_an_img_tag_with_an_angle_bracket_in_its_alt_is_still_a_figure():
+    result = read_md('Text <img alt="a < b" src="a.png"> more.\n')
+    assert texts(result) == ["Text more."]
+    assert [(f.description, f.anchor.lines) for f in figures(result)] == [("a < b", (1, 1))]
+    hidden = read_md('x <span title="a < b" hidden>secret</span> y\n')
+    assert texts(hidden) == ["x secret y"] and "html.hidden" in lines_flags(hidden)[0]
+
+
+def test_m2_text_after_an_unclosed_template_or_noscript_block_is_flagged_hidden():
+    result = read_md("<template>\n\ninside\n\n</template>\n\noutside\n\n<noscript>\n\nns\n")
+    found = {line.text: rules(line.flags) for line in result.document.lines()}
+    assert found == {"inside": ["html.hidden"], "outside": [], "ns": ["html.hidden"]}
+
+
+def test_m3_a_blank_test_strips_one_bom_and_ascii_whitespace_only():
+    for data in (b"\x00" * 64, b"\xef\xbb\xbf\x00", b"\xef\xbb\xbf\xef\xbb\xbf"):
+        with pytest.raises(ReaderRefused) as refused:
+            read_bytes(data, "n.md", Config())
+        assert refused.value.rule == "format.unknown", data
+    wide = read_bytes(" \n".encode("utf-16"), "w.md", Config())
+    assert wide.document.pages[0].lines == []
+
+
+def test_m5_a_remote_url_too_long_to_keep_is_still_remote():
+    long = "https://example.org/" + "a" * 5000
+    result = body(f'<img src="{long}"><img src="//example.org/{"b" * 5000}"><img src="{"c" * 5000}">')
+    first, second, third = figures(result)
+    assert [own(first), first.path] == [["image.remote-not-fetched"], ""]
+    assert [own(second), second.path] == [["image.remote-not-fetched"], ""]
+    assert "too long" in first.flags[0].message
+    assert own(third) == ["image.unreadable"]
+
+
+def test_m6_the_open_tag_cap_has_its_own_rule():
+    result = read_md("<b>x " * 500, config=Config(max_depth=50))
+    assert page_flags(result) == ["md.tag-limit"]

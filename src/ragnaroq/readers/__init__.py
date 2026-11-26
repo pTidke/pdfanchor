@@ -78,6 +78,16 @@ def _head(data: bytes) -> str:
     return sample.decode("utf-8", errors="ignore").lstrip()
 
 
+def _blank(data: bytes) -> bool:
+    """Nothing but ASCII whitespace, after at most one byte-order mark."""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return not data.decode("utf-16").strip(" \t\r\n\x0b\x0c")
+        except UnicodeDecodeError:
+            return False
+    return not data.removeprefix(b"\xef\xbb\xbf").strip(b" \t\r\n\x0b\x0c")
+
+
 def detect(name: str, data: bytes) -> str | None:
     """One of `FORMATS`, or None. Content decides first; the extension picks among text formats."""
     if data[:1024].lstrip().startswith(b"%PDF-"):
@@ -96,7 +106,7 @@ def detect(name: str, data: bytes) -> str | None:
     head = _head(data)
     if not head:
         # A file with nothing in it is an empty document, if its name says what it would be.
-        blank = not data.strip(b" \t\r\n\x0b\x0c\x00\xef\xbb\xbf\xff\xfe\xfe")
+        blank = _blank(data)
         suffix = Path(name).suffix.lower()
         if blank and suffix in (".html", ".htm", ".xhtml"):
             return "html"
