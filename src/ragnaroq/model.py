@@ -168,7 +168,9 @@ class Engine(Model):
 class Document(Model):
     schema_version: Literal["0.1.0", "0.2.0", "0.3.0"] = Field(
         default=SCHEMA_VERSION,
-        description='The contract version. A stored "0.1.0" or "0.2.0" document loads, and is restamped "0.3.0".',
+        description=(
+            'The contract version. A stored "0.1.0" or "0.2.0" document loads, and is restamped "0.3.0".'
+        ),
     )
     source: Source
     engine: Engine
