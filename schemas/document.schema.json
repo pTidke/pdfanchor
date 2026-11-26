@@ -920,6 +920,7 @@
     },
     "PptxAnchor": {
       "additionalProperties": false,
+      "description": "`slide` is 1-based; `paragraph` is 0-based in the shape's text frame. A table cell is\n`cell`, a 1-based (row, column), with paragraph 0.",
       "properties": {
         "type": {
           "const": "pptx",
@@ -944,6 +945,28 @@
           "default": false,
           "title": "Notes",
           "type": "boolean"
+        },
+        "cell": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cell"
         }
       },
       "required": [

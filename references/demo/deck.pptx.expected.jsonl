@@ -7,7 +7,7 @@
 {"anchor": {"type": "pptx", "slide": 3, "shape": "Title 1", "paragraph": 0}, "text": "Collections"}
 {"figure": {"type": "pptx", "slide": 3, "shape": "Picture 2", "paragraph": 0, "notes": false}, "description": "", "description_source": "none"}
 {"anchor": {"type": "pptx", "slide": 4, "shape": "Title 1", "paragraph": 0}, "text": "Slabs"}
-{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 0}, "text": "Slab"}
-{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 1}, "text": "Rate"}
-{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 2}, "text": "Up to 12 lakh"}
-{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 3}, "text": "Nil"}
+{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 0, "cell": [1, 1]}, "text": "Slab"}
+{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 0, "cell": [1, 2]}, "text": "Rate"}
+{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 0, "cell": [2, 1]}, "text": "Up to 12 lakh"}
+{"anchor": {"type": "pptx", "slide": 4, "shape": "Table 2", "paragraph": 0, "cell": [2, 2]}, "text": "Nil"}

@@ -27,11 +27,15 @@ class XlsxAnchor(_Anchor):
 
 
 class PptxAnchor(_Anchor):
+    """`slide` is 1-based; `paragraph` is 0-based in the shape's text frame. A table cell is
+    `cell`, a 1-based (row, column), with paragraph 0."""
+
     type: Literal["pptx"] = "pptx"
     slide: int
     shape: str
     paragraph: int = 0
     notes: bool = False
+    cell: tuple[int, int] | None = None
 
 
 class DocxAnchor(_Anchor):
@@ -106,6 +110,8 @@ def cite(anchor: Anchor) -> str:
         case PptxAnchor():
             if anchor.notes:
                 return f"slide {anchor.slide} notes"
+            if anchor.cell is not None:
+                return f"slide {anchor.slide}, {anchor.shape}, row {anchor.cell[0]}, column {anchor.cell[1]}"
             return f"slide {anchor.slide}, {anchor.shape}"
         case DocxAnchor():
             if anchor.note is not None:

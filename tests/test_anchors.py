@@ -25,6 +25,7 @@ from ragnaroq.model import Box, CellValue, Figure, Line, Page
         (XlsxAnchor(sheet="Rates", cell="C7"), "Rates!C7"),
         (PptxAnchor(slide=4, shape="Title 1"), "slide 4, Title 1"),
         (PptxAnchor(slide=4, shape="Notes", notes=True), "slide 4 notes"),
+        (PptxAnchor(slide=4, shape="Table 2", cell=(2, 1)), "slide 4, Table 2, row 2, column 1"),
         (DocxAnchor(paragraph=18), "¶18"),
         (DocxAnchor(table=2, cell=(3, 1)), "table 2, row 3, column 1"),
         (DocxAnchor(note="footnote 1"), "footnote 1"),
@@ -97,3 +98,10 @@ def test_a_sheet_page_and_a_figure_round_trip():
 def test_a_docx_anchor_names_exactly_one_place(kwargs):
     with pytest.raises(ValueError):
         DocxAnchor(**kwargs)
+
+
+def test_pptx_cells_have_distinct_keys():
+    one = PptxAnchor(slide=4, shape="Table 2", cell=(1, 2))
+    other = PptxAnchor(slide=4, shape="Table 2", cell=(2, 1))
+    assert key(one) != key(other)
+    assert key(one) != key(PptxAnchor(slide=4, shape="Table 2"))

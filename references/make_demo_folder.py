@@ -327,8 +327,10 @@ def make_pptx() -> None:
     deck.save(path)
     rezip(path)
 
-    def line(slide, shape, text, paragraph=0, notes=False):
+    def line(slide, shape, text, paragraph=0, notes=False, cell=None):
         anchor = {"type": "pptx", "slide": slide, "shape": shape, "paragraph": paragraph}
+        if cell:
+            anchor["cell"] = list(cell)
         return {"anchor": {**anchor, "notes": True} if notes else anchor, "text": text}
 
     keyfile(
@@ -347,10 +349,10 @@ def make_pptx() -> None:
                 "description_source": "none",
             },
             line(4, "Title 1", "Slabs"),
-            line(4, "Table 2", "Slab", 0),
-            line(4, "Table 2", "Rate", 1),
-            line(4, "Table 2", "Up to 12 lakh", 2),
-            line(4, "Table 2", "Nil", 3),
+            line(4, "Table 2", "Slab", cell=(1, 1)),
+            line(4, "Table 2", "Rate", cell=(1, 2)),
+            line(4, "Table 2", "Up to 12 lakh", cell=(2, 1)),
+            line(4, "Table 2", "Nil", cell=(2, 2)),
         ],
     )
 
