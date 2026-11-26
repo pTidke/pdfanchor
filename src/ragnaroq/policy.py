@@ -30,7 +30,7 @@ from .model import Document, Figure, Flag, Line, Resolution
 # Text read straight from a file's content: no second reader exists, and none is needed.
 EXACT_SOURCES = {"docx", "xlsx", "pptx", "html", "md", "json", "xml", "csv"}
 # Rules a reader of a file's content sets on a line itself; deciding again keeps them.
-READER_RULES = ("xlsx.",)
+READER_RULES = tuple(f"{source}." for source in sorted(EXACT_SOURCES))
 VLM = "vlm:"  # sources starting with this are third readings (a local vision model)
 THIRD = "crosscheck.third-reader"
 # Flags the third reader may look past: the disagreement it settles, and a lone "|",

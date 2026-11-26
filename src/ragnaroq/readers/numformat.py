@@ -209,6 +209,7 @@ def _number(section: _Section, number: Decimal, negative: bool) -> str:
         kind == "ph" and char == "?" for kind, char in section.tokens
     ):
         raise _Unknown  # a fraction
+    minus = "-" if number < 0 and not negative else ""
     number = abs(number) if negative else number
     number *= Decimal(100) ** kinds.count("pct")
     dot = kinds.index("dot") if "dot" in kinds else len(kinds)
@@ -216,7 +217,6 @@ def _number(section: _Section, number: Decimal, negative: bool) -> str:
     if any(kind == "comma" for kind, _ in section.tokens[dot:]):
         raise _Unknown
     rounded = number.quantize(Decimal(1).scaleb(-len(decimals)), rounding=ROUND_HALF_UP)
-    sign = "-" if rounded < 0 else ""
     whole, _, fraction = f"{abs(rounded):f}".partition(".")
     fraction = list(fraction.ljust(len(decimals), "0"))
     for index in range(len(decimals) - 1, -1, -1):
@@ -246,7 +246,7 @@ def _number(section: _Section, number: Decimal, negative: bool) -> str:
         else:
             raise _Unknown
         i += 1
-    return sign + "".join(out)
+    return minus + "".join(out)
 
 
 def _moment(value) -> datetime:

@@ -31,6 +31,9 @@ INDIAN = '[>=10000000]"₹"##\\,##\\,##\\,##0;[>=100000]"₹"##\\,##\\,##0;"₹"
         (-42, "#,##0;(#,##0)", "(42)"),
         (datetime(2026, 11, 26), "dd-mmm-yyyy", "26-Nov-2026"),
         (datetime(2026, 11, 26), "d/m/yyyy", "26/11/2026"),
+        (-0.001, "#,##0.00", "-0.00"),
+        (-0.4, "0", "-0"),
+        (-0.4, "#,##0;(#,##0)", "(0)"),
         (7, "General", "7"),
         (2.5, "General", "2.5"),
         ("80C", "@", "80C"),
@@ -197,3 +200,26 @@ def test_a_broken_workbook_is_refused_not_a_crash():
 def test_zip_and_cell_limits_do_not_change_the_pdf_reading_key():
     changed = replace(Config(), max_unzipped_bytes=5, max_zip_entries=3)
     assert Config().reading_sha256() == changed.reading_sha256()
+
+
+def test_decide_keeps_reader_flags_every_time():
+    from ragnaroq import policy
+
+    document = demo("rates.xlsx").document
+    nocache = demo("rates-nocache.xlsx").document
+    for _ in range(2):
+        for doc in (document, nocache):
+            policy.decide(doc, Config().policy)
+        assert "xlsx.format-unknown" in {f.rule for f in line_at(readers.ReadResult(document), "B6").flags}
+        assert "xlsx.no-cached-value" in {f.rule for f in line_at(readers.ReadResult(nocache), "B2").flags}
+
+
+def test_decide_keeps_a_csv_readers_flag():
+    from ragnaroq import policy
+    from ragnaroq.model import Flag
+
+    document = read_bytes(b"a,b\n1,2\n", "t.csv", Config()).document
+    line = next(document.lines())
+    line.flags.append(Flag(rule="csv.something", severity="review", message="x"))
+    policy.decide(document, Config().policy)
+    assert "csv.something" in {f.rule for f in line.flags}
