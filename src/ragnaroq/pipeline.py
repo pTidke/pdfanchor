@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__, policy, structure, third
+from .anchors import pdf_anchor
 from .config import Config
 from .crosscheck import text_inside, to_points
 from .export.chunks import to_chunks, to_jsonl
@@ -103,6 +104,7 @@ def _scanned(page: Page, image, engines: Sequence[OcrEngine], config: Config) ->
             page=page.number,
             order=order,
             box=box,
+            anchor=pdf_anchor(page.number, box.x0, box.top, box.x1, box.bottom),
             raw=read.text,
             text=unicodedata.normalize("NFC", read.text),
             source=f"ocr:{first.name}",

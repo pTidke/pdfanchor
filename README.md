@@ -55,7 +55,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 
 | Area | State |
 | --- | --- |
-| Output contract and JSON schema | Working, versioned `0.2.0` |
+| Output contract and JSON schema | Working, versioned `0.3.0` |
 | Text-layer reading with line and table-cell boxes | Working |
 | Scanned pages through Tesseract (command-line program) | Working, tested with the real program |
 | Cross-check of the text layer against an OCR reading | Working |

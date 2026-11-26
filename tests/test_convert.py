@@ -333,7 +333,7 @@ def test_a_resolution_records_which_readings_agreed(native_pdf):
         rule="crosscheck.third-reader", agreed=["ocr:two", "vlm:x"], text_from="ocr:two"
     )
     again = Document.model_validate_json(document.model_dump_json())
-    assert again.schema_version == "0.2.0"
+    assert again.schema_version == "0.3.0"
     assert next(again.lines()).resolution.text_from == "ocr:two"
 
 
@@ -344,8 +344,31 @@ def test_a_0_1_0_document_still_loads(native_pdf):
         for line in page["lines"]:
             del line["resolution"]  # 0.1.0 had no such field
     loaded = Document.model_validate(stored)
-    assert loaded.schema_version == "0.2.0"
-    assert json.loads(loaded.model_dump_json())["schema_version"] == "0.2.0"
+    assert loaded.schema_version == "0.3.0"
+    assert json.loads(loaded.model_dump_json())["schema_version"] == "0.3.0"
+
+
+def test_a_0_2_0_document_loads_with_pdf_anchors(native_pdf):
+    from ragnaroq.anchors import PdfAnchor
+
+    stored = json.loads(convert(native_pdf, engines=[]).model_dump_json())
+    stored["schema_version"] = "0.2.0"
+    for page in stored["pages"]:
+        for line in page["lines"]:
+            del line["anchor"]
+    loaded = Document.model_validate(stored)
+    assert loaded.schema_version == "0.3.0"
+    lines = list(loaded.lines())
+    assert lines
+    for line in lines:
+        box = line.box
+        assert line.anchor == PdfAnchor(page=line.page, box=(box.x0, box.top, box.x1, box.bottom))
+
+
+def test_converted_pdf_lines_carry_rounded_pdf_anchors(native_pdf):
+    for line in convert(native_pdf, engines=[]).lines():
+        assert line.anchor.type == "pdf" and line.anchor.page == line.page
+        assert line.anchor.box == tuple(round(v, 2) for v in line.anchor.box)
 
 
 def test_a_missing_model_stops_the_command_before_reading(scanned_pdf, tmp_path, capsys, monkeypatch):

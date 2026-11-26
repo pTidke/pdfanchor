@@ -3,6 +3,7 @@
 import statistics
 import unicodedata
 
+from .anchors import pdf_anchor
 from .config import Config
 from .model import Box, Cell, Flag, Line, Page, Table
 
@@ -118,6 +119,7 @@ def read_page(page, number: int, config: Config) -> Page:
                 page=number,
                 order=order,
                 box=line_box,
+                anchor=pdf_anchor(number, line_box.x0, line_box.top, line_box.x1, line_box.bottom),
                 raw=found["text"],
                 text=unicodedata.normalize("NFC", found["text"]),
                 source="native",
