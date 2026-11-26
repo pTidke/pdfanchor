@@ -90,12 +90,60 @@ The 6 accepted lines wrong on a number in both runs come from the two-reader rul
 
 ### Next steps before relying on this result
 
-- The next fresh held-out set includes All About Tax PDFs, and confirms the answer-key change (words printed with no visible gap are one word) on documents it was not made for.
-- The 0.1 sets are scored again under the new answer key, so every published number uses one answer key.
+Both were done in 0.2.2; see [the CBDT set](#cbdt-set-022) and [the re-score](#every-set-under-one-answer-key-022).
 
 ### From the spike
 
 Before the build, the same rule was simulated on stored readings of the 0.1 reference sets. On the IRS set, lines sent to a person fell from 1,242 to about 650 (48% fewer), and on the code table from 322 to 178 (45% fewer), with no line settled wrong on a number, date or negation. Code-table lines took 8.7 seconds each on average, IRS lines 3.5 seconds.
+
+## CBDT set (0.2.2)
+
+Indian tax documents from the Central Board of Direct Taxes, the kind All About Tax reads. They were downloaded by hand from incometaxindia.gov.in on 26 November 2026; the site refuses automated downloads. Only pages with their own text layer can be an answer key, so two of the five files sent were usable:
+
+| File | Pages used | SHA-256 |
+| --- | --- | --- |
+| `circular-7-2026.pdf` (Circular No. 7/2026, extension of timelines for audit reports and ITRs) | 1 | `62e34ef5e8c82fcd12342cfd0aa28ed723aa90a141620117dff7017962ab2cda` |
+| `notification-1-2026.pdf` (Notification No. 1/2026, Gazette of India, with a Hindi header) | 1 | `b8d9aee99cdd76ebce21687899863eb51688b1452c3a8e5933d60b962af6a318` |
+
+Circulars 2/2024, 2/2026 and 6/2026 are scanned pages with the publisher's OCR laid invisibly over them ("Government of lndia"), and Circular 4/2026 is a plain scan. None has a known answer. They are kept for a later set whose answer key a person types.
+
+```bash
+ragnaroq reference make circular-7-2026.pdf notification-1-2026.pdf --out refs/cbdt
+ragnaroq evaluate refs/cbdt --out results/cbdt --exclude-script Deva --easyocr-models ~/easyocr-models
+ragnaroq evaluate refs/cbdt --out results/cbdt-third --exclude-script Deva --easyocr-models ~/easyocr-models --third-reader
+```
+
+`--exclude-script Deva` leaves the Hindi-only lines out, as All About Tax is set up; the notification's Hindi text layer is itself broken ("रािपत्र" for "राजपत्र"). The results, with the 0.2.2 rules and answer key (4 profiles, 379 lines):
+
+| | Two readers | With the third reader |
+| --- | --- | --- |
+| Lines sent to a person | 134 | 74 (45% fewer) |
+| Sent to a person although right | 94 | 36 |
+| Accepted but wrong | 5 (2.0% of accepted) | 5 (1.6%) |
+| Accepted with a wrong number, date or negation | 1 | 1 |
+
+The third reader settled 60 lines, none of them wrong. The one accepted error on a number is a list number both readers dropped ("9. JCIT" read as "ICIT"); no text rule can see a number that is not there.
+
+What this set found, and what 0.2.2 changed:
+
+- **The answer key joined words a visible gap separates.** The notification places "2." and "Violation" a space apart without a space character, and the answer key said "2.Violation" while every reader read "2. Violation". It made 8 of the first run's 10 "wrong number" lines, including all 3 the third reader settled. Words now split at a gap of a fifth of the type size.
+- **"Sth January".** Both readers read the date "5th January" as "Sth January" and agreed. A day holding a letter readers take for a digit is now flagged (`date.confusable-day`, policy 0.5). On all four sets it flags no line that was right.
+- **Scans with a hidden text layer** are no longer taken as an answer key.
+
+## Every set under one answer key (0.2.2)
+
+The answer key changed twice since 0.1: words printed with no visible gap are one word (0.2.0), and a visible gap separates words without a space character (0.2.2). Every set was made again; the scans are byte-identical, and only the truth files of Form 1040, Publication 501 and the notification changed. Scored again on the stored readings with the 0.2.2 rules (low-resolution scans read at 300 dpi):
+
+| Set | Accepted | Accepted but wrong | Wrong number, date or negation | Sent to a person |
+| --- | --- | --- | --- | --- |
+| IRS (0.1 set) | 71.9% | 5.2% of accepted | 0 | 1,255 |
+| Code table | 7.5% | 0 | 0 | 322 |
+| Held-out IRS, two readers | 69.7% | 10.7% | 1 | 1,126 |
+| Held-out IRS, with the third reader | 81.5% | 9.8% | 1 | 686 |
+| CBDT, two readers | 64.6% | 2.0% | 1 | 134 |
+| CBDT, with the third reader | 80.5% | 1.6% | 1 | 74 |
+
+The two remaining errors are both misses the two readers share, before the third reader is consulted: the small "(Form 1040)" in a title, and a dropped list number. The third reader settled 500 lines across the two sets it ran on, none wrong on a number, date or negation.
 
 ## Results
 

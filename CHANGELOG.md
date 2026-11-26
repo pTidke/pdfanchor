@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.2.2 — 26 November 2026
+
+Measured on Indian tax documents for the first time: two CBDT documents, Circular 7/2026 and Notification 1/2026. See [references/](references/README.md#cbdt-set-022).
+
+### Fixed
+
+- **"Sth January" is no longer accepted.** Both readers read "5th January" as "Sth January" and agreed, losing the date. A day holding a letter readers take for a digit ("Sth", "lst", "3Oth") before a month name is now flagged (`date.confusable-day`, policy 0.5). On all four reference sets it flags no line that was right.
+- **The answer key splits words at a visible gap.** Some PDFs place the next word a space apart without drawing a space ("2." then "Violation"); the answer key joined them, and scored correct readings as wrong. A gap of a fifth of the type size now separates words. 20 of 21,909 words change across the four sets.
+- **Scans with a hidden text layer are not an answer key.** Many published circulars are scanned pages with the publisher's OCR laid invisibly over them ("Government of lndia"). `reference make` now leaves such pages out.
+
+### Measured
+
+Every set made again under one answer key (the scans are byte-identical) and scored with the 0.2.2 rules:
+
+| Set | Wrong number, date or negation accepted | Lines sent to a person |
+| --- | --- | --- |
+| IRS (0.1 set) | 0 | 1,255 |
+| Code table | 0 | 322 |
+| Held-out IRS, with the third reader | 1 | 686 (1,126 with two readers) |
+| CBDT, with the third reader | 1 | 74 (134 with two readers) |
+
+The third reader settled 60 CBDT lines and 440 held-out lines, none wrong on a number, date or negation. The two remaining errors are numbers both readers left out.
+
+### Known limits
+
+- A number both readers leave out (a list number, small print in a title) is not seen.
+
 ## 0.2.1 — 26 November 2026
 
 ### Fixed
