@@ -15,7 +15,8 @@ class Policy:
 
     # 0.2: codes mixing letters and digits are checked (validators/codes.py)
     # 0.3: a third reading (vlm:) settles a disputed scanned line when it matches exactly
-    version: str = "0.3"
+    # 0.4: a lone "|" in text read from an image is flagged (validators/marks.py)
+    version: str = "0.4"
     # Two readings of a line agree when their similarity is at least this and
     # every critical token (numbers, dates, section references, negations) matches.
     min_similarity: float = 0.90

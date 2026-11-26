@@ -120,6 +120,26 @@ def test_misreading_checks_apply_only_to_text_read_from_an_image():
     assert [flag.rule for flag in run("Cat. No. 11320B", ocr=True)] == ["code.confusable"]
 
 
+@pytest.mark.parametrize(
+    "text, flagged",
+    [
+        ("year in the entry space at the top of page | of Form 1040", True),
+        ("a tax year other than January |", True),
+        ("| Married filing jointly", True),
+        ("Under penalties of perjury, | declare that | have examined", True),
+        ("City State [| ZIP code", False),  # joined to a bracket: a box, judged elsewhere
+        ("a|b or x||y", False),
+        ("line 1 of Form 1040", False),
+    ],
+)
+def test_a_lone_bar_in_text_read_from_an_image_is_flagged(text, flagged):
+    assert ("glyph.lone-bar" in [flag.rule for flag in run(text, ocr=True)]) is flagged
+
+
+def test_a_bar_in_a_text_layer_is_text():
+    assert run("A | B", ocr=False) == []
+
+
 def test_readings_a_letter_apart_agree_unless_letters_must_match():
     slip = compare("Hf you pay tax on time", "If you pay tax on time")
     assert slip.critical_equal and slip.similarity >= 0.9 and not slip.letters_equal

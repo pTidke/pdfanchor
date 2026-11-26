@@ -6,12 +6,13 @@ from ..model import Flag
 from .codes import check_codes
 from .dates import check_dates
 from .encoding import check_encoding
+from .marks import check_marks
 
 Validator = Callable[[str], list[Flag]]
 
 DEFAULT: tuple[Validator, ...] = (check_encoding, check_dates)
 # Risks of reading an image, which text taken from a PDF's own text layer cannot have.
-READING: tuple[Validator, ...] = (check_codes,)
+READING: tuple[Validator, ...] = (check_codes, check_marks)
 
 
 def run(text: str, validators: tuple[Validator, ...] = DEFAULT, *, ocr: bool = True) -> list[Flag]:

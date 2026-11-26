@@ -29,6 +29,16 @@ from .model import Document, Flag, Line, Resolution
 
 VLM = "vlm:"  # sources starting with this are third readings (a local vision model)
 THIRD = "crosscheck.third-reader"
+# Flags the third reader may look past: the disagreement it settles, and a lone "|",
+# which its own checks refuse to keep (a settled line never carries one).
+SETTLEABLE = {"crosscheck.disagreement", "glyph.lone-bar"}
+
+
+def settleable(line: Line) -> bool:
+    """A flagged line whose only flags are ones the third reader may settle, at least
+    one of them the disagreement: a bar both readers agree on goes to a person."""
+    rules = {flag.rule for flag in line.flags}
+    return line.status == "flagged" and "crosscheck.disagreement" in rules and rules <= SETTLEABLE
 
 
 def _flag(line: Line, rule: str, message: str, severity="review") -> None:
@@ -192,8 +202,7 @@ def decide(document: Document, policy: Policy) -> None:
             if (
                 page.kind == "scanned"
                 and any(r.source.startswith(VLM) for r in line.readings)
-                and line.status == "flagged"
-                and all(flag.rule == "crosscheck.disagreement" for flag in line.flags)
+                and settleable(line)
             ):
                 near = _neighbours(ordered, i)
                 _third_reader(line, [unicodedata.normalize("NFC", n.raw) for n in near], policy)
