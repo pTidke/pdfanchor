@@ -2,6 +2,7 @@
 leave the file's folder, and the limits that stop a hostile page."""
 
 import base64
+import random
 import socket
 import struct
 import time
@@ -1176,7 +1177,7 @@ def test_n1_a_row_never_rescans_the_columns_a_rowspan_holds():
         + "</table><p>after</p>"
     )
     result, seconds = timed(read_html, source)
-    assert seconds < 4 and texts(result) == ["after"]  # about 2 s; it was 8 s
+    assert seconds < 3 and texts(result) == ["after"] and page_flags(result) == ["html.table-limit"]
     held = body(
         "<table><tr><td rowspan=3>a</td><td rowspan=2>b</td><td>c</td></tr>"
         "<tr><td>d</td></tr><tr><td>e</td><td>f</td></tr><tr><td>g</td></tr></table>"
@@ -1303,3 +1304,119 @@ def test_m5_a_remote_url_too_long_to_keep_is_still_remote():
 def test_m6_the_open_tag_cap_has_its_own_rule():
     result = read_md("<b>x " * 500, config=Config(max_depth=50))
     assert page_flags(result) == ["md.tag-limit"]
+
+
+# --- fix round 3 (R24) ---------------------------------------------------------------------------
+
+
+def slot_model(rows):
+    """HTML's slot assignment: each cell takes the next free slot of its row and holds its span."""
+    taken, where = set(), {}
+    for r, row in enumerate(rows):
+        x = 0
+        for text, colspan, rowspan in row:
+            while (r, x) in taken:
+                x += 1
+            where[text] = (r, x)
+            taken |= {(rr, cc) for rr in range(r, r + rowspan) for cc in range(x, x + colspan)}
+            x += colspan
+    return where
+
+
+def span_html(rows):
+    return (
+        "<table>"
+        + "".join(
+            "<tr>" + "".join(f'<td colspan="{c}" rowspan="{r}">{t}</td>' for t, c, r in row) + "</tr>"
+            for row in rows
+        )
+        + "</table>"
+    )
+
+
+def test_r24_cells_land_where_html_puts_them_in_3000_random_span_tables():
+    generator = random.Random(1)
+    for _ in range(3000):
+        rows, number = [], 0
+        for _ in range(generator.randint(1, 6)):
+            row = []
+            for _ in range(generator.randint(1, 5)):
+                number += 1
+                row.append(
+                    (f"c{number}", generator.choice([1, 1, 1, 2, 3, 5]), generator.choice([1, 1, 2, 3, 4]))
+                )
+            rows.append(row)
+        result = body(span_html(rows))
+        found = {c.text: (c.row, c.column) for t in result.document.pages[0].tables for c in t.cells}
+        assert found == slot_model(rows), span_html(rows)
+
+
+def test_r24_a_tax_rate_table_with_spanning_headers_has_exact_cells():
+    result = body(
+        "<table><tr><th rowspan=2 colspan=2>Category</th><th colspan=2>Rate</th></tr>"
+        "<tr><th>Old</th><th>New</th></tr>"
+        "<tr><td rowspan=2>Individual</td><td>Under 60</td><td>5%</td><td>5%</td></tr>"
+        "<tr><td>Over 60</td><td>Nil</td><td>Nil</td></tr></table>"
+    )
+    (table,) = result.document.pages[0].tables
+    assert [(c.text, c.row, c.column) for c in table.cells] == [
+        ("Category", 0, 0), ("Rate", 0, 2), ("Old", 1, 2), ("New", 1, 3),
+        ("Individual", 2, 0), ("Under 60", 2, 1), ("5%", 2, 2), ("5%", 2, 3),
+        ("Over 60", 3, 1), ("Nil", 3, 2), ("Nil", 3, 3),
+    ]  # fmt: skip
+    assert (table.rows, table.columns) == (4, 4)
+
+
+def test_r24_span_bookkeeping_has_a_work_budget_and_says_when_it_gives_up():
+    alternating = (
+        "<table><tr>"
+        + "".join(f"<td rowspan={65534 - i % 2}></td>" for i in range(1000))
+        + "</tr>"
+        + "<tr><td>" * 150_000
+        + "</table><p>after</p>"
+    )
+    for source in (
+        alternating,
+        "<table><tr>"
+        + "<td rowspan=65534></td>" * 1000
+        + "</tr>"
+        + "<tr><td>" * 150_000
+        + "</table><p>after</p>",
+    ):
+        result, seconds = timed(read_html, source)
+        assert seconds < 3 and texts(result) == ["after"] and page_flags(result) == ["html.table-limit"]
+        assert "positions" in result.document.pages[0].flags[0].message
+
+
+def test_r24_declared_charsets_decode_as_browsers_decode_them():
+    cases = [
+        ("euc-kr", "\ub620\ubc29\uac01\ud558 \uc4e9", "cp949"),
+        ("ks_c_5601-1987", "\uc138\uae08", "cp949"),
+        ("gb2312", "\u6731\u9556\u57fa \u66fe\u5586", "gbk"),
+        ("x-gbk", "\u7eb3\u7a0e", "gbk"),
+        ("gb18030", "\u7eb3\u7a0e \u20ac", "gb18030"),
+        ("big5", "\u7d0d\u7a05 \u20ac", "cp950"),
+        ("big5-hkscs", "\u7d0d\u7a05", "big5hkscs"),
+        ("shift_jis", "\u2460\u3231\uff5e", "cp932"),
+        ("windows-31j", "\u78ba\u5b9a\u7533\u544a", "cp932"),
+        ("x-sjis", "\u78ba\u5b9a\u7533\u544a", "shift_jis"),
+        ("euc-jp", "\u78ba\u5b9a\u7533\u544a", "euc-jp"),
+        ("iso-2022-jp", "\u78ba\u5b9a\u7533\u544a", "iso-2022-jp"),
+        ("iso-8859-9", "Vergi \u20ac \u011f", "cp1254"),
+        ("tis-620", "\u0e20\u0e32\u0e29\u0e35", "cp874"),
+        ("iso-8859-11", "\u0e20\u0e32\u0e29\u0e35", "cp874"),
+        ("windows-874", "\u0e20\u0e32\u0e29\u0e35", "cp874"),
+        ("latin1", "Caf\xe9 \u20ac", "cp1252"),
+        ("us-ascii", "Caf\xe9 \u20ac", "cp1252"),
+        ("koi8-r", "\u041d\u0430\u043b\u043e\u0433", "koi8-r"),
+        (" UTF-8 ", "Caf\xe9 \u20b9", "utf-8"),
+        ("UTF-16", "Caf\xe9", "utf-8"),
+    ]
+    for label, text, codec in cases:
+        page = f'<html><head><meta charset="{label}"></head><body><p>{text}</p></body></html>'
+        result = read_html(page.encode(codec))
+        assert texts(result) == [text], label
+        assert result.document.flags == [], label
+    for label in ("utf-7", "iso-2022-kr", "hz-gb-2312", "x-user-defined"):
+        result = read_html(f"<meta charset='{label}'><body><p>Caf\xe9</p>".encode())
+        assert texts(result) == ["Caf\xe9"] and rules(result.document.flags) == ["encoding.mismatch"], label

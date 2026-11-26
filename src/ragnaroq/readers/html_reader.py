@@ -4,8 +4,6 @@ them, and a nested block is a line of its own after it. Scripts, styles, templat
 the head are not read, except the title, which names the page. Text a visitor never sees is
 read and flagged. Images are figures; none is fetched, and none leaves the file's folder."""
 
-import bisect
-import codecs
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -32,25 +30,71 @@ HIDDEN_STYLE = re.compile(r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hid
 _META_CHARSET = re.compile(rb"<meta\b[^>]*?\bcharset\s*=\s*[\"']?\s*([A-Za-z0-9_.:\-]+)", re.I)
 _COMMENT = re.compile(rb"<!--.*?(?:-->|$)", re.S)
 _UTF8_BOM = b"\xef\xbb\xbf"
-_LABELS = (
-    "utf-8 utf-16 utf-16le utf-16be utf-32 utf-32le utf-32be windows-874 windows-1250 windows-1251"
-    " windows-1252 windows-1253 windows-1254 windows-1255 windows-1256 windows-1257 windows-1258"
-    " iso-8859-1 iso-8859-2 iso-8859-3 iso-8859-4 iso-8859-5 iso-8859-6 iso-8859-7 iso-8859-8"
-    " iso-8859-9 iso-8859-10 iso-8859-11 iso-8859-13 iso-8859-14 iso-8859-15 iso-8859-16 latin1"
-    " ascii koi8-r koi8-u ibm866 macintosh x-mac-cyrillic shift_jis euc-jp iso-2022-jp gbk gb2312"
-    " gb18030 big5 euc-kr"
-).split()
-_ALIASES = {"windows-874": "cp874", "x-mac-cyrillic": "mac-cyrillic"}  # labels Python spells otherwise
-
-
-def _lookup(label: str) -> str | None:
-    try:
-        return codecs.lookup(_ALIASES.get(label, label)).name
-    except (LookupError, ValueError):
-        return None
-
-
-_ENCODINGS = frozenset(name for name in map(_lookup, _LABELS) if name)
+# The WHATWG Encoding Standard's labels, by the decoder a browser uses for them. Where browsers
+# read a superset (windows-949 for euc-kr, GB18030 for gbk, windows-31j for Shift_JIS, ...), so do we.
+_DECODERS = {
+    "utf-8": "unicode-1-1-utf-8 unicode11utf8 unicode20utf8 utf-8 utf8 x-unicode20utf8",
+    "ibm866": "866 cp866 csibm866 ibm866",
+    "iso8859-2": "csisolatin2 iso-8859-2 iso-ir-101 iso8859-2 iso88592 iso_8859-2 iso_8859-2:1987 l2 latin2",
+    "iso8859-3": "csisolatin3 iso-8859-3 iso-ir-109 iso8859-3 iso88593 iso_8859-3 iso_8859-3:1988 l3 latin3",
+    "iso8859-4": "csisolatin4 iso-8859-4 iso-ir-110 iso8859-4 iso88594 iso_8859-4 iso_8859-4:1988 l4 latin4",
+    "iso8859-5": (
+        "csisolatincyrillic cyrillic iso-8859-5 iso-ir-144 iso8859-5 iso88595 iso_8859-5 iso_8859-5:1988"
+    ),
+    "iso8859-6": (
+        "arabic asmo-708 csiso88596e csiso88596i csisolatinarabic ecma-114 iso-8859-6 iso-8859-6-e"
+        " iso-8859-6-i iso-ir-127 iso8859-6 iso88596 iso_8859-6 iso_8859-6:1987"
+    ),
+    "iso8859-7": (
+        "csisolatingreek ecma-118 elot_928 greek greek8 iso-8859-7 iso-ir-126 iso8859-7 iso88597"
+        " iso_8859-7 iso_8859-7:1987 sun_eu_greek"
+    ),
+    "iso8859-8": (
+        "csiso88598e csiso88598i csisolatinhebrew hebrew iso-8859-8 iso-8859-8-e iso-8859-8-i"
+        " iso-ir-138 iso8859-8 iso88598 iso_8859-8 iso_8859-8:1988 logical visual"
+    ),
+    "iso8859-10": "csisolatin6 iso-8859-10 iso-ir-157 iso8859-10 iso885910 l6 latin6",
+    "iso8859-13": "iso-8859-13 iso8859-13 iso885913",
+    "iso8859-14": "iso-8859-14 iso8859-14 iso885914",
+    "iso8859-15": "csisolatin9 iso-8859-15 iso8859-15 iso885915 iso_8859-15 l9",
+    "iso8859-16": "iso-8859-16",
+    "koi8-r": "cskoi8r koi koi8 koi8-r koi8_r",
+    "koi8-u": "koi8-ru koi8-u",
+    "mac-roman": "csmacintosh mac macintosh x-mac-roman",
+    "cp874": "dos-874 iso-8859-11 iso8859-11 iso885911 tis-620 windows-874",
+    "cp1250": "cp1250 windows-1250 x-cp1250",
+    "cp1251": "cp1251 windows-1251 x-cp1251",
+    "cp1252": (
+        "ansi_x3.4-1968 ascii cp1252 cp819 csisolatin1 ibm819 iso-8859-1 iso-ir-100 iso8859-1 iso88591"
+        " iso_8859-1 iso_8859-1:1987 l1 latin1 us-ascii windows-1252 x-cp1252"
+    ),
+    "cp1253": "cp1253 windows-1253 x-cp1253",
+    "cp1254": (
+        "cp1254 csisolatin5 iso-8859-9 iso-ir-148 iso8859-9 iso88599 iso_8859-9 iso_8859-9:1989 l5 latin5"
+        " windows-1254 x-cp1254"
+    ),
+    "cp1255": "cp1255 windows-1255 x-cp1255",
+    "cp1256": "cp1256 windows-1256 x-cp1256",
+    "cp1257": "cp1257 windows-1257 x-cp1257",
+    "cp1258": "cp1258 windows-1258 x-cp1258",
+    "mac-cyrillic": "x-mac-cyrillic x-mac-ukrainian",
+    "gb18030": ("chinese csgb2312 csiso58gb231280 gb2312 gb_2312 gb_2312-80 gbk iso-ir-58 x-gbk gb18030"),
+    "big5hkscs": "big5 big5-hkscs cn-big5 csbig5 x-x-big5",
+    "euc_jp": "cseucpkdfmtjapanese euc-jp x-euc-jp",
+    "iso2022_jp": "csiso2022jp iso-2022-jp",
+    "cp932": "csshiftjis ms932 ms_kanji shift-jis shift_jis sjis windows-31j x-sjis",
+    "cp949": (
+        "cseuckr csksc56011987 euc-kr iso-ir-149 korean ks_c_5601-1987 ks_c_5601-1989 ksc5601 ksc_5601"
+        " windows-949"
+    ),
+    # UTF-16 and UTF-32 cannot be declared for bytes that are not: read as UTF-8, as the HTML rule says.
+    None: (
+        "csunicode iso-10646-ucs-2 ucs-2 unicode unicodefeff unicodefffe utf-16 utf-16be utf-16le"
+        " utf-32 utf-32be utf-32le ucs-4"
+    ),
+}
+_ALSO = {"big5hkscs": "cp950"}
+_LABEL_DECODER = {label: codec for codec, labels in _DECODERS.items() for label in labels.split()}
 _MAX_COLSPAN, _MAX_ROWSPAN = 1000, 65534  # HTML's own limits; columns past 1000 are not tracked
 
 HIDDEN_MESSAGE = "Not shown on the page; a reader of the page never sees it."
@@ -119,47 +163,6 @@ def _span(value, cap: int) -> int:
         return 1
 
 
-class _Grid:
-    """The columns that a rowspan holds, as disjoint runs sorted by start. A run holds its
-    columns through row `until`; neighbouring runs with the same `until` are one run, so a row
-    skips them in one step and never visits column by column."""
-
-    def __init__(self):
-        self.starts: list[int] = []
-        self.ends: list[int] = []
-        self.untils: list[int] = []
-
-    def free(self, column: int, row: int) -> int:
-        """The first column at or after `column` that no rowspan holds in `row`."""
-        i = bisect.bisect_right(self.starts, column) - 1
-        if i >= 0 and column < self.ends[i] and self.untils[i] >= row:
-            column = self.ends[i]
-        i += 1
-        while i < len(self.starts) and self.starts[i] == column and self.untils[i] >= row:
-            column = self.ends[i]
-            i += 1
-        return column
-
-    def hold(self, start: int, end: int, until: int) -> None:
-        """Hold columns start..end-1 (free in this row) through row `until`."""
-        low = bisect.bisect_left(self.ends, start + 1)  # first run ending after `start`
-        high = bisect.bisect_left(self.starts, end)  # runs starting before `end` overlap it
-        if low < high:  # only runs whose rowspan has ended can be here
-            start, end = min(start, self.starts[low]), max(end, self.ends[high - 1])
-            del self.starts[low:high], self.ends[low:high], self.untils[low:high]
-        i = low
-        if i > 0 and self.ends[i - 1] == start and self.untils[i - 1] == until:
-            start = self.starts[i - 1]
-            i -= 1
-            del self.starts[i], self.ends[i], self.untils[i]
-        if i < len(self.starts) and self.starts[i] == end and self.untils[i] == until:
-            end = self.ends[i]
-            del self.starts[i], self.ends[i], self.untils[i]
-        self.starts.insert(i, start)
-        self.ends.insert(i, end)
-        self.untils.insert(i, until)
-
-
 @dataclass
 class _Table:
     number: int
@@ -167,7 +170,7 @@ class _Table:
     column: int = 0  # the next free column, 0-based
     rows: int = 0
     columns: int = 0
-    grid: _Grid = field(default_factory=_Grid)
+    busy: dict[int, int] = field(default_factory=dict)  # column -> last row a rowspan holds it
     cells: list[Cell] = field(default_factory=list)
 
     @property
@@ -203,6 +206,8 @@ class Reader:
         self.images: dict[str, bytes] = {}
         self.iframe = False
         self.table_limit = False
+        self.untracked = False
+        self.work = 0
         self.stopped = False
         self.too_deep = False
         self.tables: list[_Table] = []
@@ -386,18 +391,31 @@ class Reader:
         items = self.scan(element, path, depth, hidden, pre)
         stack.append(_Frame(iter(items), closer, pre, caption, element, path, hidden))
 
+    def spend(self, steps: int = 1) -> bool:
+        """Count work on rowspans; past the budget they are no longer tracked."""
+        self.work += steps
+        if self.work > 4 * self.config.max_cells and not self.untracked:
+            self.untracked = self.table_limit = True
+        return not self.untracked
+
     def open_cell(self, element, path) -> _Cell:
         table = self.tables[-1]
         if table.row == 0:  # a cell with no row around it
             table.row = table.rows = 1
-        column = table.grid.free(table.column, table.row)
+        column = table.column
+        while not self.untracked and table.busy.get(column, 0) >= table.row:
+            column += 1  # a slot a rowspan above still holds
+            self.spend()
         columns = _span(element.get("colspan"), _MAX_COLSPAN)
         rows = _span(element.get("rowspan"), _MAX_ROWSPAN)
         if columns > 1 and table.row * (column + columns) > self.config.max_cells:
             columns = 1  # a table is not stretched past the cell limit
             self.table_limit = True
-        if rows > 1 and column < _MAX_COLSPAN:
-            table.grid.hold(column, min(column + columns, _MAX_COLSPAN), table.row + rows - 1)
+        if rows > 1 and not self.untracked:
+            until = table.row + rows - 1
+            for spanned in range(column, min(column + columns, _MAX_COLSPAN)):
+                table.busy[spanned] = max(table.busy.get(spanned, 0), until)
+            self.spend(columns)
         table.column = column + columns
         table.columns = max(table.columns, table.column)
         cell = _Cell(table, table.row - 1, column, HtmlAnchor(path=path))
@@ -455,7 +473,11 @@ class Reader:
                 Flag(
                     rule="html.table-limit",
                     severity="review",
-                    message=f"A table is not stretched past {self.config.max_cells} cells; text is kept.",
+                    message=(
+                        "A table is too large to lay out exactly (columns stop stretching at "
+                        f"{self.config.max_cells} cells, and rowspans stop being tracked); cell "
+                        "positions in that table may be off. The text is kept."
+                    ),
                 )
             )
         if self.iframe:
@@ -530,14 +552,9 @@ def _declared(data: bytes) -> str | None:
 
 
 def _codec(label: str) -> str | None:
-    """The Python codec for a declared label, None for UTF-16 and UTF-32 (the bytes are not), and
-    "" for a label that is not a WHATWG encoding, which is never trusted."""
-    name = _lookup(label.strip().lower())
-    if name not in _ENCODINGS:
-        return ""
-    if name.startswith(("utf-16", "utf-32")):
-        return None
-    return "cp1252" if name in ("iso8859-1", "ascii") else name
+    """The decoder for a declared label, None for UTF-16 and UTF-32 (read as UTF-8), and "" for a
+    label the standard does not know, which is never trusted."""
+    return _LABEL_DECODER.get(label.strip(" \t\n\r\f").lower(), "")
 
 
 def _text_of(data: bytes, name: str, document) -> str:
@@ -554,6 +571,11 @@ def _text_of(data: bytes, name: str, document) -> str:
         try:
             return data.decode(codec)
         except UnicodeDecodeError:
+            if codec in _ALSO:  # Python's Big5 lacks a few characters that browsers map (the euro)
+                try:
+                    return data.decode(_ALSO[codec])
+                except UnicodeDecodeError:
+                    pass
             _note(
                 document,
                 "encoding.mismatch",
