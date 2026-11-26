@@ -134,17 +134,20 @@ A page that breaks a limit fails alone, flagged with the limit (`budget.page-tim
 
 **`document.md`** is Markdown in reading order. Headings become `##`, the lines of a paragraph are joined, tables become Markdown tables. Page breaks and review flags are HTML comments (`<!-- page 3 -->`, `<!-- flagged: date.ordinal-suffix -->`), so a model sees them without mistaking them for content.
 
-**`chunks.jsonl`** has one JSON object per line:
+**`chunks.jsonl`** has one JSON object per line, built to load into any vector database as it stands ([docs/vector-databases.md](docs/vector-databases.md)):
 
 | Field | Use |
 | --- | --- |
+| `id` | A UUID, stable for the same file content and lines. Upsert by it |
 | `embedding_text` | What to embed: the title and heading, then the text |
 | `text` | What to show |
-| `context` | Title and current heading |
-| `pages`, `anchors` | Where it came from: page, bounding box and line ids, one anchor per page the chunk touches |
-| `status`, `rules` | `accepted`, `flagged` or `blocked`, and the rules that fired. Filter on this |
-| `sources` | `native`, `ocr:tesseract`, … |
-| `id` | Stable for the same source file and lines |
+| `anchors` | Where it came from: for a PDF a page, bounding box and line ids per page; for a spreadsheet table its cell range; otherwise `from` and `to` anchors per part |
+| `metadata` | Flat, no nulls, the same keys on every chunk: `schema_version`, `file_id`, `path`, `file_type`, `file_sha256`, `kind`, `status`, `rules`, `sources`, `cite`, `part`, `part_index`, `page_first`, `page_last`, `heading`, `title`, `chars`, `anchors_json`, `image_path` |
+| `metadata.cite` | A citation on every chunk: `native.pdf, p. 1`, `rates.xlsx, Rates!A1:D12`, `guide.docx, ¶18–¶24` |
+| `metadata.status`, `metadata.rules` | `accepted`, `flagged` or `blocked`, and the rules that fired (comma-separated). Filter on this |
+| `metadata.sources` | `native`, `ocr:tesseract`, … (comma-separated) |
+
+A figure is its own chunk, with `kind` `image`, its description as the text and its saved file in `image_path`.
 
 A chunk never splits a paragraph and may run across a page break. A table is always its own chunk.
 

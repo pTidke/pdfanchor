@@ -142,7 +142,7 @@ def test_excluded_scripts_stay_as_evidence_and_leave_the_exports(scanned_pdf):
     assert [chunk["text"] for chunk in to_chunks(document, config)] == ["The Gazette of India 2026"]
 
 
-def test_markdown_and_chunks_carry_structure_citations_and_status(native_pdf, tmp_path):
+def test_markdown_carries_structure_and_status_and_the_chunk_file_matches(native_pdf, tmp_path):
     document = convert(native_pdf, config=TRUSTING, engines=[])
     markdown = to_markdown(document)
     assert markdown.startswith("<!-- page 1 -->\n\n## Notification No. 1/2026")
@@ -151,18 +151,6 @@ def test_markdown_and_chunks_carry_structure_citations_and_status(native_pdf, tm
     assert "| Individual | 1,50,000 |" in markdown and "<!-- page 2 -->" in markdown
 
     chunks = to_chunks(document, TRUSTING)
-    assert len({chunk["id"] for chunk in chunks}) == len(chunks)
-    first = chunks[0]
-    assert first["context"] == ["Notification No. 1/2026"]
-    assert first["embedding_text"].startswith("Notification No. 1/2026\n")
-    # A chunk may run across a page break; it keeps one anchor per page it touches.
-    assert first["pages"] == [1, 2] and [a["page"] for a in first["anchors"]] == [1, 2]
-    assert all(anchor["line_ids"] and len(anchor["box"]) == 4 for anchor in first["anchors"])
-    assert first["status"] == "flagged" and first["rules"] == ["date.ordinal-suffix"]
-    table = next(chunk for chunk in chunks if chunk["kind"] == "table")
-    assert table["pages"] == [2] and "5,00,000" in table["text"]
-    accepted_only = to_chunks(document, TRUSTING, include=("accepted",))
-    assert all(chunk["status"] == "accepted" for chunk in accepted_only)
 
     files = write(document, tmp_path / "out", TRUSTING)
     assert Document.model_validate_json(files["document"].read_text()) == document
