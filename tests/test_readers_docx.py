@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("docx")
 
 from ragnaroq import evaluate, readers  # noqa: E402
-from ragnaroq.anchors import DocxAnchor  # noqa: E402
+from ragnaroq.anchors import DocxAnchor, cite  # noqa: E402
 from ragnaroq.config import Config  # noqa: E402
 from ragnaroq.readers import ReaderRefused, read_bytes  # noqa: E402
 
@@ -23,7 +23,9 @@ NS = (
     'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
     'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
-    'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"'
+    'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+    'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
 )
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 STYLES = (
@@ -48,7 +50,15 @@ def png() -> bytes:
     )
 
 
-def docx_bytes(body: str, *, footnotes: str | None = None, comments: bool = False, media: bool = False):
+def docx_bytes(
+    body: str,
+    *,
+    footnotes: str | None = None,
+    endnotes: str | None = None,
+    header: str | None = None,
+    comments: bool = False,
+    media: bool = False,
+):
     rels = [f'<Relationship Id="rId1" Type="{REL}/styles" Target="styles.xml"/>']
     parts = {
         "[Content_Types].xml": (
@@ -65,6 +75,10 @@ def docx_bytes(body: str, *, footnotes: str | None = None, comments: bool = Fals
             '<Override PartName="/word/footnotes.xml" '
             'ContentType="application/vnd.openxmlformats-officedocument'
             '.wordprocessingml.footnotes+xml"/>'
+            '<Override PartName="/word/endnotes.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/>'
+            '<Override PartName="/word/header1.xml" '
+            'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'
             '<Override PartName="/word/comments.xml" '
             'ContentType="application/vnd.openxmlformats-officedocument'
             '.wordprocessingml.comments+xml"/>'
@@ -81,6 +95,12 @@ def docx_bytes(body: str, *, footnotes: str | None = None, comments: bool = Fals
     if footnotes is not None:
         rels.append(f'<Relationship Id="rId2" Type="{REL}/footnotes" Target="footnotes.xml"/>')
         parts["word/footnotes.xml"] = f"<w:footnotes {NS}>{footnotes}</w:footnotes>"
+    if endnotes is not None:
+        rels.append(f'<Relationship Id="rId4" Type="{REL}/endnotes" Target="endnotes.xml"/>')
+        parts["word/endnotes.xml"] = f"<w:endnotes {NS}>{endnotes}</w:endnotes>"
+    if header is not None:
+        rels.append(f'<Relationship Id="rId5" Type="{REL}/header" Target="header1.xml"/>')
+        parts["word/header1.xml"] = f"<w:hdr {NS}>{header}</w:hdr>"
     if comments:
         rels.append(f'<Relationship Id="rId3" Type="{REL}/comments" Target="comments.xml"/>')
         parts["word/comments.xml"] = (
@@ -266,3 +286,150 @@ def test_the_zip_limits_apply_before_the_library_opens_the_file():
     with pytest.raises(ReaderRefused) as refused:
         read_docx(docx_bytes(p("x")), config=replace(Config(), max_zip_entries=2))
     assert refused.value.rule == "file.zip-limits"
+
+
+# --- R16: structures that must not lose or repeat text -------------------------------------------
+
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+
+def sdt(inner):
+    return f"<w:sdt><w:sdtPr/><w:sdtContent>{inner}</w:sdtContent></w:sdt>"
+
+
+def tc(inner):
+    return f"<w:tc>{inner}</w:tc>"
+
+
+def tr(*cells):
+    return "<w:tr>" + "".join(cells) + "</w:tr>"
+
+
+def tbl(*rows):
+    return "<w:tbl>" + "".join(rows) + "</w:tbl>"
+
+
+def lines(result):
+    return [(cite(a), t) for a, t in anchors(result)]
+
+
+def test_content_controls_and_custom_xml_are_unwrapped_at_every_level():
+    body = (
+        p("one")
+        + f"<w:customXml>{p('two')}{sdt(p('three'))}</w:customXml>"
+        + tbl(sdt(tr(tc(p("a")), sdt(tc(p("b"))))))
+        + p("four")
+    )
+    notes = f'<w:footnote w:id="1">{sdt(p("In a note."))}</w:footnote>'
+    body += '<w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>'
+    result = read_docx(docx_bytes(body, footnotes=notes))
+    assert lines(result) == [
+        ("¶1", "one"),
+        ("¶2", "two"),
+        ("¶3", "three"),
+        ("table 1, row 1, column 1", "a"),
+        ("table 1, row 1, column 2", "b"),
+        ("¶4", "four"),
+        ("footnote 1", "In a note."),
+    ]
+
+
+def test_a_nested_table_is_read_into_the_outer_cell():
+    inner = tbl(tr(tc(p("x")), tc(p("y"))), tr(tc(p("z"))))
+    body = tbl(tr(tc(p("outer") + inner + p("tail")), tc(p("b")))) + tbl(tr(tc(p("second"))))
+    result = read_docx(docx_bytes(body))
+    assert lines(result) == [
+        ("table 1, row 1, column 1", "outer\ntail"),
+        ("table 1, row 1, column 1", "x"),
+        ("table 1, row 1, column 1", "y"),
+        ("table 1, row 1, column 1", "z"),
+        ("table 1, row 1, column 2", "b"),
+        ("table 2, row 1, column 1", "second"),
+    ]
+
+
+def test_tables_in_a_footnote_are_lines_of_that_note():
+    notes = f'<w:footnote w:id="1">{p("Intro.")}{tbl(tr(tc(p("c1")), tc(p("c2"))))}</w:footnote>'
+    body = '<w:p><w:r><w:t>A</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>'
+    result = read_docx(docx_bytes(body, footnotes=notes))
+    assert lines(result)[1:] == [("footnote 1", "Intro."), ("footnote 1", "c1"), ("footnote 1", "c2")]
+
+
+def test_endnotes_are_read_like_footnotes_with_their_own_numbering():
+    foot = (
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>'
+        f'<w:footnote w:id="1">{p("Foot.")}</w:footnote>'
+    )
+    end = (
+        '<w:endnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:endnote>'
+        '<w:endnote w:type="continuationSeparator" w:id="0"><w:p/></w:endnote>'
+        f'<w:endnote w:id="3">{p("Second end.")}</w:endnote>'
+        f'<w:endnote w:id="2">{p("First end.")}</w:endnote>'
+    )
+    body = (
+        '<w:p><w:r><w:t>A</w:t></w:r><w:r><w:endnoteReference w:id="2"/></w:r>'
+        '<w:r><w:footnoteReference w:id="1"/></w:r></w:p>'
+        '<w:p><w:r><w:endnoteReference w:id="3"/></w:r></w:p>'
+    )
+    result = read_docx(docx_bytes(body, footnotes=foot, endnotes=end))
+    assert lines(result)[1:] == [
+        ("footnote 1", "Foot."),
+        ("endnote 1", "First end."),
+        ("endnote 2", "Second end."),
+    ]
+
+
+def test_headers_and_footers_are_left_out_and_flagged():
+    result = read_docx(docx_bytes(p("Body."), header=p("Page header")))
+    assert [t for _, t in anchors(result)] == ["Body."]
+    assert "docx.headers-footers" in flags(result)
+    assert "docx.headers-footers" not in flags(read_docx(docx_bytes(p("Body."), header=p())))
+    assert "docx.headers-footers" not in flags(read_docx(docx_bytes(p("Body."))))
+
+
+def test_tracked_moves_read_the_destination_once_and_are_flagged():
+    body = (
+        '<w:p><w:r><w:t xml:space="preserve">Start </w:t></w:r>'
+        '<w:moveFrom w:id="1" w:author="A"><w:r><w:t>moved</w:t></w:r></w:moveFrom>'
+        '<w:moveTo w:id="2" w:author="A"><w:r><w:t>kept</w:t></w:r></w:moveTo></w:p>'
+    )
+    result = read_docx(docx_bytes(body))
+    assert lines(result) == [("¶1", "Start kept")]
+    assert "docx.tracked-changes" in flags(result)
+
+
+def test_a_tracked_change_only_in_a_note_is_flagged():
+    notes = (
+        '<w:footnote w:id="1"><w:p><w:ins w:id="5" w:author="A"><w:r><w:t>New.</w:t></w:r></w:ins></w:p>'
+        "</w:footnote>"
+    )
+    body = '<w:p><w:r><w:footnoteReference w:id="1"/></w:r></w:p>'
+    result = read_docx(docx_bytes(body, footnotes=notes))
+    assert lines(result) == [("footnote 1", "New.")]
+    assert "docx.tracked-changes" in flags(result)
+
+
+def textbox(*paragraphs):
+    return f"<w:txbxContent>{''.join(paragraphs)}</w:txbxContent>"
+
+
+def test_a_text_box_is_separate_lines_after_its_host_paragraph():
+    host = (
+        "<w:p><w:r><w:t>host</w:t></w:r><w:r><w:drawing><wp:anchor><a:graphic><a:graphicData>"
+        f"<wps:wsp><wps:txbx>{textbox(p('boxed one'), p('boxed two'))}</wps:txbx></wps:wsp>"
+        "</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"
+    )
+    result = read_docx(docx_bytes(host + p("next")))
+    assert lines(result) == [("¶1", "host"), ("¶1", "boxed one"), ("¶1", "boxed two"), ("¶2", "next")]
+
+
+def test_alternate_content_reads_the_choice_and_skips_the_fallback():
+    box = textbox(p("boxed"))
+    host = (
+        f'<w:p xmlns:mc="{MC}"><w:r><w:t>host</w:t></w:r><w:r><mc:AlternateContent>'
+        f"<mc:Choice><w:drawing>{box}</w:drawing></mc:Choice>"
+        f"<mc:Fallback><w:pict>{box}</w:pict><w:t>fallback text</w:t></mc:Fallback>"
+        "</mc:AlternateContent></w:r></w:p>"
+    )
+    result = read_docx(docx_bytes(host))
+    assert lines(result) == [("¶1", "host"), ("¶1", "boxed")]
