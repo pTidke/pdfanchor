@@ -93,6 +93,10 @@ class Config:
     # Limits for structured files (JSON, CSV, XML): nesting depth, and cells or lines read.
     max_depth: int = 200
     max_cells: int = 200_000
+    # Limits for zip-based files (Excel, Word, PowerPoint): what the archive may unpack to,
+    # and how many entries it may hold.
+    max_unzipped_bytes: int = 500 * 1024**2
+    max_zip_entries: int = 10_000
     policy: Policy = field(default_factory=Policy)
     third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 
@@ -104,7 +108,7 @@ class Config:
         reading can be decided again under another policy without reading it again."""
         # The safety limits decide whether a page is read, not how: left out too.
         ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
-        # The limits for JSON, CSV and XML do not change how a PDF is read.
-        ignored |= {"max_depth", "max_cells"}
+        # The limits for JSON, CSV, XML and zip-based files do not change how a PDF is read.
+        ignored |= {"max_depth", "max_cells", "max_unzipped_bytes", "max_zip_entries"}
         settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

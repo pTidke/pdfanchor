@@ -279,7 +279,9 @@ def test_a_missing_format_library_says_how_to_install_it(monkeypatch):
 def test_format_reader_limits_do_not_change_the_pdf_reading_key():
     from dataclasses import replace
 
-    assert Config().reading_sha256() == replace(Config(), max_cells=5, max_depth=3).reading_sha256()
+    assert Config().reading_sha256() == replace(
+        Config(), max_cells=5, max_depth=3, max_unzipped_bytes=1, max_zip_entries=1
+    ).reading_sha256()
 
 
 def test_json_depth_scan_handles_escapes_and_brackets_in_strings():

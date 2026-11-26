@@ -29,6 +29,8 @@ from .model import Document, Figure, Flag, Line, Resolution
 
 # Text read straight from a file's content: no second reader exists, and none is needed.
 EXACT_SOURCES = {"docx", "xlsx", "pptx", "html", "md", "json", "xml", "csv"}
+# Rules a reader of a file's content sets on a line itself; deciding again keeps them.
+READER_RULES = ("xlsx.",)
 VLM = "vlm:"  # sources starting with this are third readings (a local vision model)
 THIRD = "crosscheck.third-reader"
 # Flags the third reader may look past: the disagreement it settles, and a lone "|",
@@ -221,7 +223,7 @@ def decide(document: Document, policy: Policy) -> None:
         for line in page.lines:
             line.text = unicodedata.normalize("NFC", line.raw)
             line.resolution = None
-            line.flags = []
+            line.flags = [f for f in line.flags if f.rule.startswith(READER_RULES)]
         for table in page.tables:
             members = [line for line in page.lines if line.table_id == table.id]
             if members and all(line.source in EXACT_SOURCES for line in members):
