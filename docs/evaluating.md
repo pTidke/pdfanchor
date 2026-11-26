@@ -15,7 +15,7 @@ The engine can only be scored against text whose correct answer is known. A born
 
 1. Renders the page to an image, as a scanner would, roughened by a profile.
 2. Saves the images as an image-only PDF: `<name>.<profile>.pdf`. It has no text layer, so the engine has to read it like any scan.
-3. Writes `<name>.<profile>.truth.json`, with every word of the original text and its box on the page. The boxes move with the page when the profile tilts it. Words printed with no visible gap between them (a label like "20b", whose space the PDF overprints) are one word in the truth file, as a reader sees them.
+3. Writes `<name>.<profile>.truth.json`, with every word of the original text and its box on the page. The boxes move with the page when the profile tilts it. Words printed with no visible gap between them (a label like "20b", whose space the PDF overprints) are one word in the truth file, as a reader sees them. The other way round, a visible gap of a fifth of the type size or more separates two words even when the PDF draws no space there ("2." and "Violation" placed a space apart).
 
 | Profile | What it does to the page |
 | --- | --- |
@@ -92,4 +92,4 @@ A page rendered from a born-digital PDF is cleaner than real paper in several wa
 
 The numbers from these references are a best case for scans. A set of real, human-verified scans is the next step.
 
-Some born-digital PDFs have broken text layers: wrong character maps, or Hindi in legacy fonts. For those, the "truth" is wrong, and the engine looks worse than it is. `reference make` keeps only pages the engine itself classifies as having a usable text layer. Check a reference's truth file before trusting a surprising result.
+Some born-digital PDFs have broken text layers: wrong character maps, or Hindi in legacy fonts. For those, the "truth" is wrong, and the engine looks worse than it is. `reference make` keeps only pages the engine itself classifies as having a usable text layer. It also leaves out a page that is a scanned image with a text layer over it, as many published circulars are: that layer is someone else's OCR ("Government of lndia"), not the page's own text. Check a reference's truth file before trusting a surprising result.

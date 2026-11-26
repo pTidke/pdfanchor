@@ -1,13 +1,16 @@
 """Reference sets and the evaluation. Synthetic PDFs and fake readers only, so every
 outcome is set up on purpose."""
 
+import io
 import json
 import time
 
 import pdfplumber
 import pytest
 from conftest import FakeEngine
+from PIL import Image, ImageDraw, ImageFont
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 from ragnaroq import Config, convert, evaluate, reference
@@ -96,6 +99,56 @@ def test_a_label_printed_without_a_gap_is_one_word(tmp_path):
     assert "20b" in texts and "b" not in texts[: texts.index("20b") + 2]
     assert ["Other", "business", "property"] == texts[texts.index("20b") + 1 : texts.index("20b") + 4]
     assert texts[-3:] == ["Line", "20", "b"]  # a visible space still separates words
+
+
+def _scan_with_hidden_text(page, text):
+    """A full-page scanned image with an invisible OCR text layer over it, as many
+    published circulars are: the text layer is someone else's reading, not the answer."""
+    image = Image.new("RGB", (1240, 1754), "white")
+    ImageDraw.Draw(image).text((120, 200), text, fill="black", font=ImageFont.load_default(size=40))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    page.drawImage(ImageReader(io.BytesIO(buffer.getvalue())), 0, 0, width=A4[0], height=A4[1])
+    hidden = page.beginText(72, 760)
+    hidden.setTextRenderMode(3)
+    hidden.setFont("Helvetica", 12)
+    hidden.textLine("Government of lndia Circular No. ;2../2024 issued under section 119")
+    page.drawText(hidden)
+
+
+def test_a_scan_with_a_hidden_text_layer_is_not_an_answer_key(tmp_path):
+    path = tmp_path / "circulars.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Helvetica", 14)
+    page.drawString(72, 760, LINES[0])
+    page.showPage()
+    _scan_with_hidden_text(page, "Circular No. 2/2024")
+    page.showPage()
+    page.save()
+    _, truth = reference.make(path, "clean", tmp_path / "out")
+    kept = reference.load(truth).pages
+    assert [p.source_page for p in kept] == [1]
+
+    only_scan = tmp_path / "scan.pdf"
+    page = canvas.Canvas(str(only_scan), pagesize=A4)
+    _scan_with_hidden_text(page, "Circular No. 2/2024")
+    page.save()
+    with pytest.raises(ValueError, match="no page with a usable text layer"):
+        reference.make(only_scan, "clean", tmp_path / "out2")
+
+
+def test_a_visible_gap_separates_words_even_without_a_space(tmp_path):
+    # Some PDFs place the next word after a gap instead of drawing a space: "2." then
+    # "Violation" a quarter of an em later. A reader sees a space there.
+    path = tmp_path / "gap.pdf"
+    page = canvas.Canvas(str(path), pagesize=A4)
+    page.setFont("Times-Roman", 10)
+    page.drawString(72, 760, "2.")
+    page.drawString(72 + page.stringWidth("2.", "Times-Roman", 10) + 2.5, 760, "Violation of any of the conditions")
+    page.save()
+    _, truth = reference.make(path, "clean", tmp_path / "out")
+    texts = [w.text for w in reference.load(truth).pages[0].words]
+    assert texts[:3] == ["2.", "Violation", "of"]
 
 
 def test_the_same_pdf_always_gives_the_same_reference(three_lines, tmp_path):
