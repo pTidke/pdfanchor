@@ -10,13 +10,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__, policy, structure, third
-from .anchors import pdf_anchor
+from .anchors import Anchor, pdf_anchor
 from .config import Config
 from .crosscheck import text_inside, to_points
 from .export.chunks import to_chunks, to_jsonl
 from .export.markdown import to_markdown
 from .isolation import BudgetExceeded, PageReader
-from .model import Document, Engine, Flag, Line, Page, Reading, Source
+from .model import Box, Document, Engine, Flag, Line, Page, Reading, Source
 from .ocr import LineReader, OcrEngine, OcrLine, available
 
 
@@ -65,27 +65,84 @@ def _preflight(data: bytes, config: Config) -> tuple[int, list[Flag], list[tuple
     return count, flags, sizes
 
 
-def _ocr(engine: OcrEngine, image, config: Config) -> list[tuple]:
+def _ocr(engine: OcrEngine, image, config: Config, points: bool = True) -> list[tuple]:
+    """The engine's lines with their boxes: in PDF points for a rendered page, else in the
+    image's own pixels."""
+    if not points:
+        return [
+            (Box(x0=line.box[0], top=line.box[1], x1=line.box[2], bottom=line.box[3]), line)
+            for line in engine.read(image, config.languages)
+        ]
     dpi = image.info.get("dpi", (config.dpi,))[0]
     return [(to_points(line, dpi), line) for line in engine.read(image, config.languages)]
 
 
-def _others(page: Page, image, engines: Sequence[OcrEngine], config: Config) -> list[tuple[str, list[tuple]]]:
+def _others(
+    flags: list[Flag],
+    image,
+    engines: Sequence[OcrEngine],
+    config: Config,
+    *,
+    points: bool = True,
+    what: str = "page",
+) -> list[tuple[str, list[tuple]]]:
     """Readings from the confirming engines. One failing on a page costs that page its
     confirmation, flagged, never the page: the first engine's lines stand."""
     readings = []
     for engine in engines:
         try:
-            readings.append((engine.name, _ocr(engine, image, config)))
+            readings.append((engine.name, _ocr(engine, image, config, points)))
         except Exception as error:
-            page.flags.append(
+            flags.append(
                 Flag(
                     rule="ocr.reader-failed",
                     severity="review",
-                    message=f"ocr:{engine.name} could not read this page ({type(error).__name__}).",
+                    message=f"ocr:{engine.name} could not read this {what} ({type(error).__name__}).",
                 )
             )
     return readings
+
+
+def ocr_lines(
+    image,
+    engines: Sequence[OcrEngine],
+    config: Config,
+    *,
+    page: int,
+    anchor: Anchor | None = None,
+    prefix: str | None = None,
+    flags: list[Flag] | None = None,
+    points: bool = True,
+    what: str = "page",
+) -> list[Line]:
+    """Lines from the first engine, each carrying the readings of the others.
+
+    A rendered page (`points`) has boxes in PDF points, ids `p{page}-l{n}` and a PDF anchor
+    for each line. A picture inside another kind of file has boxes in its own pixels, ids
+    `{prefix}-l{n}` and the `anchor` of the picture. A confirming engine that fails is noted in
+    `flags`; the first engine's failure is raised, for the caller to place."""
+    first, *rest = engines
+    others = _others(flags if flags is not None else [], image, rest, config, points=points, what=what)
+    row = 4 if points else 12
+    found = sorted(
+        _ocr(first, image, config, points), key=lambda pair: (round(pair[0].top / row), pair[0].x0)
+    )
+    prefix = prefix or f"p{page}"
+    lines = []
+    for order, (box, read) in enumerate(found):
+        line = Line(
+            id=f"{prefix}-l{order + 1}",
+            page=page,
+            order=order,
+            box=box,
+            anchor=anchor or pdf_anchor(page, box.x0, box.top, box.x1, box.bottom),
+            raw=read.text,
+            text=unicodedata.normalize("NFC", read.text),
+            source=f"ocr:{first.name}",
+        )
+        _attach(line, others, read)
+        lines.append(line)
+    return lines
 
 
 def _scanned(page: Page, image, engines: Sequence[OcrEngine], config: Config) -> None:
@@ -95,22 +152,7 @@ def _scanned(page: Page, image, engines: Sequence[OcrEngine], config: Config) ->
             Flag(rule="ocr.unavailable", severity="blocking", message="A scanned page and no OCR engine.")
         )
         return
-    first, *rest = engines
-    others = _others(page, image, rest, config)
-    found = sorted(_ocr(first, image, config), key=lambda pair: (round(pair[0].top / 4), pair[0].x0))
-    for order, (box, read) in enumerate(found):
-        line = Line(
-            id=f"p{page.number}-l{order + 1}",
-            page=page.number,
-            order=order,
-            box=box,
-            anchor=pdf_anchor(page.number, box.x0, box.top, box.x1, box.bottom),
-            raw=read.text,
-            text=unicodedata.normalize("NFC", read.text),
-            source=f"ocr:{first.name}",
-        )
-        _attach(line, others, read)
-        page.lines.append(line)
+    page.lines.extend(ocr_lines(image, engines, config, page=page.number, flags=page.flags))
     if not page.lines:
         page.flags.append(
             Flag(rule="ocr.no-text", severity="blocking", message="The page has ink but OCR returned no lines.")
@@ -186,7 +228,9 @@ def convert(
                     if page.kind == "scanned":
                         _scanned(page, image, engines, config)
                     else:
-                        readings = _others(page, image, engines[: config.native_crosscheck_engines], config)
+                        readings = _others(
+                            page.flags, image, engines[: config.native_crosscheck_engines], config
+                        )
                         for line in page.lines:
                             _attach(line, readings)
                 pages.append(page)
@@ -238,10 +282,23 @@ def _failed(size: tuple[float, float], number: int, rule: str, message: str) -> 
     )
 
 
-def write(document: Document, out: str | Path, config: Config | None = None) -> dict[str, Path]:
-    """Write the three output files and return their paths."""
+def write(
+    document: Document,
+    out: str | Path,
+    config: Config | None = None,
+    images: dict[str, bytes] | None = None,
+) -> dict[str, Path]:
+    """Write the three output files and return their paths. With `images` (a reader's
+    figure id to bytes), each distinct image is saved under `images/` first, so the three
+    files carry the saved paths."""
+    from . import figures
+    from .readers import ReadResult
+
+    config = config or Config()
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    if images is not None:
+        figures.save(ReadResult(document, images), out, config)
     files = {
         "document": out / "document.json",
         "markdown": out / "document.md",
@@ -249,5 +306,5 @@ def write(document: Document, out: str | Path, config: Config | None = None) -> 
     }
     files["document"].write_text(document.model_dump_json(indent=2), encoding="utf8")
     files["markdown"].write_text(to_markdown(document), encoding="utf8")
-    files["chunks"].write_text(to_jsonl(to_chunks(document, config or Config())), encoding="utf8")
+    files["chunks"].write_text(to_jsonl(to_chunks(document, config)), encoding="utf8")
     return files
