@@ -7,7 +7,7 @@ spreadsheet, a path for HTML or XML. `cite` writes it short, and `key` makes it 
 import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Anchor(BaseModel):
@@ -42,6 +42,14 @@ class DocxAnchor(_Anchor):
     table: int | None = None
     cell: tuple[int, int] | None = None
     note: str | None = None
+
+    @model_validator(mode="after")
+    def _one_place(self):
+        in_table = self.table is not None and self.cell is not None
+        stray = (self.table is None) != (self.cell is None)
+        if stray or sum((self.paragraph is not None, in_table, self.note is not None)) != 1:
+            raise ValueError("a docx anchor names exactly one of: paragraph; table with cell; note")
+        return self
 
 
 class HtmlAnchor(_Anchor):
