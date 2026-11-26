@@ -92,4 +92,4 @@ A page rendered from a born-digital PDF is cleaner than real paper in several wa
 
 The numbers from these references are a best case for scans. A set of real, human-verified scans is the next step.
 
-Some born-digital PDFs have broken text layers: wrong character maps, or Hindi in legacy fonts. For those, the "truth" is wrong, and the engine looks worse than it is. `reference make` keeps only pages the engine itself classifies as having a usable text layer. Check a reference's truth file before trusting a surprising result.
+Some born-digital PDFs have broken text layers: wrong character maps, or Hindi in legacy fonts. For those, the "truth" is wrong, and the engine looks worse than it is. `reference make` keeps only pages the engine itself classifies as having a usable text layer. It also leaves out a page that is a scanned image with a text layer over it, as many published circulars are: that layer is someone else's OCR ("Government of lndia"), not the page's own text. Check a reference's truth file before trusting a surprising result.

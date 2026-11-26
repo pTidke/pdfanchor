@@ -168,7 +168,10 @@ def make(
             if pages and number not in pages:
                 continue
             raw, _ = native.visible(raw)
-            if native.read_page(raw, number, config).kind != "native":
+            read = native.read_page(raw, number, config)
+            # A scanned image with a text layer over it carries someone else's OCR, not
+            # the page's own text: it has no known answer.
+            if read.kind != "native" or any(flag.rule == "native.image-backed" for flag in read.flags):
                 continue
             width, height = float(raw.width), float(raw.height)
             origin_x, origin_y = raw.bbox[0], raw.bbox[1]
