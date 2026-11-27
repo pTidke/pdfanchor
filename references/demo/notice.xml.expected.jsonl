@@ -1,0 +1,10 @@
+{"anchor": {"type": "xml", "path": "/notice"}, "text": "notice"}
+{"anchor": {"type": "xml", "path": "/notice/@id"}, "text": "id: N-7"}
+{"anchor": {"type": "xml", "path": "/notice/@date"}, "text": "date: 2026-07-31"}
+{"anchor": {"type": "xml", "path": "/notice/title"}, "text": "title: Extension of due date"}
+{"anchor": {"type": "xml", "path": "/notice/body"}, "text": "body"}
+{"anchor": {"type": "xml", "path": "/notice/body/para[1]"}, "text": "para: The due date is extended."}
+{"anchor": {"type": "xml", "path": "/notice/body/para[2]/@lang"}, "text": "lang: hi"}
+{"anchor": {"type": "xml", "path": "/notice/body/para[2]"}, "text": "para: Please file early."}
+{"anchor": {"type": "xml", "path": "/notice/signatory/@role"}, "text": "role: Commissioner"}
+{"anchor": {"type": "xml", "path": "/notice/signatory"}, "text": "signatory: A. Rao"}

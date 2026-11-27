@@ -261,7 +261,7 @@ def test_a_corrected_title_line_corrects_the_document_title(scanned_pdf):
     assert title.role == "heading" and title.text == heading and title.resolution.text_from == "ocr:two"
     assert document.title == heading
     (chunk,) = to_chunks(document, Config())
-    assert chunk["context"] == [heading] and misread not in chunk["embedding_text"]
+    assert chunk["embedding_text"].startswith(heading) and misread not in chunk["embedding_text"]
 
 
 def test_the_reader_version_is_asked_once_a_run(scanned_pdf):

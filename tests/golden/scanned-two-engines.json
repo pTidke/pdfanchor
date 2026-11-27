@@ -1,0 +1,145 @@
+{
+ "flags": [],
+ "pages": [
+  {
+   "figures": [],
+   "flags": [],
+   "height": 841.8898,
+   "kind": "scanned",
+   "lines": [
+    {
+     "anchor": {
+      "box": [
+       54.0,
+       72.0,
+       324.0,
+       93.6
+      ],
+      "page": 1,
+      "type": "pdf"
+     },
+     "bold": false,
+     "box": {
+      "bottom": 93.6,
+      "top": 72.0,
+      "x0": 54.0,
+      "x1": 324.0
+     },
+     "excluded": null,
+     "flags": [],
+     "font_size": null,
+     "id": "p1-l1",
+     "order": 0,
+     "page": 1,
+     "paragraph": 0,
+     "raw": "Circular No. 7 of 2026",
+     "readings": [
+      {
+       "confidence": 90.0,
+       "source": "ocr:one",
+       "text": "Circular No. 7 of 2026"
+      },
+      {
+       "confidence": 90.0,
+       "source": "ocr:two",
+       "text": "Circular No. 7 of 2026"
+      }
+     ],
+     "resolution": null,
+     "role": "body",
+     "scripts": [
+      "Latn"
+     ],
+     "source": "ocr:one",
+     "status": "accepted",
+     "table_id": null,
+     "text": "Circular No. 7 of 2026",
+     "value": null
+    },
+    {
+     "anchor": {
+      "box": [
+       54.0,
+       129.6,
+       396.0,
+       151.2
+      ],
+      "page": 1,
+      "type": "pdf"
+     },
+     "bold": false,
+     "box": {
+      "bottom": 151.2,
+      "top": 129.6,
+      "x0": 54.0,
+      "x1": 396.0
+     },
+     "excluded": null,
+     "flags": [
+      {
+       "message": "ocr:two reads \"The due date is 31st July 2025.\" (differs on 2026, 2025).",
+       "rule": "crosscheck.disagreement",
+       "severity": "review"
+      }
+     ],
+     "font_size": null,
+     "id": "p1-l2",
+     "order": 1,
+     "page": 1,
+     "paragraph": 1,
+     "raw": "The due date is 31st July 2026.",
+     "readings": [
+      {
+       "confidence": 90.0,
+       "source": "ocr:one",
+       "text": "The due date is 31st July 2026."
+      },
+      {
+       "confidence": 90.0,
+       "source": "ocr:two",
+       "text": "The due date is 31st July 2025."
+      }
+     ],
+     "resolution": null,
+     "role": "body",
+     "scripts": [
+      "Latn"
+     ],
+     "source": "ocr:one",
+     "status": "flagged",
+     "table_id": null,
+     "text": "The due date is 31st July 2026.",
+     "value": null
+    }
+   ],
+   "metrics": {
+    "dark_fraction": 0.009323,
+    "image_fraction": 1.0,
+    "native_characters": 0.0,
+    "render_dpi": 200,
+    "source_dpi": 200.0,
+    "tables": 0.0
+   },
+   "name": null,
+   "number": 1,
+   "rotation": 0,
+   "tables": [],
+   "width": 595.2756
+  }
+ ],
+ "summary": {
+  "accepted": 1,
+  "blocked": 0,
+  "excluded": 0,
+  "figures": 0,
+  "figures_blocked": 0,
+  "figures_flagged": 0,
+  "flagged": 1,
+  "lines": 2,
+  "pages": 1,
+  "pages_failed": 0,
+  "pages_scanned": 1,
+  "tables": 0
+ },
+ "title": null
+}

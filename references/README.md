@@ -145,6 +145,31 @@ The answer key changed twice since 0.1: words printed with no visible gap are on
 
 The two remaining errors are both misses the two readers share, before the third reader is consulted: the small "(Form 1040)" in a title, and a dropped list number. The third reader settled 500 lines across the two sets it ran on, none wrong on a number, date or negation.
 
+## Checked again for 0.3.0
+
+0.3.0 changed the output format (schema 0.3.0) and added readers for other files, and left the PDF engine as it was. To check, the four PDF sets were scored again from their stored readings under the 0.3.0 code, with no OCR and no third-reader run. The answer keys and scans are the 0.2.2 ones. Nothing moved:
+
+| Set | Accepted | Accepted but wrong | Wrong number, date or negation | Sent to a person | 0.2.2 |
+| --- | --- | --- | --- | --- | --- |
+| IRS (0.1 set) | 71.9% | 5.2% of accepted | 0 | 1,255 | same |
+| Code table | 7.5% | 0 | 0 | 322 | same |
+| Held-out IRS, two readers | 69.7% | 10.7% | 1 | 1,126 | same |
+| Held-out IRS, with the third reader | 81.5% | 9.8% | 1 | 686 | same |
+| CBDT, two readers | 64.6% | 2.0% | 1 | 134 | same |
+| CBDT, with the third reader | 80.5% | 1.6% | 1 | 74 | same |
+
+The IRS and code-table readings are the stored ones, with the low-resolution scans read at 300 dpi. The held-out and CBDT readings of the third reader are the stored ones: no crop was read again. The stored readings are used as they were made: a reading's key holds the reading format (`0.2.0`), not the schema version, so 0.2 readings keep their keys under 0.3.0. As a check, the CBDT set was scored with `ragnaroq evaluate` from an unmodified copy of its 0.2.2 cache, with OCR made to fail if called: all 8 readings were found, none was read again, and the result is the 0.2.2 row (64.6%, 2.0%, 1, 134).
+
+## The demo folder (0.3.0)
+
+[`demo/`](demo) holds awkward files for the exact formats: Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV, each with a hand-written `<file>.expected.jsonl`. `references/make_demo_folder.py` records how they were made. The files are committed, because Office files embed timestamps and cannot be made again byte for byte.
+
+```bash
+ragnaroq evaluate references/demo --out results/demo
+```
+
+Every exact-format file scores `ok`: every expected anchor is present with the right text, and each case that must be flagged is flagged. The cases are listed in [docs/evaluating.md](../docs/evaluating.md#exact-formats-the-demo-folder). To see an index of the folder, run `ragnaroq index` on a copy. It exits `1`, because `bomb.xml`, an XML entity bomb, is refused on purpose (`xml.entities`).
+
 ## Results
 
 Each run below used Tesseract 5.3.4 and EasyOCR 1.7.2 (English) on a CPU, with the default policy (agreement threshold 0.90), on the four profiles: clean, low-res, blurred and tilted.

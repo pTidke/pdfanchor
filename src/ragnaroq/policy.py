@@ -25,8 +25,12 @@ from .crosscheck import (
     shares_words,
     without_marks,
 )
-from .model import Document, Flag, Line, Resolution
+from .model import Document, Figure, Flag, Line, Resolution
 
+# Text read straight from a file's content: no second reader exists, and none is needed.
+EXACT_SOURCES = {"docx", "xlsx", "pptx", "html", "md", "json", "xml", "csv"}
+# Rules a reader of a file's content sets on a line itself; deciding again keeps them.
+READER_RULES = tuple(f"{source}." for source in sorted(EXACT_SOURCES))
 VLM = "vlm:"  # sources starting with this are third readings (a local vision model)
 THIRD = "crosscheck.third-reader"
 # Flags the third reader may look past: the disagreement it settles, and a lone "|",
@@ -41,14 +45,15 @@ def settleable(line: Line) -> bool:
     return line.status == "flagged" and "crosscheck.disagreement" in rules and rules <= SETTLEABLE
 
 
-def _flag(line: Line, rule: str, message: str, severity="review") -> None:
+def _flag(line: Line | Figure, rule: str, message: str, severity="review") -> None:
     line.flags.append(Flag(rule=rule, severity=severity, message=message))
 
 
 def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
-    line.flags.extend(validators.run(line.text, ocr=line.source != "native"))
+    exact = line.source in EXACT_SOURCES
+    line.flags.extend(validators.run(line.text, ocr=not exact and line.source != "native"))
     others = [r for r in line.readings if r.source != line.source and not r.source.startswith(VLM)]
-    if line.role == "table":
+    if line.role == "table" and not exact:
         _flag(line, "table.member", "Part of a table; table structure is never accepted by rule.")
     if others:
         for other in others:
@@ -65,6 +70,8 @@ def decide_line(line: Line, policy: Policy, image_backed: bool) -> None:
                     "crosscheck.disagreement",
                     f'{other.source} reads "{other.text}" ({detail}).',
                 )
+    elif exact:
+        pass
     elif line.source == "native":
         if image_backed or not policy.accept_native_without_crosscheck:
             _flag(line, "crosscheck.not-run", "No independent reading was available to confirm it.")
@@ -163,7 +170,11 @@ def _neighbours(ordered: list[Line], i: int) -> list[Line]:
     reading order are kept too, as before, so this check only ever adds refusals."""
     box = ordered[i].box
     found = ordered[max(i - 1, 0) : i] + ordered[i + 1 : i + 2]
-    column = [n for j, n in enumerate(ordered) if j != i and n.box.x0 < box.x1 and box.x0 < n.box.x1]
+    if box is None:
+        return found
+    column = [
+        n for j, n in enumerate(ordered) if j != i and n.box and n.box.x0 < box.x1 and box.x0 < n.box.x1
+    ]
     above = [n for n in column if n.box.bottom <= box.top + 1]
     below = [n for n in column if n.box.top >= box.bottom - 1]
     if above:
@@ -173,6 +184,40 @@ def _neighbours(ordered: list[Line], i: int) -> list[Line]:
     return found
 
 
+def _decide_lines(lines: list[Line], scanned: bool, image_backed: bool, policy: Policy) -> None:
+    ordered = sorted(lines, key=lambda line: line.order)
+    for i, line in enumerate(ordered):
+        if line.excluded:
+            line.status = "accepted"
+            continue
+        decide_line(line, policy, image_backed)
+        if scanned and any(r.source.startswith(VLM) for r in line.readings) and settleable(line):
+            near = _neighbours(ordered, i)
+            _third_reader(line, [unicodedata.normalize("NFC", n.raw) for n in near], policy)
+
+
+_FIGURE_RULES = {"image.no-description", "image.ocr-unverified"}
+
+
+def _decide_figure(figure: Figure, policy: Policy) -> None:
+    """A figure is accepted when its description is the file's own (caption or alt text) or
+    every line OCR read from it is accepted. `model_description` is never consulted."""
+    for line in figure.ocr_lines:
+        line.text = unicodedata.normalize("NFC", line.raw)
+        line.resolution = None
+        line.flags = []
+    # The two verdicts below are this function's own; any other flag was set by the reader.
+    figure.flags = [flag for flag in figure.flags if flag.rule not in _FIGURE_RULES]
+    _decide_lines(figure.ocr_lines, True, False, policy)
+    if figure.description_source == "ocr" and figure.description:
+        # A figure past the document's line cap keeps its description and has no lines: unsettled.
+        if not figure.ocr_lines or any(line.status != "accepted" for line in figure.ocr_lines):
+            _flag(figure, "image.ocr-unverified", "Text read from the image is not settled; compare it.")
+    elif figure.description_source not in {"caption", "alt"} or not figure.description:
+        _flag(figure, "image.no-description", "The image has no description from the file.")
+    figure.status = "flagged" if figure.flags else "accepted"
+
+
 def decide(document: Document, policy: Policy) -> None:
     """Decide every line and table. Only this decides, so any earlier verdict is
     cleared first: a stored reading can be decided again under new rules."""
@@ -180,11 +225,17 @@ def decide(document: Document, policy: Policy) -> None:
         image_backed = any(flag.rule == "native.image-backed" for flag in page.flags)
         for table in page.tables:
             table.flags = []
+        members: dict[str, list[Line]] = {}  # each table's lines, found once per page
         for line in page.lines:
             line.text = unicodedata.normalize("NFC", line.raw)
             line.resolution = None
-            line.flags = []
+            line.flags = [f for f in line.flags if f.rule.startswith(READER_RULES)]
+            if line.table_id:
+                members.setdefault(line.table_id, []).append(line)
         for table in page.tables:
+            held = members.get(table.id, [])
+            if held and all(line.source in EXACT_SOURCES for line in held):
+                continue  # its status follows its lines, below
             table.flags.append(
                 Flag(
                     rule="table.structure-unverified",
@@ -193,19 +244,16 @@ def decide(document: Document, policy: Policy) -> None:
                 )
             )
             table.status = "flagged"
-        ordered = sorted(page.lines, key=lambda line: line.order)
-        for i, line in enumerate(ordered):
-            if line.excluded:
-                line.status = "accepted"
-                continue
-            decide_line(line, policy, image_backed)
-            if (
-                page.kind == "scanned"
-                and any(r.source.startswith(VLM) for r in line.readings)
-                and settleable(line)
-            ):
-                near = _neighbours(ordered, i)
-                _third_reader(line, [unicodedata.normalize("NFC", n.raw) for n in near], policy)
+        _decide_lines(page.lines, page.kind == "scanned", image_backed, policy)
+        for table in page.tables:
+            if not table.flags:
+                states = {line.status for line in members.get(table.id, [])}
+                table.status = (
+                    "blocked" if "blocked" in states else "flagged" if "flagged" in states else "accepted"
+                )
+        for figure in page.figures:
+            _decide_figure(figure, policy)
+    figures = [figure for page in document.pages for figure in page.figures]
     counted = [line for line in document.lines() if not line.excluded]
     document.summary = {
         "pages": len(document.pages),
@@ -217,14 +265,30 @@ def decide(document: Document, policy: Policy) -> None:
         "blocked": sum(line.status == "blocked" for line in counted),
         "excluded": sum(1 for line in document.lines() if line.excluded),
         "tables": sum(len(page.tables) for page in document.pages),
+        "figures": len(figures),
+        "figures_flagged": sum(f.status == "flagged" for f in figures),
+        "figures_blocked": sum(f.status == "blocked" for f in figures),
     }
 
 
+# Document and page flags of a file that is not a PDF that only inform: nothing was misread or
+# left unread that a reader of the text would miss (spacers, repeated headers and footers).
+INFORMATIONAL = {"image.tiny-skipped", "docx.headers-footers", "pptx.footers"}
+
+
 def needs_review(document: Document) -> bool:
+    """Whether a person must look at the document: a line, table or figure that is not accepted,
+    or a flag that says something was not read, or not read with certainty.
+
+    For a PDF only blocking document and page flags count, as before. For any other file every
+    document and page flag counts except the INFORMATIONAL ones."""
+    pdf = document.source.format == "pdf"
+    flags = [*document.flags, *(flag for page in document.pages for flag in page.flags)]
     return bool(
         document.summary.get("flagged")
         or document.summary.get("blocked")
-        or document.summary.get("tables")
-        or any(flag.severity == "blocking" for flag in document.flags)
-        or any(flag.severity == "blocking" for page in document.pages for flag in page.flags)
+        or any(table.status != "accepted" for page in document.pages for table in page.tables)
+        or document.summary.get("figures_flagged")
+        or document.summary.get("figures_blocked")
+        or any(flag.severity == "blocking" if pdf else flag.rule not in INFORMATIONAL for flag in flags)
     )

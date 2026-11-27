@@ -1,0 +1,16 @@
+{"anchor": {"type": "json", "pointer": "/taxpayer"}, "text": "taxpayer"}
+{"anchor": {"type": "json", "pointer": "/taxpayer/name"}, "text": "name: Asha Rao"}
+{"anchor": {"type": "json", "pointer": "/taxpayer/pan"}, "text": "pan: ABCDE1234F"}
+{"anchor": {"type": "json", "pointer": "/year"}, "text": "year: 2026"}
+{"anchor": {"type": "json", "pointer": "/limit"}, "text": "limit: 150000"}
+{"anchor": {"type": "json", "pointer": "/deductions"}, "text": "deductions"}
+{"anchor": {"type": "json", "pointer": "/deductions/0/section"}, "text": "80C"}
+{"anchor": {"type": "json", "pointer": "/deductions/0/amount"}, "text": "150000"}
+{"anchor": {"type": "json", "pointer": "/deductions/0/note"}, "text": "PPF"}
+{"anchor": {"type": "json", "pointer": "/deductions/1/section"}, "text": "80D"}
+{"anchor": {"type": "json", "pointer": "/deductions/1/amount"}, "text": "25000"}
+{"anchor": {"type": "json", "pointer": "/deductions/1/note"}, "text": "Health"}
+{"anchor": {"type": "json", "pointer": "/deductions/2/section"}, "text": "80G"}
+{"anchor": {"type": "json", "pointer": "/deductions/2/amount"}, "text": "5000"}
+{"anchor": {"type": "json", "pointer": "/deductions/2/note"}, "text": "Donation"}
+{"document_flag": "json.duplicate-key"}

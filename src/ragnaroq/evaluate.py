@@ -10,19 +10,26 @@ the line whose box contains its centre. So a line the engine split or merged
 differently from the original is still compared with exactly the words it covers.
 """
 
+import functools
 import hashlib
 import json
 import unicodedata
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import policy, reference, structure
+from . import expected, policy, reference, structure
 from .config import Config
 from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
-from .model import SCHEMA_VERSION, Document, Line
+from .model import Document, Line
+from .readers import ReaderRefused, refused_document
 from .reference import Truth, Word
 
 MARGIN = 3.0  # points around a line's box that still count as inside
+# The form of a stored reading, in the cache key. It changes only when a stored reading can no
+# longer be decided again like a fresh one; a new schema that still loads it is not such a change
+# (0.3.0 loads 0.2 readings), so stored PDF readings, hours of OCR, keep their keys.
+READING_FORMAT = "0.2.0"
 THRESHOLDS = (0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00)
 
 
@@ -188,7 +195,8 @@ def _line_score(line: Line, words: list[Word]) -> LineScore:
         critical_ok=critical(line.text) == critical(expected),
         errors=distance(read_c, expected_c),
         length=len(expected_c),
-        eligible=bool(others) and not any(
+        eligible=bool(others)
+        and not any(
             flag.rule != "crosscheck.disagreement" and not flag.rule.startswith(policy.THIRD)
             for flag in line.flags
         ),
@@ -273,6 +281,7 @@ class Report:
     files: list[FileScore]
     total: Tally
     sweep: list[dict]
+    exact: "ExactReport | None" = None  # files scored by anchor, from *.expected.jsonl
 
     def accepted_but_wrong(self) -> list[LineScore]:
         """Every accepted line that is wrong, those wrong on a critical token first."""
@@ -291,6 +300,7 @@ class Report:
             ],
             "sweep": self.sweep,
             "accepted_but_wrong": [asdict(line) for line in wrong],
+            **({"exact": [_exact_dict(f) for f in self.exact.files]} if self.exact else {}),
         }
 
 
@@ -307,14 +317,27 @@ def run(
 
     `progress`, if given, is called as progress(done, total, name) after each reference.
     `cache`, if given, is a folder where each reading is kept, keyed by the PDF's
-    bytes, the reading settings and the readers' versions. A stored reading is decided
+    bytes, the reading settings, the readers' versions and READING_FORMAT. A stored reading is decided
     again under the current rules and policy, so a change to the rules, the threshold
     or the scoring takes seconds, not a new reading."""
+    from . import readers
     from .ocr import available
     from .pipeline import convert
     from .third import read_disputed
 
     config = config or Config()
+    # HTML and Markdown read a local image from beside the file, so they are told the folder.
+    read_exact = functools.partial(readers.read_bytes, base=Path(folder))
+    exact = run_exact(folder, read_exact) if next(Path(folder).glob("*.expected.jsonl"), None) else None
+    if exact is not None and next(Path(folder).glob("*.truth.json"), None) is None:
+        return Report(
+            engines={},
+            min_similarity=config.policy.min_similarity,
+            files=[],
+            total=Tally(),
+            sweep=[],
+            exact=exact,
+        )
     engines = available(config.languages) if engines is None else list(engines)
     readers = "+".join(f"{engine.name}={engine.version()}" for engine in engines)
     files: list[FileScore] = []
@@ -360,6 +383,7 @@ def run(
         files=files,
         total=total,
         sweep=sweep([line for f in files for line in f.lines], same_letters=config.policy.same_letters),
+        exact=exact,
     )
 
 
@@ -372,7 +396,7 @@ def _converted(pdf_path: Path, config: Config, engines, readers: str, cache, con
                 pdf_path.read_bytes(),
                 config.reading_sha256().encode(),
                 readers.encode(),
-                SCHEMA_VERSION.encode(),
+                READING_FORMAT.encode(),
             ]
         )
     ).hexdigest()[:24]
@@ -415,10 +439,11 @@ def _third_section(t: Tally) -> list[str]:
 
 
 def to_markdown(report: Report, examples: int = 20) -> str:
+    if not report.files and report.exact is not None:  # a folder of answer keys only
+        return "# RAGnaroq evaluation\n\n" + exact_markdown(report.exact)
     t, r = report.total, report.total.rates()
     engines = (
-        ", ".join(f"{name.split(':', 1)[-1]} {version}" for name, version in report.engines.items())
-        or "none"
+        ", ".join(f"{name.split(':', 1)[-1]} {version}" for name, version in report.engines.items()) or "none"
     )
     out = [
         "# RAGnaroq evaluation",
@@ -486,6 +511,8 @@ def to_markdown(report: Report, examples: int = 20) -> str:
             out.append(f"| {line.line} | {critical} | {read} | {correct} |")
         if len(wrong) > examples:
             out.append(f"\n…and {len(wrong) - examples} more in evaluation.json.")
+    if report.exact is not None:
+        out += ["", exact_markdown(report.exact).rstrip("\n")]
     return "\n".join(out) + "\n"
 
 
@@ -496,3 +523,90 @@ def write(report: Report, out: str | Path) -> dict[str, Path]:
     files["json"].write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=1), encoding="utf8")
     files["markdown"].write_text(to_markdown(report), encoding="utf8")
     return files
+
+
+@dataclass
+class ExactFile:
+    name: str
+    score: expected.ExactScore | None = None
+    error: str | None = None  # the reader raised: nothing was scored
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and self.score is not None and self.score.ok
+
+
+@dataclass
+class ExactReport:
+    files: list[ExactFile]
+
+    @property
+    def ok(self) -> bool:
+        return all(f.ok for f in self.files)
+
+
+def run_exact(folder: str | Path, read: Callable[[bytes, str, Config], object]) -> ExactReport:
+    """Score every file with a `<file>.expected.jsonl` beside it, by anchor.
+
+    `read(data, filename, config)` returns a `Document`, or an object with a `.document`.
+    A file the reader refuses (`ReaderRefused`) is scored as the document `refused_document`
+    makes, with the refusing flag its answer key lists as a `document_flag`; a reader that
+    raises anything else is reported as an error."""
+    config = Config()
+    files = []
+    for key_path in sorted(Path(folder).glob("*.expected.jsonl")):
+        path = key_path.with_name(key_path.name.removesuffix(".expected.jsonl"))
+        if not path.exists():
+            raise FileNotFoundError(f"{key_path.name} has no {path.name} beside it.")
+        items = expected.load(key_path)
+        data = path.read_bytes()
+        try:
+            result = read(data, path.name, config)
+            document = result if isinstance(result, Document) else result.document
+        except ReaderRefused as refusal:  # a refusal is a document with the flag that says why
+            document = refused_document(path.name, data, refusal)
+        except Exception as error:  # a reader that fails is a result, not a crash of the run
+            files.append(ExactFile(path.name, error=f"{type(error).__name__}: {error}"))
+            continue
+        files.append(ExactFile(path.name, score=expected.score(document, items)))
+    if not files:
+        raise FileNotFoundError(f"No *.expected.jsonl files in {folder}.")
+    return ExactReport(files)
+
+
+def _exact_dict(f: "ExactFile") -> dict:
+    return {"file": f.name, "ok": f.ok, "error": f.error, **(asdict(f.score) if f.score else {})}
+
+
+def exact_markdown(report: ExactReport) -> str:
+    out = [
+        "## Exact formats",
+        "",
+        "Each file is scored line by line against a hand-written answer key, matched by anchor.",
+        "",
+        "| File | Result | Right | Wrong | Missing | Flags missing | Extra |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    details = []
+    for f in report.files:
+        if f.score is None:
+            out.append(f"| {f.name} | error | | | | | |")
+            details.append(f"- {f.name}: {f.error}".replace("|", "¦"))
+            continue
+        s = f.score
+        out.append(
+            f"| {f.name} | {'ok' if f.ok else 'FAIL'} | {s.right} | {len(s.wrong)} | {len(s.missing)} | "
+            f"{len(s.flags_missing)} | {len(s.extra)} |"
+        )
+        for kind, rows in (("wrong", s.wrong), ("missing", s.missing), ("flag missing", s.flags_missing)):
+            details += [f"- {f.name}, {kind}: `{json.dumps(row, ensure_ascii=False)}`" for row in rows]
+    return "\n".join(out + ([""] + details if details else [])) + "\n"
+
+
+def write_exact(report: ExactReport, out: str | Path) -> Path:
+    """Write the "Exact formats" section as its own evaluation.md, for `evaluate.run` to merge."""
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "evaluation.md"
+    path.write_text("# RAGnaroq evaluation\n\n" + exact_markdown(report), encoding="utf8")
+    return path

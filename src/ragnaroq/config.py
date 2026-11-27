@@ -17,7 +17,8 @@ class Policy:
     # 0.3: a third reading (vlm:) settles a disputed scanned line when it matches exactly
     # 0.4: a lone "|" in text read from an image is flagged (validators/marks.py)
     # 0.5: a day holding a letter read for a digit is flagged ("Sth January", validators/dates.py)
-    version: str = "0.5"
+    # 0.6: text read straight from a file (exact) is accepted by rule; figures are decided
+    version: str = "0.6"
     # Two readings of a line agree when their similarity is at least this and
     # every critical token (numbers, dates, section references, negations) matches.
     min_similarity: float = 0.90
@@ -88,7 +89,21 @@ class Config:
     isolate_pages: bool = True
     page_timeout_seconds: float = 60.0
     page_memory_mb: int = 2048
+    # The time one file that is not a PDF may take to read (the worker is stopped after it).
+    file_timeout_seconds: float = 120.0
     max_page_chars: int = 200_000
+    # Limits for structured files (JSON, CSV, XML): nesting depth, and cells or lines read.
+    max_depth: int = 200
+    max_cells: int = 200_000
+    # Limits for zip-based files (Excel, Word, PowerPoint): what the archive may unpack to,
+    # and how many entries it may hold.
+    max_unzipped_bytes: int = 500 * 1024**2
+    max_zip_entries: int = 10_000
+    # Largest image a reader will take from a file's folder or a data: URI.
+    max_image_bytes: int = 20 * 1024**2
+    # Most OCR lines copied onto the figures of one document; past it a figure keeps its
+    # description and loses its lines (each figure holds its own copy of an image's lines).
+    max_figure_ocr_lines: int = 20_000
     policy: Policy = field(default_factory=Policy)
     third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 
@@ -100,5 +115,9 @@ class Config:
         reading can be decided again under another policy without reading it again."""
         # The safety limits decide whether a page is read, not how: left out too.
         ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
+        ignored |= {"file_timeout_seconds"}
+        # The limits for JSON, CSV, XML and zip-based files do not change how a PDF is read.
+        ignored |= {"max_depth", "max_cells", "max_unzipped_bytes", "max_zip_entries", "max_image_bytes"}
+        ignored |= {"max_figure_ocr_lines"}
         settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()

@@ -41,7 +41,7 @@ Two cases need care:
 
 The report goes to `evaluation.md` and `evaluation.json`. The JSON lists every accepted line that was wrong, those wrong on a critical token first.
 
-Reading is the slow part, so each reading is kept in `<out>/cache`, keyed by the PDF's bytes, the reading settings and the readers' versions. A stored reading is decided again under the current rules and policy on every run, so changing a rule, the threshold or the scoring takes seconds. `--fresh` reads everything again.
+Reading is the slow part, so each reading is kept in `<out>/cache`, keyed by the PDF's bytes, the reading settings, the readers' versions and the reading format (`evaluate.READING_FORMAT`, `0.2.0`). The reading format changes only when a stored reading can no longer be decided again like a fresh one, not with each schema version, so readings stored by 0.2 are still used by 0.3. A stored reading is decided again under the current rules and policy on every run, so changing a rule, the threshold or the scoring takes seconds. `--fresh` reads everything again.
 
 | Measure | What it means |
 | --- | --- |
@@ -81,6 +81,32 @@ It changes `evaluate` in three ways:
 The release gate for 0.2.0 was: no settled line wrong on a number, date or negation, and an accepted-but-wrong rate no higher than without the third reader. It was applied to a held-out set the rule was never tuned on, with the rule frozen and the documents read once. The first scoring, under the 0.1 answer key, failed the gate: 6 settled lines were wrong on a critical token. All 6 were Schedule C line labels that the answer key split ("20 b" for the printed "20b"). The answer key was corrected (commit `fb2dddc`) and the same readings were scored again; see [the first run](../references/README.md#the-first-run-kept-on-record). The result below is from the second scoring. On that set 447 lines were settled, none wrong on a number, date or negation, and the rate fell from 12.5% to 11.3% of accepted lines. After the gate the neighbour check was tightened, which only holds lines back: the shipped rule, re-scored on the same readings, settles 440 lines (none wrong on a number, date or negation), sends 632 to a person (41.0% fewer than 1,072; 91 of them right), accepts 350 lines wrong (11.4%, against 12.5% without the third reader) and holds back 23 at the neighbour check. See [references/](../references/README.md#held-out-set-020) for the sources, checksums and every number.
 
 The same set found 6 accepted lines wrong on a number with and without the third reader. They come from the two-reader rule: both OCR readers read a "1" as "|" and agree. Since 0.2.1 a lone "|" in text read from an image is flagged, and 1 remains (a title where both readers missed the small "(Form 1040)").
+
+## Exact formats: the demo folder
+
+Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV files hold their text exactly, so there is nothing to misread and no need for a scan. They are scored a different way: against an answer key written by hand.
+
+[`references/demo/`](../references/demo) holds one file for each format, made on purpose to hold awkward cases (`references/make_demo_folder.py` records how). Beside each file is `<file>.expected.jsonl`, one JSON object per line:
+
+- a line: its `anchor` and its `text`, and a `flag` if the line must carry that rule;
+- a figure: its anchor, `description` and `description_source`;
+- a `document_flag` that the document must carry. A file the reader must refuse, such as an XML entity bomb, has only this.
+
+```bash
+ragnaroq evaluate references/demo --out results/demo
+```
+
+A folder with `*.expected.jsonl` files is scored in this mode. Each expected line is matched to the line at the same anchor, and its text is compared after Unicode NFC normalisation and nothing else: no trimming, no case folding. The report has a row for each file:
+
+| Column | What it means |
+| --- | --- |
+| Right | Expected lines found at their anchor with the right text, and flags and figures as expected |
+| Wrong | Found, with different text or description |
+| Missing | An expected anchor with no line |
+| Flags missing | A flag the answer key requires that is not there |
+| Extra | Lines at anchors the key does not list. Reported, but they do not fail the file |
+
+A file is `ok` when nothing is wrong, missing or unflagged. The command prints the counts (`"exact": {"files": 10, "ok": 10, "failed": []}`) and exits with code `1` when any file is not `ok`, so a CI job can fail on it. The bar for 0.3.0 is `ok` on every exact-format file in the demo folder, and it holds. The PDF scoring above is unchanged: a folder with `*.truth.json` files is scored as before.
 
 ## Limits of synthetic references
 

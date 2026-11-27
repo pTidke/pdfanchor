@@ -144,7 +144,9 @@ def test_a_visible_gap_separates_words_even_without_a_space(tmp_path):
     page = canvas.Canvas(str(path), pagesize=A4)
     page.setFont("Times-Roman", 10)
     page.drawString(72, 760, "2.")
-    page.drawString(72 + page.stringWidth("2.", "Times-Roman", 10) + 2.5, 760, "Violation of any of the conditions")
+    page.drawString(
+        72 + page.stringWidth("2.", "Times-Roman", 10) + 2.5, 760, "Violation of any of the conditions"
+    )
     page.save()
     _, truth = reference.make(path, "clean", tmp_path / "out")
     texts = [w.text for w in reference.load(truth).pages[0].words]
@@ -420,13 +422,34 @@ def test_strict_mode_sends_a_one_letter_disagreement_to_a_person(clean_reference
     assert rows[0.90]["accepted"] == 2
 
 
-def test_a_cache_from_another_schema_version_is_read_again(clean_reference, tmp_path, monkeypatch):
+def test_a_cache_from_another_reading_format_is_read_again(clean_reference, tmp_path, monkeypatch):
     folder, _, truth_path = clean_reference
     engines = _readers(reference.load(truth_path), LINES, LINES)
     evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
-    monkeypatch.setattr(evaluate, "SCHEMA_VERSION", "0.1.0")
+    monkeypatch.setattr(evaluate, "READING_FORMAT", "0.1.0")
     evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
     assert len(list((tmp_path / "cache").glob("*.json"))) == 2
+
+
+def test_a_stored_0_2_reading_keeps_its_key_after_the_schema_changed(clean_reference, tmp_path, monkeypatch):
+    """The key holds the reading format, not the schema version: 0.2 readings still hit in 0.3."""
+    import hashlib
+
+    folder, pdf, truth_path = clean_reference
+    engines = _readers(reference.load(truth_path), LINES, LINES)
+    assert evaluate.READING_FORMAT == "0.2.0"
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    readers = "+".join(f"{e.name}={e.version()}" for e in engines)
+    parts = [pdf.read_bytes(), Config().reading_sha256().encode(), readers.encode(), b"0.2.0"]
+    key = hashlib.sha256(b"|".join(parts)).hexdigest()[:24]
+    assert [p.name for p in (tmp_path / "cache").glob("*.json")] == [f"{pdf.stem}.{key}.json"]
+    monkeypatch.setattr("ragnaroq.model.SCHEMA_VERSION", "9.9.9")
+
+    def no_reading(*args, **kwargs):
+        raise AssertionError("read again")
+
+    monkeypatch.setattr("ragnaroq.pipeline.convert", no_reading)
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
 
 
 def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_reference, tmp_path):
@@ -438,9 +461,7 @@ def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_ref
 
     def run(answer, cache):
         engines = _readers(truth, [LINES[0], misread, LINES[2]], LINES)
-        return evaluate.run(
-            folder, engines=engines, cache=cache, third_reader=FakeLineReader([answer])
-        )
+        return evaluate.run(folder, engines=engines, cache=cache, third_reader=FakeLineReader([answer]))
 
     cache = tmp_path / "cache"
     report = run(LINES[1], cache)
@@ -464,3 +485,22 @@ def test_the_threshold_sweep_compares_a_corrected_line_by_its_first_reading(clea
     # The sweep is the two-reader rule: the first reader's 2028 still disagrees.
     assert due.min_similarity < 1.0 and not due.critical_agree
     assert all(row["accepted"] == 0 for row in evaluate.sweep([due]))
+
+
+def test_evaluate_on_answer_keys_exits_non_zero_when_a_file_fails_and_prints_the_counts(tmp_path, capsys):
+    """Final review m2."""
+    import shutil
+    from pathlib import Path
+
+    demo = Path(__file__).parent.parent / "references" / "demo"
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    for name in ("notice.xml", "notice.xml.expected.jsonl", "rates.csv", "rates.csv.expected.jsonl"):
+        shutil.copy(demo / name, keys)
+    assert main(["evaluate", str(keys), "--out", str(tmp_path / "out")]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["exact"] == {"files": 2, "ok": 2, "failed": []}
+    (keys / "rates.csv").write_bytes(b"name;rate\nTea;99%\n")  # no longer what its key says
+    assert main(["evaluate", str(keys), "--out", str(tmp_path / "out")]) == 1
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["exact"] == {"files": 2, "ok": 1, "failed": ["rates.csv"]}

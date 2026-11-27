@@ -2,11 +2,12 @@
 
 **The end of bad RAG.** Point it at your files and get text a language model can trust: every line anchored to its place in the source, and judged before it is used.
 
-Today it reads PDFs. The plan is any folder of files, ready for retrieval and served to any model over MCP ([roadmap](docs/roadmap.md)).
+It reads PDFs, Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV, and turns a folder of them into chunks any vector database can load. The plan is to serve the folder to any model over MCP ([roadmap](docs/roadmap.md)).
 
 ```bash
-pip install ragnaroq          # with a Q
-ragnaroq convert notification.pdf --out out/
+pip install "ragnaroq[formats]"          # with a Q
+ragnaroq index ./my-folder               # a folder: writes ./my-folder/.ragnaroq/
+ragnaroq convert notification.pdf --out out/    # one PDF
 ```
 
 ## RAG 'n' AROQ
@@ -16,7 +17,7 @@ In Old Norse, *ragna rök* is "the fate of the gods", and *rök* means fate, or 
 | | Job | Norse name | Why the name fits |
 | --- | --- | --- | --- |
 | **A** | **Assess**: every line gets a verdict, *accepted*, *flagged* or *blocked*, by rules. | **The Norns** | Three Norns weave every fate at the roots of Yggdrasil. Three verdicts. |
-| **R** | **Read**: the text layer, and later Word, Excel, PowerPoint, JSON, XML and more. | **Runes** | Odin hung nine nights on the world tree to learn to read the runes. |
+| **R** | **Read**: the text layer, Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV. | **Runes** | Odin hung nine nights on the world tree to learn to read the runes. |
 | **O** | **OCR**: read what is only an image, with independent readers checking each other. | **Heimdall** | The watchman of the gods sees a hundred leagues, by night as well as by day. |
 | **Q** | **Questions**: ask your folder and get answers that cite their lines. | **The Völva** | In the *Völuspá*, Odin questions a seeress, and her answer foretells Ragnarök itself. |
 
@@ -29,7 +30,7 @@ And around them:
 | **Muninn** | The search index | Odin's raven of *memory*. |
 | **Forseti** | The review screen, where a person settles what the readers disagree on | The god who settles every dispute. |
 | **Bifröst** | The MCP server: the bridge from your folder to any model, local or on your server | The rainbow bridge between the worlds. |
-| **Yggdrasil** | The `.ragnaroq/` folder that ties a processed folder together | The world tree that connects the nine worlds. |
+| **Yggdrasil** | The `.ragnaroq/` folder that ties a processed folder together (0.3) | The world tree that connects the nine worlds. |
 
 Norse names are for the big parts; the plumbing has plain names (`ragnaroq.ocr`, `ragnaroq.policy`). Wherever a Norse name appears, its plain meaning appears with it.
 
@@ -49,13 +50,18 @@ The core uses no language model and makes no network call. Model stages planned 
 
 ## Status
 
-Version 0.2: small, tested, end to end, and measured. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
+Version 0.3: small, tested, end to end, and measured. It was called `pdfanchor` until version 0.0.4. It grew out of a private extraction lab built for Indian tax documents, which still holds far more experience than this code does. `docs/porting-from-the-lab.md` lists what moves across and in what order.
 
 The goal is wider than PDFs: point ragnaroq at a folder of any files and get a checked, described and indexed knowledge layer, served to any model through MCP. [docs/roadmap.md](docs/roadmap.md) sets out the stages, the principles and the milestones. [docs/chunking.md](docs/chunking.md) explains how the chunking strategy for each document is chosen from its metadata.
 
 | Area | State |
 | --- | --- |
-| Output contract and JSON schema | Working, versioned `0.2.0` |
+| Output contract and JSON schema | Working, versioned `0.3.0`; a 0.1 or 0.2 `document.json` still loads |
+| `ragnaroq index`: a folder made ready for retrieval, with incremental runs | Working (0.3), on Linux and macOS only |
+| Readers for Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV, each line anchored to its place in the file | Working (0.3); the demo folder scores 100% on every exact format. Not read: charts, `.doc`, `.xls`, `.ppt` |
+| Images in those files: saved, described from the file's own caption or alt text or from OCR | Working (0.3); PDF images are not extracted yet |
+| A model's one-sentence description of an image | Working, optional, off by default (`--describe-images`, `ragnaroq[describe]`) |
+| Chunks that load into Qdrant, Chroma, Pinecone, pgvector and others, and `changes.json` to keep a database in sync | Working (0.3); see [docs/vector-databases.md](docs/vector-databases.md) |
 | Text-layer reading with line and table-cell boxes | Working |
 | Scanned pages through Tesseract (command-line program) | Working, tested with the real program |
 | Cross-check of the text layer against an OCR reading | Working |
@@ -70,7 +76,7 @@ The goal is wider than PDFs: point ragnaroq at a folder of any files and get a c
 | Scan recovery, rotation, show-through | Not ported |
 | Table structure for scans; merged cells and header paths | Not ported |
 | Large documents in page groups | Not built |
-| Accuracy measured on reference pages | Synthetic scans of public IRS documents and of two CBDT documents, with 0.2.2: on the IRS set 71.9% of lines accepted, none wrong on a number, date or negation; on five held-out IRS documents and on the CBDT pages, 1 accepted line each is wrong on a number, a small "(Form 1040)" and a list number both readers missed. With the third reader, 45% fewer lines go to a person on both, and none it settled was wrong on a number. See [references/](references/README.md) |
+| Accuracy measured on reference pages (PDF) | Synthetic scans of public IRS documents and of two CBDT documents, with 0.2.2: on the IRS set 71.9% of lines accepted, none wrong on a number, date or negation; on five held-out IRS documents and on the CBDT pages, 1 accepted line each is wrong on a number, a small "(Form 1040)" and a list number both readers missed. With the third reader, 45% fewer lines go to a person on both, and none it settled was wrong on a number. The 0.3 release leaves these numbers unchanged. See [references/](references/README.md) |
 
 ## Install and run
 
@@ -78,6 +84,12 @@ Python 3.12 or newer. For scanned pages, install the Tesseract program and the l
 
 ```bash
 pip install ragnaroq
+```
+
+JSON, CSV and XML files are read by the core install. Word, Excel, PowerPoint, HTML and Markdown need the `formats` extra. Without it, those files are listed as failed, with the command that fixes it:
+
+```bash
+pip install "ragnaroq[formats]"
 ```
 
 ```bash
@@ -128,25 +140,129 @@ A crafted or broken PDF can make a parser spin for minutes, use memory until the
 
 A page that breaks a limit fails alone, flagged with the limit (`budget.page-time`, `budget.page-memory`, `budget.page-glyphs`, `page.crashed`), and the rest of the document is read. A PDF that cannot even be opened within the limits fails as a whole. `--no-isolation` reads in the same process: quicker to start, with no time or memory limit.
 
+## Index a folder
+
+```bash
+ragnaroq index ./my-folder
+```
+
+It reads every file it supports and writes `.ragnaroq/` inside the folder. Your files are only ever opened for reading. Run it again after the folder changes: only files whose content, reader or settings changed are read again.
+
+`ragnaroq index` works on Linux and macOS only in 0.3. On Windows it exits with code `1`.
+
+The options of `convert` (`--ocr`, `--lang`, `--dpi`, `--exclude-script`, `--chunk-chars`, `--trust-native`, `--same-letters`, `--page-timeout`, `--page-memory-mb`, `--third-reader` and the rest, and `--easyocr-models`) work the same as there. `--file-timeout` sets the time a file that is not a PDF may take, and `--max-cells` the most cells or lines read from one (200,000 by default; the rest is cut and flagged). `--fresh` reads every file again. A file is read again when an option that changes its output changes; for a PDF that includes `--page-timeout` and `--page-memory-mb`.
+
+### Formats and anchors
+
+Every line records where it came from, in a form suited to its file.
+
+| Format | Files | Anchor | Citation |
+| --- | --- | --- | --- |
+| PDF | `.pdf` | page and box | `p. 3` |
+| Word | `.docx` | paragraph, table cell, or footnote | `¶18`, `table 1, row 2, column 1`, `footnote 1` |
+| Excel | `.xlsx` | sheet and cell, or range for a merged cell | `Rates!C7`, `Rates!B2:D2` |
+| PowerPoint | `.pptx` | slide, shape, and notes | `slide 4, Title 1`, `slide 2 notes` |
+| HTML | `.html`, `.htm`, `.xhtml` | path of the element | `/html/body/table/tr[1]/td[2]` |
+| Markdown | `.md`, `.markdown` | line range | `lines 40–42` |
+| JSON | `.json` | JSON pointer | `/deductions/0/section` |
+| XML | `.xml` | path of the element | `/notice/section[2]/para[1]` |
+| CSV | `.csv`, `.tsv` | row and column | `row 12, Amount` |
+
+The format is found from the file's content first, then its name. A file that says it is a `.docx` and is not fails alone, with the reason in the manifest.
+
+Text from these files is exact: it is the file's own text, not a reading of a picture. It is accepted unless a rule flags it. Only text read from an image goes through the two-reader rules. Excel shows a cell as Excel does (`5%`, not `0.05`; `₹1,50,000` with lakh grouping; a time rounded to the second, or to the fraction of a second the format shows, before it is shown) and keeps the stored value and any formula in the line's `value`. A number format it does not know gives the stored value, flagged `xlsx.format-unknown`.
+
+### What it writes
+
+```
+my-folder/
+  ...your files, untouched...
+  .ragnaroq/
+    manifest.json     every file: path, sha256, reader, status, counts, chunk ids, error
+    changes.json      this run against the last: files and chunk ids added, changed, removed
+    chunks.jsonl      every chunk of the folder, ready for a vector database
+    lock              stops two runs at once
+    files/<file-id>/  document.json, document.md, chunks.jsonl, entry.json, images/
+```
+
+A file's id is a UUID made from its path, so an edited file keeps its place. The status of a file is `ok`, `review`, `failed` or `skipped`. A file needs `review` when a line, table or image is not accepted, or when a flag on the file or one of its parts says something was not read or not read with certainty (`chart.not-read`, `md.too-deep`, `json.duplicate-key`, `encoding.guessed`, a line limit and the rest). Three flags only inform and do not count: `image.tiny-skipped`, `docx.headers-footers` and `pptx.footers`. A PDF counts as before: any table, and only blocking flags on the file or a page. Skipped files are listed with the reason: hidden files and folders, symbolic links that lead outside the folder, empty files, files over 100 MiB, and files of a type it does not read (`unsupported`). A symbolic link to a file inside the folder is read.
+
+The exit code is `1` when any file failed, else `2` when anything needs a person, else `0`. One file's failure never stops a run.
+
+`.ragnaroq/` is private: its folders are made `0700` and its files `0600`. A run that is killed may leave one private `ragnaroq-*` folder in `TMPDIR`; it holds nothing the next run needs.
+
+`changes.json` and `chunks.jsonl` are what keep a vector database in step with the folder. [docs/vector-databases.md](docs/vector-databases.md) shows how to load and sync Qdrant, Chroma, Pinecone and pgvector.
+
+### Files you did not choose
+
+A hostile file must not hang or crash a run, or run anything.
+
+- Each file is read in an isolated worker process, with a time limit (`--file-timeout`, 120 seconds by default) and a memory limit (`--page-memory-mb`, 2,048 MB by default). A PDF's pages also keep their own limits (see above).
+- A file that breaks a limit fails alone, flagged with the limit. It is read again when you raise that limit.
+- Word, Excel and PowerPoint files are zip files. Their size when unpacked (500 MiB) and entry count (10,000) are checked before any library opens them.
+- XML is read with defusedxml. A file that declares entities or a DTD is refused (`xml.entities`).
+- A file with more cells or lines than `--max-cells` (200,000) is read up to the limit and flagged (`xlsx.cell-limit`, `csv.line-limit`, `json.line-limit`, `xml.line-limit`, `docx.line-limit` and the rest), never refused for its size. JSON or XML nested deeper than 200 levels is refused (`json.too-deep`, `xml.too-deep`).
+- HTML scripts, styles and templates are not run or read. Nothing reaches the network: a remote image is kept with its URL and flagged `image.remote-not-fetched`.
+- Image paths cannot leave the file's folder.
+- `ragnaroq index` never writes into your folder outside `.ragnaroq/`. While it works it uses a private folder in `TMPDIR` for each file in turn, and removes it.
+
+### Images
+
+Every image in a Word, PowerPoint, Excel, HTML or Markdown file is saved to `files/<file-id>/images/`: in its own format when a browser can show it (PNG, JPEG, GIF, WebP, SVG), as PNG when Pillow can open it and a browser cannot (BMP, TIFF, ICO, PPM), and otherwise as it came, with its own extension (`.emf`, `.wmf`, `.eps`, `.pdf`, else `.bin`) and the flag `image.not-viewable`. An SVG is never OCR-read. Images smaller than 32 by 32 pixels (bullets, spacers) are not saved; a flag counts them. Word pictures are read whether the file stores them as DrawingML or as older VML, and an embedded object (an OLE object such as a sheet in a document) keeps its preview picture as a figure while the object itself is flagged `docx.object-not-read`. Each picture in a Word group or drawing canvas is a figure of its own, described by its own alt text or, without one, the group's. A SmartArt graphic is flagged `docx.smartart` (`pptx.smartart` in PowerPoint), and a chart `chart.not-read`, wherever it sits, so a group holding a chart keeps its pictures. A linked picture in Word or PowerPoint, or one whose image is not in the file, is kept as a figure with no file, flagged `image.linked-not-fetched`; nothing is fetched. Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM files, so Ghostscript never runs.
+
+Each image has a description, from the file's caption or alt text when there is one, otherwise from the text OCR finds in it. An alt text that only says a picture is there ("Picture", "Image 3", "Figure 2", "Untitled") or is a file name or path ("chart.png") is not a description: openpyxl writes "Picture" on every image and python-pptx the file's name, so such an image is read by OCR instead. Text read from an image goes through the same two-reader rules as a scanned page, so with one reader the text is flagged (`ocr.single-reading`), not accepted. An image with neither is kept and flagged `image.no-description`. In `document.md` it appears where it sits, and it is its own chunk (`kind` `image`), so a search for "bar chart of collections" can find it.
+
+PDF images are not extracted in 0.3.
+
+**A model's description (optional).** With the extra `ragnaroq[describe]`, `--describe-images` asks a small local model, SmolVLM-500M-Instruct (Apache-2.0), for one sentence about each image:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install "ragnaroq[describe]"
+ragnaroq index ./my-folder --describe-images --describe-download
+```
+
+It is off by default. The files (about 1 GB) are pinned to one revision, checked against SHA-256 sums, and fetched only with `--describe-download`, into `--describe-models` or the Hugging Face cache. No code from the model's repository is run. On 4 CPUs a description takes about 7 seconds an image.
+
+The sentence is a label, marked "(model)" in the chunk's `embedding_text` and in `document.md`. It never changes a status and is never in `text`. It is kept only if it is a whole sentence of three or more words, and every number, currency, percent, date, negation, month and scale word (lakh, crore, million) in it also appears in the image's OCR text. A claim about structure ("a table with 31 rows") is not checked.
+
+### Known limits
+
+- Charts in Word, Excel and PowerPoint, and Excel chart sheets, are not read. Each is flagged `chart.not-read`.
+- Excel cell comments are left out, flagged `xlsx.comments`, and shapes and text boxes on a sheet are flagged `xlsx.shapes-not-read`, not read.
+- `.doc`, `.xls` and `.ppt` are not read, and neither are OpenDocument files.
+- Remote images are not fetched.
+- Word headers and footers, and PowerPoint footer, date and slide-number placeholders, are left out, with a flag on the document.
+- Hidden Excel sheets, rows and columns are left out, with a flag. Hidden HTML text is read, and flagged `html.hidden`.
+- Equations are read as plain symbols, and flagged. SmartArt, OLE objects and image fills are flagged, not read.
+- Two shapes on one slide with the same name share an anchor.
+
 ## What comes out
 
 **`document.json`** is the full record. For each page: its kind (`native`, `scanned`, `blank`, `failed`), and every line with its box in PDF points, the exact text the reader returned (`raw`), the NFC-normalised `text`, where it came from (`native` or `ocr:<engine>`), every other engine's reading of the same place, its `status`, and the `flags` that explain any status other than `accepted`. Tables keep every cell with its box; an empty reading is `null`, never a guessed blank.
 
-**`document.md`** is Markdown in reading order. Headings become `##`, the lines of a paragraph are joined, tables become Markdown tables. Page breaks and review flags are HTML comments (`<!-- page 3 -->`, `<!-- flagged: date.ordinal-suffix -->`), so a model sees them without mistaking them for content.
+**`document.md`** is Markdown in reading order. Headings become `##`, the lines of a paragraph are joined, tables become Markdown tables. Page breaks and review flags are HTML comments (`<!-- page 3 -->`, `<!-- flagged: date.ordinal-suffix -->`), so a model sees them without mistaking them for content. Slides, sheets and bodies are marked the same way (`<!-- slide 4 -->`, `<!-- sheet Rates -->`).
 
-**`chunks.jsonl`** has one JSON object per line:
+`document.md` is for viewing, not a sanitiser. Text from the file has `\ [ ] < > &` escaped, so an image, a link, raw HTML or a comment ending in the file's text cannot break out. Block structure from the file's text can still render (a line starting with `#` is a heading, `-` a list), and a bare URL becomes a link in a viewer that links bare URLs (GitHub-flavoured Markdown). For a PDF this is the one change in 0.3: `document.md` now escapes those characters. `document.json`, the chunks and the evaluation are unchanged.
+
+A chunk's `text` is the file's own text, raw, not escaped. Escape it before you show it as Markdown or HTML.
+
+**`chunks.jsonl`** has one JSON object per line, built to load into any vector database as it stands ([docs/vector-databases.md](docs/vector-databases.md)):
 
 | Field | Use |
 | --- | --- |
+| `id` | A UUID made from the file's path, its content hash and the chunk's line ids: stable for the same path, content and lines. Upsert by it |
 | `embedding_text` | What to embed: the title and heading, then the text |
 | `text` | What to show |
-| `context` | Title and current heading |
-| `pages`, `anchors` | Where it came from: page, bounding box and line ids, one anchor per page the chunk touches |
-| `status`, `rules` | `accepted`, `flagged` or `blocked`, and the rules that fired. Filter on this |
-| `sources` | `native`, `ocr:tesseract`, … |
-| `id` | Stable for the same source file and lines |
+| `anchors` | Where it came from: for a PDF a page, bounding box and line ids per page; for a spreadsheet table its cell range; otherwise `from` and `to` anchors per part. `metadata.anchors_json` holds the same as a string, capped at 20,000 bytes |
+| `metadata` | Flat, no nulls, the same keys on every chunk: `schema_version`, `file_id`, `path`, `file_type`, `file_sha256`, `kind`, `status`, `rules`, `sources`, `cite`, `part`, `part_index`, `page_first`, `page_last`, `heading`, `title`, `chars`, `anchors_json`, `image_path` |
+| `metadata.cite` | A citation on every chunk: `native.pdf, p. 1`, `rates.xlsx, Rates!A1:D12`, `guide.docx, ¶18–¶24` |
+| `metadata.status`, `metadata.rules` | `accepted`, `flagged` or `blocked`, and the rules that fired (comma-separated). Filter on this |
+| `metadata.sources` | `native`, `ocr:tesseract`, … (comma-separated) |
 
-A chunk never splits a paragraph and may run across a page break. A table is always its own chunk.
+A figure is its own chunk, with `kind` `image`, its description as the text and its saved file in `image_path` (relative to the file's folder in `.ragnaroq/files/`).
+
+A chunk never splits a paragraph and may run across a page break. A table is always its own chunk. A PDF table is one chunk. A table of any other file is cut into groups of rows that fit `chunk_chars` (1,200 characters by default), each with the table's header row (its first row) above it, so every chunk reads on its own and stays small enough for a store's metadata limit. A row longer than that is a chunk of its own. A table shows only the rows and columns that hold a cell, so an empty row or column inside a sheet, or one value far from the rest (`XFD1048576`), never widens a chunk or `document.md`; the citation still names the exact cells. Each group has its own id, anchors and citation: for a sheet, the range its rows cover (`rates.xlsx, Rates!A32:C60`).
 
 ## How it decides
 
@@ -157,7 +273,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 - Two engines can agree on the same mistake. In text read from an image, a code that mixes letters and digits is therefore flagged when it holds a letter readers take for a digit: `R28C0` read as `R28CO`, `PAN AABTS1181R`. So is a bracket the line never pairs, as in `4a)` read for `4(a)`. Measured: this cut the critical errors let through from 5 to 3 on the IRS set, and from 30 to 0 on the code table.
 - A scanned page whose image holds under 150 dots per inch is read at 300 instead of 200. On low-resolution scans this removed the critical errors no text rule can see, such as `113208` read for `11320B`.
 - In text read from an image, a "|" standing alone is flagged (`glyph.lone-bar`): it is a printed "1", "I" or "l" both readers mistook, or a box or table border read as text. On the reference sets it was never the right text.
-- Anything else is **flagged** with the rule that caused it. Tables are always flagged.
+- Anything else is **flagged** with the rule that caused it. PDF tables are always flagged; a table of any other file follows its cells.
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
 - Text is never invented or edited. A flag says what looks wrong. A line the third reader settles carries the text of the OCR reader it agreed with, exactly as that reader read it.
 
@@ -194,14 +310,27 @@ src/ragnaroq/
   policy.py       accepted / flagged / blocked      structure.py scripts, headings, paragraphs
   export/         markdown and chunks               pipeline.py convert() and write()
   reference.py    reference PDFs with known text    evaluate.py how often accepted is wrong
+  readers/        one reader per format, and detect  folder.py   ragnaroq index and .ragnaroq/
+  anchors.py      where a line lives in its file     figures.py  images: saved, checked, described
+  expected.py     answer keys for exact formats      isolation.py workers with time and memory limits
   cli.py
 schemas/document.schema.json   generated; a test keeps it in sync
 tests/                         synthetic PDFs only
 ```
 
-Adding an OCR engine means one class with `name`, `version()` and `read(image, languages)`. Adding a rule means one function from text to flags, listed in `validators/__init__.py`.
+Adding a format means one module in `readers/` with a `read(data, name, config)` function, and its name in `FORMATS` and `detect`. Adding an OCR engine means one class with `name`, `version()` and `read(image, languages)`. Adding a rule means one function from text to flags, listed in `validators/__init__.py`.
 
 ## Measuring it
+
+**The exact formats** are scored against answer keys written by hand. [`references/demo/`](references/demo) holds awkward files for every format (a tracked-changes Word file, an Excel file with lakh grouping and a hidden sheet, an XML entity bomb, a CSV in cp1252 and more), each with a `<file>.expected.jsonl`: one line per anchor, with the expected text. A folder with `*.expected.jsonl` files is scored by anchor:
+
+```bash
+ragnaroq evaluate references/demo --out results/demo
+```
+
+In 0.3.0 every exact-format file scores `ok` there: every expected anchor is present with the right text, and every case the design says to flag is flagged.
+
+**PDFs** are scored against scans of known text:
 
 ```bash
 ragnaroq reference make notice.pdf --out refs/     # born-digital PDFs become scans with a known answer
@@ -233,6 +362,8 @@ The first run let 5 such lines through (0.15%), and a stress test of codes such 
 ```bash
 python -m pytest
 ```
+
+Tests of the Office, HTML and Markdown readers need the `formats` libraries. CI installs them with `pip install -e ".[test]"`; without them those tests are skipped.
 
 ```bash
 ruff check .

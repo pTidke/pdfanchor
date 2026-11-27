@@ -1,6 +1,6 @@
 # Where RAGnaroq is going
 
-Today ragnaroq reads one PDF and writes text a language model can read and a vector index can ingest, with every line anchored to its place on the page and a rule-based verdict on whether it can be trusted.
+Today ragnaroq reads a folder of PDFs, Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV files, and writes text a language model can read and a vector index can ingest, with every line anchored to its place in its file and a rule-based verdict on whether it can be trusted.
 
 The goal is wider. The Norse names used below are explained in the [README](../README.md#rag-n-aroq). In three steps:
 
@@ -8,7 +8,7 @@ The goal is wider. The Norse names used below are explained in the [README](../R
 2. Point it at a folder.
 3. The folder becomes ready for retrieval: every file read, checked, described and indexed, and served to any model through MCP, on your machine or a server you choose.
 
-The files can be of any type. It starts with the common ones: PDF, Word, Excel, PowerPoint, JSON, XML, CSV, Markdown and HTML.
+The files can be of any type. 0.3 reads the common ones: PDF, Word, Excel, PowerPoint, JSON, XML, CSV, Markdown and HTML. The old binary Office formats (`.doc`, `.xls`, `.ppt`) are not read.
 
 ```
 folder ─▶ readers        one per file type, all writing the same document.json
@@ -46,11 +46,13 @@ These hold for every stage.
 my-folder/
   ...your files, untouched...
   .ragnaroq/
-    manifest.json      every file: hash, reader, status, flags, cost
-    files/<id>/        document.json, document.md, chunks.jsonl
-    metadata.json      the master metadata file for the whole folder
-    review.json        decisions made by people in the review UI
-    index/             the vector index
+    manifest.json      every file: hash, reader, status, counts, chunk ids   (0.3)
+    changes.json       what changed since the last run                       (0.3)
+    chunks.jsonl       every chunk of the folder                             (0.3)
+    files/<id>/        document.json, document.md, chunks.jsonl, images/     (0.3)
+    metadata.json      the master metadata file for the whole folder         (0.4)
+    review.json        decisions made by people in the review UI             (0.5)
+    index/             the vector index                                      (0.6)
 ```
 
 ## The stages
@@ -59,7 +61,7 @@ my-folder/
 
 Each file type has a reader that writes the same `document.json` contract, with anchors suited to the type.
 
-- **Office files:** Word, Excel and PowerPoint carry their text, so they need little OCR beyond embedded images.
+- **Office files:** Word, Excel and PowerPoint carry their text, so they need little OCR beyond embedded images. Done in 0.3.
 - **Structured data:** in JSON and XML, the shape itself is the structure, so headings and sections come from keys and elements.
 
 ### Trust and repair: the Norns and Heimdall
@@ -110,7 +112,7 @@ Decisions are written to `review.json` and become readings by a person. They als
 | --- | --- | --- |
 | **0.1** ✓ | Trustworthy PDFs | Done in 0.1.0: reference sets with a known answer and `ragnaroq evaluate` (false-accept rate, overall and on critical tokens); a first measurement on public IRS documents; the code rule and low-resolution reading that brought critical errors to zero on it; per-page time, memory and character limits; on PyPI. Moved on: human-verified real scans, and pinned OCR model versions. |
 | **0.2** ✓ | Third reader | Done in 0.2.0, and in 0.2.1 a lone "|" in OCR text is flagged: a local OCR model (PaddleOCR-VL-1.6) reads the crop of each scanned line the two OCR readers dispute, and a fixed rule settles it or keeps it for a person; measured on a held-out set (41.7% fewer lines sent to a person, none settled wrong on a number, date or negation). Open: a "1" read as "|" by both readers. |
-| 0.3 | Folders and formats | `ragnaroq index ./folder` writing `.ragnaroq/`; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown, HTML; incremental runs. |
+| **0.3** ✓ | Folders and formats | Done in 0.3.0: `ragnaroq index ./folder` writing `.ragnaroq/`, with incremental runs, on Linux and macOS; readers for Word, Excel, PowerPoint, JSON, XML, CSV, Markdown and HTML, each line anchored to its place in its file (schema 0.3.0, policy 0.6); images saved and described, with an optional model sentence kept as a label; chunks and `changes.json` that load into Qdrant, Chroma, Pinecone and pgvector; a demo folder of awkward files that scores 100% on every exact format. The PDF numbers did not move. Open: charts, PDF images, the old `.doc`, `.xls` and `.ppt`, and Windows. |
 | 0.4 | Semantic layer | `metadata.json` through LangExtract (local model by default); the chunking plan derived from it. |
 | 0.5 | Review UI | The local review UI, where a person settles the flagged lines; hosted models optional. |
 | 0.6 | Serve | Embeddings and stores; the MCP server, local and remote. |

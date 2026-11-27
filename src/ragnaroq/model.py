@@ -6,9 +6,11 @@ Coordinates are PDF points with a top-left origin on the displayed page.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SCHEMA_VERSION = "0.2.0"
+from .anchors import Anchor, PdfAnchor
+
+SCHEMA_VERSION = "0.3.0"
 
 Status = Literal["accepted", "flagged", "blocked"]
 
@@ -50,11 +52,23 @@ class Resolution(Model):
     text_from: str
 
 
+class CellValue(Model):
+    """What a spreadsheet cell holds, apart from how it is shown."""
+
+    stored: str | float | int | bool | None
+    formula: str | None = None
+    format: str | None = None
+
+
 class Line(Model):
     id: str
     page: int
     order: int
-    box: Box
+    box: Box | None = None
+    anchor: Anchor | None = Field(
+        default=None, description="Where the line lives in its file. A PDF line's anchor is its page and box."
+    )
+    value: CellValue | None = None
     raw: str = Field(description="Exactly what the reader returned.")
     text: str = Field(
         description=(
@@ -77,18 +91,27 @@ class Line(Model):
         default=None, description="Reason this line is kept as evidence but left out of exports."
     )
 
+    @model_validator(mode="after")
+    def _pdf_anchor(self):
+        # Documents before 0.3.0 had a box and no anchor.
+        if self.anchor is None and self.box is not None:
+            b = self.box
+            self.anchor = PdfAnchor(page=self.page, box=(b.x0, b.top, b.x1, b.bottom))
+        return self
+
 
 class Cell(Model):
     row: int
     column: int
     text: str | None = Field(description="None means the reader gave no value, not a blank.")
     box: Box | None = None
+    anchor: Anchor | None = None
 
 
 class Table(Model):
     id: str
     page: int
-    box: Box
+    box: Box | None = None
     rows: int
     columns: int
     cells: list[Cell]
@@ -96,14 +119,36 @@ class Table(Model):
     flags: list[Flag] = Field(default_factory=list)
 
 
+class Figure(Model):
+    id: str
+    page: int
+    anchor: Anchor
+    order: int = Field(default=0, description="How many of the part's lines come before the figure.")
+    path: str = ""
+    width: int = 0
+    height: int = 0
+    description: str = ""
+    description_source: Literal["caption", "alt", "ocr", "none"] = "none"
+    model_description: str | None = None
+    ocr_lines: list[Line] = Field(default_factory=list)
+    ocr_sources: list[str] = Field(
+        default_factory=list,
+        description='The OCR reader the description came from, e.g. "ocr:tesseract".',
+    )
+    status: Status = "flagged"
+    flags: list[Flag] = Field(default_factory=list)
+
+
 class Page(Model):
     number: int
-    width: float
-    height: float
+    width: float | None = None
+    height: float | None = None
     rotation: int = 0
-    kind: Literal["native", "scanned", "blank", "failed"]
+    kind: Literal["native", "scanned", "blank", "failed", "sheet", "slide", "body"]
+    name: str | None = None
     lines: list[Line] = Field(default_factory=list)
     tables: list[Table] = Field(default_factory=list)
+    figures: list[Figure] = Field(default_factory=list)
     flags: list[Flag] = Field(default_factory=list)
     metrics: dict[str, float] = Field(default_factory=dict)
 
@@ -113,6 +158,7 @@ class Source(Model):
     bytes: int
     filename: str
     pages: int
+    format: str = "pdf"
 
 
 class Engine(Model):
@@ -124,9 +170,11 @@ class Engine(Model):
 
 
 class Document(Model):
-    schema_version: Literal["0.1.0", "0.2.0"] = Field(
+    schema_version: Literal["0.1.0", "0.2.0", "0.3.0"] = Field(
         default=SCHEMA_VERSION,
-        description='The contract version. A stored "0.1.0" document loads, and is restamped "0.2.0".',
+        description=(
+            'The contract version. A stored "0.1.0" or "0.2.0" document loads, and is restamped "0.3.0".'
+        ),
     )
     source: Source
     engine: Engine
@@ -139,7 +187,7 @@ class Document(Model):
     @field_validator("schema_version")
     @classmethod
     def _restamp(cls, value: str) -> str:
-        # 0.2.0 only added fields with defaults, so a 0.1.0 document is a valid 0.2.0 one.
+        # 0.2.0 and 0.3.0 only added fields with defaults (and Line fills its PDF anchor).
         return SCHEMA_VERSION
 
     def lines(self):

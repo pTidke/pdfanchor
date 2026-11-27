@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ragnaroq"
-version = "0.2.2"
+version = "0.3.0"
 description = "Turn any PDF into LLM-readable, RAG-ready text with every line anchored to its source and a rule-based trust verdict."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -15,6 +15,7 @@ dependencies = [
   "pypdf>=6,<7",
   "pydantic>=2.9,<3",
   "Pillow>=11",
+  "defusedxml>=0.7,<1",
 ]
 
 [project.urls]
@@ -24,7 +25,24 @@ Roadmap = "https://github.com/pTidke/ragnaroq/blob/main/docs/roadmap.md"
 [project.optional-dependencies]
 easyocr = ["easyocr>=1.7,<2", "numpy"]
 vlm = ["torch>=2.15", "transformers>=5.24,<6"]
-test = ["pytest>=8", "reportlab>=4", "ruff>=0.6"]
+describe = ["torch>=2.15", "transformers>=5.24,<6"]
+formats = [
+  "python-docx>=1.1,<2",
+  "openpyxl>=3.1,<4",
+  "python-pptx>=1.0,<2",
+  "markdown-it-py>=3,<5",
+  "lxml>=5,<7",
+]
+test = [
+  "pytest>=8",
+  "reportlab>=4",
+  "ruff>=0.6",
+  "python-docx>=1.1,<2",
+  "openpyxl>=3.1,<4",
+  "python-pptx>=1.0,<2",
+  "markdown-it-py>=3,<5",
+  "lxml>=5,<7",
+]
 
 [project.scripts]
 ragnaroq = "ragnaroq.cli:main"

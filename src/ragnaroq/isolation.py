@@ -24,6 +24,7 @@ import sys
 import threading
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import native
 from .config import Config
@@ -37,6 +38,12 @@ from .model import Page
 _BOOTSTRAP = (
     "import json, sys; sys.path[:] = json.loads(sys.argv[1]); "
     "from ragnaroq.isolation import _serve; _serve()"
+)
+
+# The same, for the worker that reads whole files (everything but PDF).
+_FILES_BOOTSTRAP = (
+    "import json, sys; sys.path[:] = json.loads(sys.argv[1]); "
+    "from ragnaroq.isolation import _serve, _answer_files; _serve(_answer_files)"
 )
 
 # Messages both ways are pickles, each after its length as 8 bytes, big-endian.
@@ -115,7 +122,7 @@ def _limit_memory(megabytes: int) -> None:
         pass
 
 
-def _serve() -> None:
+def _serve(answer=None) -> None:
     """The worker: reads requests on stdin and answers on stdout until stdin closes."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ctrl-C is for the caller, who then stops us
     requests, replies = os.fdopen(os.dup(0), "rb"), os.fdopen(os.dup(1), "wb")
@@ -130,7 +137,7 @@ def _serve() -> None:
     os.close(nothing)
     os.dup2(2, 1)
     try:
-        _answer(requests, replies)
+        (answer or _answer)(requests, replies)
     except (EOFError, BrokenPipeError):  # the caller has gone
         pass
 
@@ -166,6 +173,47 @@ def _answer(requests, replies) -> None:
             _send(replies, reply)
 
 
+def _read_file(data: bytes, name: str, config: Config, base) -> tuple:
+    from .readers import ReaderRefused, ReaderUnavailable, read_bytes
+
+    try:
+        return ("ok", read_bytes(data, name, config, base=base))
+    except ReaderRefused as error:
+        return ("refused", (error.rule, error.message))
+    except ReaderUnavailable as error:
+        return ("unavailable", str(error))
+    except MemoryError:
+        return ("budget", _memory(config))
+    except Exception as error:
+        return ("error", type(error).__name__)
+
+
+def _memory(config: Config) -> tuple[str, str]:
+    return (
+        "file.memory",
+        f"Reading the file needed more than {config.page_memory_mb:,} MB; it was stopped.",
+    )
+
+
+def _answer_files(requests, replies) -> None:
+    """Reads whole files, one request after another, until stdin closes."""
+    config = _receive(requests)
+    _limit_memory(config.page_memory_mb)
+    _send(replies, ("ready", None))
+    while (request := _receive(requests)) is not None:
+        data, name, base = request
+        reply = _read_file(data, name, config, base)
+        del data, request
+        try:
+            _send(replies, reply)
+        except (EOFError, BrokenPipeError):
+            raise
+        except MemoryError:
+            _send(replies, ("budget", _memory(config)))
+        except Exception as error:  # a result that cannot be sent (pickled)
+            _send(replies, ("error", type(error).__name__))
+
+
 def _collect(stream, replies: queue.Queue) -> None:
     """In the caller, a thread per worker: every reply goes to `replies`, then _GONE."""
     try:
@@ -195,7 +243,7 @@ def _feed(stream, message) -> None:
         pass
 
 
-def _how_it_stopped(code: int | None) -> str:
+def _how_it_stopped(code: int | None, fault: str = "the PDF parser") -> str:
     if code is None:
         how = "stopped answering"
     elif code < 0:
@@ -203,13 +251,90 @@ def _how_it_stopped(code: int | None) -> str:
             name = signal.Signals(-code).name
         except ValueError:
             name = f"signal {-code}"
-        how = f"was killed by {name}, perhaps for running out of memory or by a fault in the PDF parser"
+        how = f"was killed by {name}, perhaps for running out of memory or by a fault in {fault}"
     else:
         how = f"exited with code {code}"
     return how
 
 
-class PageReader:
+class _Worker:
+    """A worker process and the plumbing to talk to it: replies on a queue, its stderr kept
+    for an error message, and the ways it can stop."""
+
+    _process = None
+    _crash_rule = "page.crashed"
+    _who = "The reader"  # how a crash message names what stopped
+    _fault = "the PDF parser"
+
+    def _spawn(self, bootstrap: str, rule: str, what: str) -> None:
+        if not sys.executable:
+            raise BudgetExceeded(
+                rule,
+                f"No Python interpreter was found to {what} in. Read them in this process "
+                "instead, with isolation off.",
+            )
+        path = [os.fspath(entry) for entry in sys.path if isinstance(entry, (str, os.PathLike))]
+        # The caller's -O, -X and -W options, passed on as multiprocessing does.
+        flags = getattr(subprocess, "_args_from_interpreter_flags", list)()
+        try:
+            self._process = subprocess.Popen(
+                [sys.executable, *flags, "-c", bootstrap, json.dumps(path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as error:
+            raise BudgetExceeded(rule, f"The reader could not be started ({error}).") from None
+        self._replies: queue.Queue = queue.Queue()
+        self._last: deque = deque(maxlen=5)
+        threading.Thread(target=_collect, args=(self._process.stdout, self._replies), daemon=True).start()
+        self._relay = threading.Thread(target=_relay, args=(self._process.stderr, self._last), daemon=True)
+        self._relay.start()
+
+    def _send(self, message) -> None:
+        # In a thread, so the time limit holds even if the worker never reads it.
+        threading.Thread(target=_feed, args=(self._process.stdin, message), daemon=True).start()
+
+    def _wait(self, seconds: float, late: tuple[str, str], when: str):
+        """The worker's next reply. Raises BudgetExceeded, with `late` after `seconds`,
+        or with page.crashed, saying how and `when`, if the worker stopped."""
+        try:
+            reply = self._replies.get(timeout=seconds)
+        except queue.Empty:
+            self._stop()
+            raise BudgetExceeded(*late) from None
+        if reply is not _GONE:
+            return reply
+        process = self._process
+        try:
+            code = process.wait(5)
+        except subprocess.TimeoutExpired:
+            code = None
+        self._relay.join(2)  # its last words, if it wrote any
+        message = f"{self._who} {_how_it_stopped(code, self._fault)} {when}."
+        if self._last:
+            message += f" It last wrote: {self._last[-1][:300]}"
+        self._stop()
+        raise BudgetExceeded(self._crash_rule, message)
+
+    def _stop(self) -> None:
+        process, self._process = self._process, None
+        if process is None:
+            return
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (process.stdin, process.stdout, process.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+
+class PageReader(_Worker):
     """Reads the pages of one PDF, one at a time, within the configured limits.
 
     With `Config.isolate_pages` off, pages are read in this process: faster to start,
@@ -230,32 +355,8 @@ class PageReader:
             self._start()
 
     def _start(self) -> None:
-        if not sys.executable:
-            raise BudgetExceeded(
-                "pdf.open-failed",
-                "No Python interpreter was found to read the pages in. Read them in this "
-                "process instead, with isolation off.",
-            )
-        path = [os.fspath(entry) for entry in sys.path if isinstance(entry, (str, os.PathLike))]
-        # The caller's -O, -X and -W options, passed on as multiprocessing does.
-        flags = getattr(subprocess, "_args_from_interpreter_flags", list)()
-        try:
-            self._process = subprocess.Popen(
-                [sys.executable, *flags, "-c", _BOOTSTRAP, json.dumps(path)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except OSError as error:
-            raise BudgetExceeded("pdf.open-failed", f"The reader could not be started ({error}).") from None
-        self._replies: queue.Queue = queue.Queue()
-        self._last: deque = deque(maxlen=5)
-        threading.Thread(target=_collect, args=(self._process.stdout, self._replies), daemon=True).start()
-        self._relay = threading.Thread(target=_relay, args=(self._process.stderr, self._last), daemon=True)
-        self._relay.start()
-        # In a thread, so the time limit holds even if the worker never reads it.
-        message = (self.data, self.config)
-        threading.Thread(target=_feed, args=(self._process.stdin, message), daemon=True).start()
+        self._spawn(_BOOTSTRAP, "pdf.open-failed", "read the pages")
+        self._send((self.data, self.config))
         kind, payload = self._wait(
             self.config.page_timeout_seconds + 30,
             ("budget.open-time", "The PDF could not be opened within the time limit."),
@@ -265,44 +366,6 @@ class PageReader:
             self._stop()
             raise BudgetExceeded("pdf.open-failed", f"The PDF could not be opened ({payload}).")
         self.page_count = payload
-
-    def _wait(self, seconds: float, late: tuple[str, str], when: str):
-        """The worker's next reply. Raises BudgetExceeded, with `late` after `seconds`,
-        or with page.crashed, saying how and `when`, if the worker stopped."""
-        try:
-            reply = self._replies.get(timeout=seconds)
-        except queue.Empty:
-            self._stop()
-            raise BudgetExceeded(*late) from None
-        if reply is not _GONE:
-            return reply
-        process = self._process
-        try:
-            code = process.wait(5)
-        except subprocess.TimeoutExpired:
-            code = None
-        self._relay.join(2)  # its last words, if it wrote any
-        message = f"The reader {_how_it_stopped(code)} {when}."
-        if self._last:
-            message += f" It last wrote: {self._last[-1][:300]}"
-        self._stop()
-        raise BudgetExceeded("page.crashed", message)
-
-    def _stop(self) -> None:
-        process, self._process = self._process, None
-        if process is None:
-            return
-        if process.poll() is None:
-            process.kill()
-        try:
-            process.wait(5)
-        except subprocess.TimeoutExpired:
-            pass
-        for stream in (process.stdin, process.stdout, process.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
 
     def read(self, number: int, crosscheck: bool) -> PageRead:
         """Read one page, or raise BudgetExceeded (with the rule to flag) or RuntimeError."""
@@ -341,3 +404,85 @@ class PageReader:
 
     def __exit__(self, *exc) -> None:
         self.close()
+
+
+class FileReader(_Worker):
+    """Reads whole files (everything but PDF) in a worker process, one at a time, with the
+    memory cap and a time limit for each file. The worker is started when first needed and
+    kept for the next file; a file that breaks a limit or kills it fails alone, and the
+    next file gets a new worker. With `Config.isolate_pages` off, files are read in this
+    process: no time or memory limit."""
+
+    RECYCLE = 200  # files read by one worker before a new one takes over
+
+    def __init__(self, config: Config):
+        self.config = config
+        self._served = 0
+
+    def _start(self) -> None:
+        self._spawn(_FILES_BOOTSTRAP, "file.crashed", "read the file")
+        self._send(self.config)
+        kind, _ = self._wait(
+            30.0,
+            ("file.timeout", "The file reader did not start within 30 seconds."),
+            "before it could start",
+        )
+        if kind != "ready":  # pragma: no cover - the worker only ever says ready
+            self._stop()
+            raise BudgetExceeded("file.crashed", "The file reader did not start.")
+        self._served = 0
+
+    def read(self, data: bytes, name: str, base: Path | None = None):
+        """The file's `ReadResult`. Raises `ReaderRefused`, `ReaderUnavailable`, or
+        `BudgetExceeded` with the rule file.timeout, file.memory or file.crashed."""
+        from .readers import ReaderRefused, ReaderUnavailable, read_bytes
+
+        config = self.config
+        if not config.isolate_pages:
+            return read_bytes(data, name, config, base=base)
+        self._crash_rule = "file.crashed"
+        kind = Path(name).suffix.lower().lstrip(".")
+        self._who = f"The reader for {kind} files" if kind else "The file reader"
+        self._fault = "a library it uses"
+        if self._process is None or self._process.poll() is not None or self._served >= self.RECYCLE:
+            self._stop()
+            self._start()
+        self._served += 1
+        self._send((data, name, base))
+        kind, payload = self._wait(
+            config.file_timeout_seconds,
+            (
+                "file.timeout",
+                f"Reading the file took longer than {config.file_timeout_seconds:g} seconds; it was stopped.",
+            ),
+            "while reading this file",
+        )
+        if kind == "ok":
+            return payload
+        if kind == "refused":
+            raise ReaderRefused(*payload)
+        if kind == "unavailable":
+            raise ReaderUnavailable(payload)
+        if kind == "budget":
+            self._stop()
+            raise BudgetExceeded(*payload)
+        self._stop()
+        raise BudgetExceeded("file.failed", f"{payload} while reading the file.")
+
+    def close(self) -> None:
+        self._stop()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+def read_file(data: bytes, name: str, config: Config, *, base: Path | None, reader: FileReader | None = None):
+    """Read one whole file in the worker, within `config.file_timeout_seconds` and
+    `config.page_memory_mb`. Many files can share one worker: pass its `reader`."""
+    if reader is not None:
+        return reader.read(data, name, base)
+    with FileReader(config) as one:
+        return one.read(data, name, base)

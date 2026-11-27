@@ -62,6 +62,60 @@
             }
           ],
           "default": null
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "csv": "#/$defs/CsvAnchor",
+                  "docx": "#/$defs/DocxAnchor",
+                  "html": "#/$defs/HtmlAnchor",
+                  "json": "#/$defs/JsonAnchor",
+                  "md": "#/$defs/MdAnchor",
+                  "pdf": "#/$defs/PdfAnchor",
+                  "pptx": "#/$defs/PptxAnchor",
+                  "xlsx": "#/$defs/XlsxAnchor",
+                  "xml": "#/$defs/XmlAnchor"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PdfAnchor"
+                },
+                {
+                  "$ref": "#/$defs/XlsxAnchor"
+                },
+                {
+                  "$ref": "#/$defs/PptxAnchor"
+                },
+                {
+                  "$ref": "#/$defs/DocxAnchor"
+                },
+                {
+                  "$ref": "#/$defs/HtmlAnchor"
+                },
+                {
+                  "$ref": "#/$defs/MdAnchor"
+                },
+                {
+                  "$ref": "#/$defs/JsonAnchor"
+                },
+                {
+                  "$ref": "#/$defs/XmlAnchor"
+                },
+                {
+                  "$ref": "#/$defs/CsvAnchor"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anchor"
         }
       },
       "required": [
@@ -70,6 +124,159 @@
         "text"
       ],
       "title": "Cell",
+      "type": "object"
+    },
+    "CellValue": {
+      "additionalProperties": false,
+      "description": "What a spreadsheet cell holds, apart from how it is shown.",
+      "properties": {
+        "stored": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Stored"
+        },
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formula"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Format"
+        }
+      },
+      "required": [
+        "stored"
+      ],
+      "title": "CellValue",
+      "type": "object"
+    },
+    "CsvAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "csv",
+          "default": "csv",
+          "title": "Type",
+          "type": "string"
+        },
+        "row": {
+          "description": "1-based; the header row counts.",
+          "title": "Row",
+          "type": "integer"
+        },
+        "column": {
+          "title": "Column",
+          "type": "string"
+        }
+      },
+      "required": [
+        "row",
+        "column"
+      ],
+      "title": "CsvAnchor",
+      "type": "object"
+    },
+    "DocxAnchor": {
+      "additionalProperties": false,
+      "description": "All numbers are 1-based. A paragraph, a table cell (`table` and `cell` as row, column) or a note.",
+      "properties": {
+        "type": {
+          "const": "docx",
+          "default": "docx",
+          "title": "Type",
+          "type": "string"
+        },
+        "paragraph": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paragraph"
+        },
+        "table": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table"
+        },
+        "cell": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cell"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "title": "DocxAnchor",
       "type": "object"
     },
     "Engine": {
@@ -109,6 +316,153 @@
       "title": "Engine",
       "type": "object"
     },
+    "Figure": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "page": {
+          "title": "Page",
+          "type": "integer"
+        },
+        "anchor": {
+          "discriminator": {
+            "mapping": {
+              "csv": "#/$defs/CsvAnchor",
+              "docx": "#/$defs/DocxAnchor",
+              "html": "#/$defs/HtmlAnchor",
+              "json": "#/$defs/JsonAnchor",
+              "md": "#/$defs/MdAnchor",
+              "pdf": "#/$defs/PdfAnchor",
+              "pptx": "#/$defs/PptxAnchor",
+              "xlsx": "#/$defs/XlsxAnchor",
+              "xml": "#/$defs/XmlAnchor"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PdfAnchor"
+            },
+            {
+              "$ref": "#/$defs/XlsxAnchor"
+            },
+            {
+              "$ref": "#/$defs/PptxAnchor"
+            },
+            {
+              "$ref": "#/$defs/DocxAnchor"
+            },
+            {
+              "$ref": "#/$defs/HtmlAnchor"
+            },
+            {
+              "$ref": "#/$defs/MdAnchor"
+            },
+            {
+              "$ref": "#/$defs/JsonAnchor"
+            },
+            {
+              "$ref": "#/$defs/XmlAnchor"
+            },
+            {
+              "$ref": "#/$defs/CsvAnchor"
+            }
+          ],
+          "title": "Anchor"
+        },
+        "order": {
+          "default": 0,
+          "description": "How many of the part's lines come before the figure.",
+          "title": "Order",
+          "type": "integer"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "width": {
+          "default": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "default": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "description_source": {
+          "default": "none",
+          "enum": [
+            "caption",
+            "alt",
+            "ocr",
+            "none"
+          ],
+          "title": "Description Source",
+          "type": "string"
+        },
+        "model_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Description"
+        },
+        "ocr_lines": {
+          "items": {
+            "$ref": "#/$defs/Line"
+          },
+          "title": "Ocr Lines",
+          "type": "array"
+        },
+        "ocr_sources": {
+          "description": "The OCR reader the description came from, e.g. \"ocr:tesseract\".",
+          "items": {
+            "type": "string"
+          },
+          "title": "Ocr Sources",
+          "type": "array"
+        },
+        "status": {
+          "default": "flagged",
+          "enum": [
+            "accepted",
+            "flagged",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "$ref": "#/$defs/Flag"
+          },
+          "title": "Flags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "page",
+        "anchor"
+      ],
+      "title": "Figure",
+      "type": "object"
+    },
     "Flag": {
       "additionalProperties": false,
       "description": "Why a rule did not accept something. `rule` is a stable identifier.",
@@ -138,6 +492,46 @@
       "title": "Flag",
       "type": "object"
     },
+    "HtmlAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "html",
+          "default": "html",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "HtmlAnchor",
+      "type": "object"
+    },
+    "JsonAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "json",
+          "default": "json",
+          "title": "Type",
+          "type": "string"
+        },
+        "pointer": {
+          "title": "Pointer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pointer"
+      ],
+      "title": "JsonAnchor",
+      "type": "object"
+    },
     "Line": {
       "additionalProperties": false,
       "properties": {
@@ -154,7 +548,81 @@
           "type": "integer"
         },
         "box": {
-          "$ref": "#/$defs/Box"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Box"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "anchor": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "csv": "#/$defs/CsvAnchor",
+                  "docx": "#/$defs/DocxAnchor",
+                  "html": "#/$defs/HtmlAnchor",
+                  "json": "#/$defs/JsonAnchor",
+                  "md": "#/$defs/MdAnchor",
+                  "pdf": "#/$defs/PdfAnchor",
+                  "pptx": "#/$defs/PptxAnchor",
+                  "xlsx": "#/$defs/XlsxAnchor",
+                  "xml": "#/$defs/XmlAnchor"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/PdfAnchor"
+                },
+                {
+                  "$ref": "#/$defs/XlsxAnchor"
+                },
+                {
+                  "$ref": "#/$defs/PptxAnchor"
+                },
+                {
+                  "$ref": "#/$defs/DocxAnchor"
+                },
+                {
+                  "$ref": "#/$defs/HtmlAnchor"
+                },
+                {
+                  "$ref": "#/$defs/MdAnchor"
+                },
+                {
+                  "$ref": "#/$defs/JsonAnchor"
+                },
+                {
+                  "$ref": "#/$defs/XmlAnchor"
+                },
+                {
+                  "$ref": "#/$defs/CsvAnchor"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the line lives in its file. A PDF line's anchor is its page and box.",
+          "title": "Anchor"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CellValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "raw": {
           "description": "Exactly what the reader returned.",
@@ -275,12 +743,42 @@
         "id",
         "page",
         "order",
-        "box",
         "raw",
         "text",
         "source"
       ],
       "title": "Line",
+      "type": "object"
+    },
+    "MdAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "md",
+          "default": "md",
+          "title": "Type",
+          "type": "string"
+        },
+        "lines": {
+          "description": "First and last line, 1-based and inclusive.",
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "title": "Lines",
+          "type": "array"
+        }
+      },
+      "required": [
+        "lines"
+      ],
+      "title": "MdAnchor",
       "type": "object"
     },
     "Page": {
@@ -291,12 +789,28 @@
           "type": "integer"
         },
         "width": {
-          "title": "Width",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
         },
         "height": {
-          "title": "Height",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Height"
         },
         "rotation": {
           "default": 0,
@@ -308,10 +822,25 @@
             "native",
             "scanned",
             "blank",
-            "failed"
+            "failed",
+            "sheet",
+            "slide",
+            "body"
           ],
           "title": "Kind",
           "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
         },
         "lines": {
           "items": {
@@ -325,6 +854,13 @@
             "$ref": "#/$defs/Table"
           },
           "title": "Tables",
+          "type": "array"
+        },
+        "figures": {
+          "items": {
+            "$ref": "#/$defs/Figure"
+          },
+          "title": "Figures",
           "type": "array"
         },
         "flags": {
@@ -344,11 +880,108 @@
       },
       "required": [
         "number",
-        "width",
-        "height",
         "kind"
       ],
       "title": "Page",
+      "type": "object"
+    },
+    "PdfAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "pdf",
+          "default": "pdf",
+          "title": "Type",
+          "type": "string"
+        },
+        "page": {
+          "title": "Page",
+          "type": "integer"
+        },
+        "box": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Box",
+          "type": "array"
+        }
+      },
+      "required": [
+        "page",
+        "box"
+      ],
+      "title": "PdfAnchor",
+      "type": "object"
+    },
+    "PptxAnchor": {
+      "additionalProperties": false,
+      "description": "`slide` is 1-based; `paragraph` is 0-based in the shape's text frame. A table cell is\n`cell`, a 1-based (row, column), with paragraph 0.",
+      "properties": {
+        "type": {
+          "const": "pptx",
+          "default": "pptx",
+          "title": "Type",
+          "type": "string"
+        },
+        "slide": {
+          "title": "Slide",
+          "type": "integer"
+        },
+        "shape": {
+          "title": "Shape",
+          "type": "string"
+        },
+        "paragraph": {
+          "default": 0,
+          "title": "Paragraph",
+          "type": "integer"
+        },
+        "notes": {
+          "default": false,
+          "title": "Notes",
+          "type": "boolean"
+        },
+        "cell": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cell"
+        }
+      },
+      "required": [
+        "slide",
+        "shape"
+      ],
+      "title": "PptxAnchor",
       "type": "object"
     },
     "Reading": {
@@ -429,6 +1062,11 @@
         "pages": {
           "title": "Pages",
           "type": "integer"
+        },
+        "format": {
+          "default": "pdf",
+          "title": "Format",
+          "type": "string"
         }
       },
       "required": [
@@ -452,7 +1090,15 @@
           "type": "integer"
         },
         "box": {
-          "$ref": "#/$defs/Box"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Box"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "rows": {
           "title": "Rows",
@@ -490,23 +1136,69 @@
       "required": [
         "id",
         "page",
-        "box",
         "rows",
         "columns",
         "cells"
       ],
       "title": "Table",
       "type": "object"
+    },
+    "XlsxAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "xlsx",
+          "default": "xlsx",
+          "title": "Type",
+          "type": "string"
+        },
+        "sheet": {
+          "title": "Sheet",
+          "type": "string"
+        },
+        "cell": {
+          "description": "\"C7\", or \"B2:D2\" for a merged range.",
+          "title": "Cell",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sheet",
+        "cell"
+      ],
+      "title": "XlsxAnchor",
+      "type": "object"
+    },
+    "XmlAnchor": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "xml",
+          "default": "xml",
+          "title": "Type",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "XmlAnchor",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "default": "0.2.0",
-      "description": "The contract version. A stored \"0.1.0\" document loads, and is restamped \"0.2.0\".",
+      "default": "0.3.0",
+      "description": "The contract version. A stored \"0.1.0\" or \"0.2.0\" document loads, and is restamped \"0.3.0\".",
       "enum": [
         "0.1.0",
-        "0.2.0"
+        "0.2.0",
+        "0.3.0"
       ],
       "title": "Schema Version",
       "type": "string"
