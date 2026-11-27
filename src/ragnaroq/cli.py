@@ -6,6 +6,7 @@ person; 1 the file (for `index`, any file) could not be processed.
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -212,6 +213,11 @@ def main(argv: list[str] | None = None) -> int:
     return 2 if needs_review(document) else 0
 
 
+def _plain(text: str) -> str:
+    """A name that is safe to print: control characters (C0, C1 and DEL) written as \\xNN."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f]", lambda found: f"\\x{ord(found.group()):02x}", text)
+
+
 def _index(args, with_budget, engines_here, third_reader) -> int:
     config = Config(
         dpi=args.dpi, languages=tuple(args.lang.split("+")), exclude_scripts=tuple(args.exclude_script)
@@ -227,17 +233,26 @@ def _index(args, with_budget, engines_here, third_reader) -> int:
             engines=engines,
             third_reader=third_reader,
             fresh=args.fresh,
-            progress=lambda path, status: print(f"{status:8} {path}", file=sys.stderr, flush=True),
+            progress=lambda path, status: print(f"{status:8} {_plain(path)}", file=sys.stderr, flush=True),
         )
     except (folder.FolderError, EngineUnavailable, OSError) as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 1
-    for note in report.notes:
-        print(note, file=sys.stderr)
-    # The same hint for many files is said once.
+    # The same hint for many files is said once. Printing is the last thing and best-effort: a
+    # closed pipe changes no exit code.
     hints = {e.error.rsplit(": ", 1)[-1] for e in report.manifest.files if e.rule == "reader.unavailable"}
-    for hint in sorted(hints):
-        print(f"Some files were not read, because a library is missing: {hint}", file=sys.stderr)
+    try:
+        for note in report.notes:
+            print(_plain(note), file=sys.stderr)
+        for hint in sorted(hints):
+            print(f"Some files were not read, because a library is missing: {_plain(hint)}", file=sys.stderr)
+        _summary(report, args.folder)
+    except OSError:
+        pass
+    return 1 if report.failed else 2 if report.needs_review else 0
+
+
+def _summary(report, root) -> None:
     changes = report.changes
     print(
         json.dumps(
@@ -251,13 +266,13 @@ def _index(args, with_budget, engines_here, third_reader) -> int:
                     "changed": len(changes.changed),
                     "removed": len(changes.removed),
                     "chunks_added": len(changes.chunks_added),
+                    "chunks_changed": len(changes.chunks_changed),
                     "chunks_removed": len(changes.chunks_removed),
                 },
-                "out": str(Path(args.folder) / folder.STATE),
+                "out": str(Path(root) / folder.STATE),
             }
         )
     )
-    return 1 if report.failed else 2 if report.needs_review else 0
 
 
 if __name__ == "__main__":

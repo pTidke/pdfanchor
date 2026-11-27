@@ -243,7 +243,7 @@ def _feed(stream, message) -> None:
         pass
 
 
-def _how_it_stopped(code: int | None) -> str:
+def _how_it_stopped(code: int | None, fault: str = "the PDF parser") -> str:
     if code is None:
         how = "stopped answering"
     elif code < 0:
@@ -251,7 +251,7 @@ def _how_it_stopped(code: int | None) -> str:
             name = signal.Signals(-code).name
         except ValueError:
             name = f"signal {-code}"
-        how = f"was killed by {name}, perhaps for running out of memory or by a fault in the PDF parser"
+        how = f"was killed by {name}, perhaps for running out of memory or by a fault in {fault}"
     else:
         how = f"exited with code {code}"
     return how
@@ -263,6 +263,8 @@ class _Worker:
 
     _process = None
     _crash_rule = "page.crashed"
+    _who = "The reader"  # how a crash message names what stopped
+    _fault = "the PDF parser"
 
     def _spawn(self, bootstrap: str, rule: str, what: str) -> None:
         if not sys.executable:
@@ -309,7 +311,7 @@ class _Worker:
         except subprocess.TimeoutExpired:
             code = None
         self._relay.join(2)  # its last words, if it wrote any
-        message = f"The reader {_how_it_stopped(code)} {when}."
+        message = f"{self._who} {_how_it_stopped(code, self._fault)} {when}."
         if self._last:
             message += f" It last wrote: {self._last[-1][:300]}"
         self._stop()
@@ -439,6 +441,9 @@ class FileReader(_Worker):
         if not config.isolate_pages:
             return read_bytes(data, name, config, base=base)
         self._crash_rule = "file.crashed"
+        kind = Path(name).suffix.lower().lstrip(".")
+        self._who = f"The reader for {kind} files" if kind else "The file reader"
+        self._fault = "a library it uses"
         if self._process is None or self._process.poll() is not None or self._served >= self.RECYCLE:
             self._stop()
             self._start()

@@ -6,8 +6,10 @@ inside `base` after symlinks are followed. Core only."""
 
 import base64
 import binascii
+import errno
 import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import unquote, unquote_to_bytes
@@ -80,7 +82,7 @@ class Images:
     """Loads the images one file names. Bytes are held once per real file, and the distinct
     bytes of a document together stay under `max_unzipped_bytes`."""
 
-    def __init__(self, base: Path | None, config: Config):
+    def __init__(self, base: "Path | tuple[str, tuple[str, ...]] | None", config: Config):
         self.base = base
         self.config = config
         self.files: dict[str, bytes] = {}  # real path -> bytes
@@ -120,6 +122,8 @@ class Images:
             return _outside()
         if self.base is None:
             return _not_found()
+        if isinstance(self.base, tuple):
+            return self._local_below(relative)
         try:
             root = os.path.realpath(self.base)
             path = os.path.realpath(os.path.join(root, relative))
@@ -143,6 +147,53 @@ class Images:
         if len(data) > config.max_image_bytes or not self._room(len(data)):
             return _too_large(config)
         self.files[path] = data
+        self.total += len(data)
+        return Loaded(data=data)
+
+    def _local_below(self, relative: str) -> Loaded:
+        """A file next to the one being read, for a base given as (folder, parts below it). The
+        folder is opened, then each part from the one before, never following a link: so a
+        link planted since the folder was listed cannot lead out of it."""
+        folder, below = self.base
+        found: list[str] = []
+        for part in relative.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not found:
+                    return _outside()
+                found.pop()
+            else:
+                found.append(part)
+        if not found:
+            return _not_found()
+        names = [*below, *found]
+        key = "/".join(names)
+        if key in self.files:
+            return Loaded(data=self.files[key])
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        held = [os.open(folder, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))]
+        try:
+            for name in names[:-1]:
+                held.append(os.open(name, flags | getattr(os, "O_DIRECTORY", 0), dir_fd=held[-1]))
+            fd = os.open(names[-1], flags | getattr(os, "O_NONBLOCK", 0), dir_fd=held[-1])
+        except (FileNotFoundError, NotADirectoryError):
+            return _not_found()
+        except OSError as error:
+            return _outside() if error.errno == errno.ELOOP else _unreadable()
+        finally:
+            for descriptor in held:
+                os.close(descriptor)
+        with os.fdopen(fd, "rb") as handle:
+            size = os.fstat(fd)
+            if not stat.S_ISREG(size.st_mode):
+                return _not_found()
+            if size.st_size > self.config.max_image_bytes or not self._room(size.st_size):
+                return _too_large(self.config)
+            data = handle.read(self.config.max_image_bytes + 1)
+        if len(data) > self.config.max_image_bytes or not self._room(len(data)):
+            return _too_large(self.config)
+        self.files[key] = data
         self.total += len(data)
         return Loaded(data=data)
 

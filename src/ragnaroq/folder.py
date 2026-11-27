@@ -8,20 +8,27 @@ that is interrupted only costs the next run some reading).
 
 One file's failure never stops the run. A file that is unchanged since the last run, read
 with the same settings, is not read again.
+
+Someone may be writing into the folder while it is indexed, so nothing here works by path
+after a first open: `.ragnaroq` is opened once and its descriptor held; `files/` and `tmp/`
+are opened from it; every write, rename and removal inside it names a file relative to one
+of those descriptors. The folder is walked, and each original opened, relative to the
+descriptor of the folder, never following a link. POSIX only (Linux, macOS).
 """
 
+import contextlib
 import errno
 import hashlib
 import importlib.metadata
 import json
 import os
-import re
 import shutil
 import stat
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -39,17 +46,20 @@ from .readers import READER_VERSIONS, ReaderRefused, ReaderUnavailable, detect, 
 MANIFEST_VERSION = "0.3.0"
 STATE = ".ragnaroq"
 READ_TRIES = 3  # a file that keeps changing while it is read is given up on
+HEAD = 64 * 1024  # what is read to tell what a file is
+TIMEOUT_TRIES = 2  # a file that timed out is tried once more, then left until it or the settings change
 
 # A failure that may not happen again: the file is read again next run. A refusal (a zip bomb,
-# a truncated file) is the file's own, so it is carried over like any result.
-TRANSIENT = frozenset(
-    {"file.timeout", "file.memory", "file.crashed", "file.unreadable", "file.changed", "reader.unavailable"}
-)
+# a truncated file) and a crash or memory failure are the file's own, so they are carried over
+# like any result; so, after TIMEOUT_TRIES, is a timeout.
+TRANSIENT = frozenset({"file.unreadable", "file.changed", "reader.unavailable"})
 # Extensions whose files, when they are not what they say, fail instead of being "unsupported".
 CLAIMED = frozenset("pdf docx xlsx pptx html htm xhtml md markdown json xml csv tsv".split())
+OFFICE = ("docx", "xlsx", "pptx")  # a file starting with PK is one of these by its name, or nothing
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _NONBLOCK = getattr(os, "O_NONBLOCK", 0)
-_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_PRIVATE_FILE, _PRIVATE_DIR = 0o600, 0o700
 
 
 class FolderError(Exception):
@@ -70,6 +80,7 @@ class FileEntry(Model):
     error: str = ""
     skipped: str = ""
     rule: str = ""  # for a failed file, the rule of its blocking flag
+    attempts: int = 0  # how many times in a row this file's bytes and settings ended in a timeout
 
 
 class Manifest(Model):
@@ -79,11 +90,18 @@ class Manifest(Model):
 
 
 class Changes(Model):
+    """What differs from the last run. A vector database upserts `chunks_added` and
+    `chunks_changed` (ids that stay, in files whose content or verdict changed), and deletes
+    `chunks_removed`. On a `reset` there was no usable last run: keep only what is in
+    chunks.jsonl."""
+
     added: list[str] = []  # file ids
     changed: list[str] = []
     removed: list[str] = []
     chunks_added: list[str] = []
+    chunks_changed: list[str] = []
     chunks_removed: list[str] = []
+    reset: bool = False
 
 
 class IndexReport(Model):
@@ -98,69 +116,103 @@ def file_id(path: str) -> str:
     return str(uuid.uuid5(NAMESPACE, path))
 
 
-# ---------------------------------------------------------------- the .ragnaroq folder
+# ---------------------------------------------------------------- the .ragnaroq folder, by descriptor
 
 
-def _lstat(path: Path | str):
+@dataclass
+class _State:
+    """The descriptors of `.ragnaroq` and what is in it. After they are opened, nothing there is
+    reached by a path."""
+
+    root: int
+    state: int
+    files: int
+    tmp: int
+
+
+def _remove_at(name: str, parent: int) -> None:
+    """Delete a file, a link (never what it points to) or a folder, inside `parent`."""
     try:
-        return os.lstat(path)
+        info = os.lstat(name, dir_fd=parent)
     except FileNotFoundError:
-        return None
-
-
-def _remove(path: Path | str) -> None:
-    """Delete a file, a link (never what it points to) or a folder."""
-    info = _lstat(path)
-    if info is None:
         return
     if stat.S_ISDIR(info.st_mode):
-        shutil.rmtree(path)
+        shutil.rmtree(name, dir_fd=parent)
     else:
-        os.unlink(path)
+        os.unlink(name, dir_fd=parent)
 
 
-def _real_dir(path: Path, *, replace: bool) -> None:
-    """`path` is a real folder (not a link). With `replace`, something else in its place is removed."""
-    info = _lstat(path)
-    if info is not None and not stat.S_ISDIR(info.st_mode):
-        if not replace:
-            raise FolderError(f"{path} is not a folder, so nothing was written. Remove it and run again.")
-        os.unlink(path)
-        info = None
-    if info is None:
-        os.mkdir(path)
+def _open_dir(name: str, parent: int) -> int:
+    """A real folder inside `parent`, made (private) if missing and put in the place of a link
+    or file that stands there."""
+    flags = os.O_RDONLY | _DIRECTORY | _NOFOLLOW
+    for _ in range(5):
+        try:
+            return os.open(name, flags, dir_fd=parent)
+        except FileNotFoundError:
+            try:
+                os.mkdir(name, _PRIVATE_DIR, dir_fd=parent)
+            except FileExistsError:
+                pass
+        except OSError as error:
+            if error.errno not in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+                raise
+            _remove_at(name, parent)
+    raise FolderError(f"{name} inside {STATE} keeps changing; run again.")
 
 
-def _open_read(path: Path | str) -> int:
-    """A file descriptor for a regular file that is not a link; OSError otherwise."""
-    fd = os.open(path, os.O_RDONLY | _NOFOLLOW | _NONBLOCK)
+def _open_state(root: int) -> int:
+    flags = os.O_RDONLY | _DIRECTORY | _NOFOLLOW
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError(errno.EINVAL, "not a regular file")
+        return os.open(STATE, flags, dir_fd=root)
+    except FileNotFoundError:
+        os.mkdir(STATE, _PRIVATE_DIR, dir_fd=root)
+        return os.open(STATE, flags, dir_fd=root)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+            raise FolderError(
+                f"{STATE} in this folder is not a folder, so nothing was written. Remove it and run again."
+            ) from None
+        raise
+
+
+def _open_file(name: str, parent: int, *, single: bool = False) -> int:
+    """A descriptor for a regular file (with one link, if `single`) that is not a link."""
+    fd = os.open(name, os.O_RDONLY | _NOFOLLOW | _NONBLOCK, dir_fd=parent)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or (single and info.st_nlink != 1):
+            raise OSError(errno.EINVAL, "not a plain file")
     except BaseException:
         os.close(fd)
         raise
     return fd
 
 
-def _read_state(path: Path | str, limit: int = 1 << 30) -> bytes:
-    fd = _open_read(path)
-    with os.fdopen(fd, "rb") as handle:
+def _read_at(name: str, parent: int, limit: int = 1 << 30) -> bytes:
+    with os.fdopen(_open_file(name, parent), "rb") as handle:
         return handle.read(limit)
 
 
-def _lock(state: Path):
-    path = state / "lock"
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | _NOFOLLOW, 0o644)
-    try:
+def _lock(state: int) -> int:
+    for _ in range(3):
         try:
-            import fcntl
+            fd = os.open("lock", os.O_RDWR | os.O_CREAT | _NOFOLLOW | _NONBLOCK, _PRIVATE_FILE, dir_fd=state)
+        except OSError as error:
+            if error.errno not in (errno.ELOOP, errno.EISDIR, errno.EMLINK):
+                raise
+            _remove_at("lock", state)  # a link or folder planted where the lock goes
+            continue
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            break
+        os.close(fd)
+        _remove_at("lock", state)
+    else:
+        raise FolderError("The lock file could not be made.")
+    try:
+        import fcntl
 
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except ImportError:  # Windows
-            import msvcrt
-
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as error:
         os.close(fd)
         if error.errno in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
@@ -171,23 +223,30 @@ def _lock(state: Path):
     return fd
 
 
-def _write_file(state: Path, name: str, write_to: Callable) -> None:
+def _write_file(held: _State, name: str, write_to: Callable) -> None:
     """Write `.ragnaroq/<name>` through a temporary file, so it is whole or not there."""
-    temporary = state / "tmp" / f"{name}.part"
-    with open(temporary, "wb") as handle:
+    part = f"{name}.part"
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, _PRIVATE_FILE, dir_fd=held.tmp)
+    with os.fdopen(fd, "wb") as handle:
         write_to(handle)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temporary, state / name)
+    os.replace(part, name, src_dir_fd=held.tmp, dst_dir_fd=held.state)
 
 
-def _load_manifest(state: Path, notes: list[str]) -> Manifest | None:
-    path = state / "manifest.json"
-    if _lstat(path) is None:
+def _load_manifest(held: _State, notes: list[str]) -> Manifest | None:
+    try:
+        text = _read_at("manifest.json", held.state)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        notes.append(
+            f"The last manifest could not be read ({type(error).__name__}); reading every file again."
+        )
         return None
     try:
-        manifest = Manifest.model_validate_json(_read_state(path))
-    except (OSError, ValidationError, ValueError) as error:
+        manifest = Manifest.model_validate_json(text)
+    except (ValidationError, ValueError) as error:
         notes.append(
             f"The last manifest could not be read ({type(error).__name__}); reading every file again."
         )
@@ -198,8 +257,8 @@ def _load_manifest(state: Path, notes: list[str]) -> Manifest | None:
             "reading every file again."
         )
         return None
-    # An entry is only trusted for the id its path gives; ids are never used to build a path
-    # before that check, and the folders are named by ids computed here.
+    # An entry is only trusted for the id its path gives; a folder is only ever named by an id
+    # computed here from a path.
     sound = [entry for entry in manifest.files if entry.file_id == file_id(entry.path)]
     if len(sound) != len(manifest.files):
         notes.append(
@@ -209,23 +268,51 @@ def _load_manifest(state: Path, notes: list[str]) -> Manifest | None:
     return manifest
 
 
-def _chunk_ids(path: Path) -> list[str] | None:
-    """The ids in a file's chunks.jsonl, or None if it is missing, a link or not chunks."""
-    try:
-        fd = _open_read(path)
-    except OSError:
-        return None
+def _ids_in(handle) -> list[str] | None:
     ids = []
     try:
-        with os.fdopen(fd, "rb") as handle:
-            for line in handle:
-                chunk_id = json.loads(line)["id"]
-                if not isinstance(chunk_id, str):
-                    return None
-                ids.append(chunk_id)
+        for line in handle:
+            chunk_id = json.loads(line)["id"]
+            if not isinstance(chunk_id, str):
+                return None
+            ids.append(chunk_id)
     except (ValueError, KeyError, TypeError):
         return None
     return ids
+
+
+def _chunk_ids_at(folder_fd: int) -> list[str] | None:
+    """The ids in `chunks.jsonl` of a file's folder, or None if it is missing, a link, shared
+    with another name, or not chunks."""
+    try:
+        fd = _open_file("chunks.jsonl", folder_fd, single=True)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        return _ids_in(handle)
+
+
+def _existing_dir(name: str, parent: int) -> int | None:
+    try:
+        return os.open(name, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=parent)
+    except OSError:
+        return None
+
+
+def _leftover_ids(held: _State) -> set[str]:
+    """The chunk ids of every file folder found, for a run with no usable last manifest."""
+    found: set[str] = set()
+    with os.scandir(held.files) as listing:
+        names = [item.name for item in listing]
+    for name in names:
+        fd = _existing_dir(name, held.files)
+        if fd is None:
+            continue
+        try:
+            found.update(_chunk_ids_at(fd) or [])
+        finally:
+            os.close(fd)
+    return found
 
 
 # ---------------------------------------------------------------- walking the folder
@@ -233,8 +320,10 @@ def _chunk_ids(path: Path) -> list[str] | None:
 
 @dataclass
 class Found:
-    path: str  # relative, POSIX
-    full: str | None = None  # where to read it; None for a skipped one
+    path: str  # relative, POSIX, as shown
+    dirfd: int = -1  # the folder it is in, open while this is the current file
+    name: str = ""
+    parts: tuple[str, ...] = ()  # its names below the folder
     skipped: str = ""
 
 
@@ -251,39 +340,39 @@ def _shown(path: str) -> str:
     return os.fsencode(path).decode("utf-8", "backslashreplace")
 
 
-def _inside(real_root: str, path: str) -> bool:
+def _is_link(name: str, dirfd: int) -> bool:
     try:
-        return os.path.commonpath([real_root, path]) == real_root
-    except ValueError:
+        return stat.S_ISLNK(os.lstat(name, dir_fd=dirfd).st_mode)
+    except OSError:
         return False
 
 
-def walk(root: Path, real_root: str) -> Iterator[Found]:
-    """Every file under `root`, or the reason it is left out. Links to folders are not
-    followed; hidden things and `.ragnaroq` are not entered."""
-    top = os.fspath(root)
+def walk(root: int) -> Iterator[Found]:
+    """Every file under the folder `root` (a descriptor), or the reason it is left out. Links to
+    folders are not followed; hidden things and `.ragnaroq` are not entered."""
     unreadable: list[str] = []
 
     def lost() -> Iterator[Found]:
         while unreadable:
-            relative = os.path.relpath(unreadable.pop(0), top).replace(os.sep, "/")
+            relative = os.path.relpath(unreadable.pop(0), ".").replace(os.sep, "/")
             yield Found(_shown(relative), skipped="unreadable folder")
 
-    for here, names, files in os.walk(
-        top, followlinks=False, onerror=lambda e: unreadable.append(e.filename)
+    for here, names, files, dirfd in os.fwalk(
+        ".", dir_fd=root, follow_symlinks=False, onerror=lambda e: unreadable.append(e.filename)
     ):
         yield from lost()
-        relative = os.path.relpath(here, top)
-        prefix = "" if relative == "." else relative.replace(os.sep, "/") + "/"
+        relative = os.path.relpath(here, ".")
+        above = () if relative == "." else tuple(relative.split(os.sep))
+        prefix = "".join(f"{part}/" for part in above)
         keep = []
         for name in sorted(names):
-            if here == top and name == STATE:
+            if not above and name == STATE:
                 continue
             if _bad_name(name):
                 yield Found(_shown(prefix + name), skipped="unreadable name")
             elif name.startswith("."):
                 yield Found(prefix + name, skipped="hidden")
-            elif os.path.islink(os.path.join(here, name)):
+            elif _is_link(name, dirfd):
                 yield Found(prefix + name, skipped="symbolic link to a folder")
             else:
                 keep.append(name)
@@ -294,64 +383,117 @@ def walk(root: Path, real_root: str) -> Iterator[Found]:
             elif name.startswith("."):
                 yield Found(prefix + name, skipped="hidden")
             else:
-                yield Found(prefix + name, full=os.path.join(here, name))
+                yield Found(prefix + name, dirfd, name, (*above, name))
     yield from lost()
 
 
-def _resolve(found: Found, real_root: str) -> tuple[str | None, str]:
-    """The regular file to open for `found`, or the reason it is left out."""
-    try:
-        info = os.lstat(found.full)
-        target = found.full
-        if stat.S_ISLNK(info.st_mode):
-            target = os.path.realpath(found.full)
-            if not _inside(real_root, target):
-                return None, "outside the folder"
-            info = os.stat(target)
-            if stat.S_ISDIR(info.st_mode):
-                return None, "symbolic link to a folder"
-    except FileNotFoundError:
-        return None, "broken symbolic link"
-    except OSError:
-        return None, "unreadable"
-    if not stat.S_ISREG(info.st_mode):
+def _checked(fd: int) -> tuple[int | None, str]:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
         return None, "not a regular file"
-    return target, ""
+    return fd, ""
 
 
-def _read_stable(target: str, limit: int) -> tuple[bytes | None, str]:
-    """The bytes of the file (at most limit + 1), read while it did not change. Never blocks on
-    a file that turned into a fifo, and never follows a link planted since the check."""
+def _open_found(found: Found, root: int, real_root: str) -> tuple[int | None, str, tuple[str, ...]]:
+    """A descriptor for the regular file `found` is, or the reason it is left out, and its
+    names below the folder. A file is opened where it was listed, never through a link. A link
+    is resolved, must lead to a file inside the folder, and is then opened from the folder one
+    name at a time, never through a link."""
+    try:
+        info = os.lstat(found.name, dir_fd=found.dirfd)
+    except OSError:
+        return None, "unreadable", ()
+    flags = os.O_RDONLY | _NOFOLLOW | _NONBLOCK
+    if stat.S_ISREG(info.st_mode):
+        try:
+            fd = os.open(found.name, flags, dir_fd=found.dirfd)
+        except OSError:
+            return None, "unreadable", ()
+        return (*_checked(fd), found.parts)
+    if not stat.S_ISLNK(info.st_mode):  # a fifo, a socket or a device is never opened
+        return None, "not a regular file", ()
+    resolved = os.path.realpath(os.path.join(real_root, *found.parts))
+    try:
+        below = os.path.relpath(resolved, real_root).split(os.sep)
+    except ValueError:
+        return None, "outside the folder", ()
+    if below[0] == "..":
+        return None, "outside the folder", ()
+    if below == ["."]:
+        return None, "symbolic link to a folder", ()
+    if any(part.startswith(".") for part in below):
+        return None, "link to a hidden or internal file", ()
+    held = [os.dup(root)]
+    try:
+        for name in below[:-1]:
+            held.append(os.open(name, flags | _DIRECTORY, dir_fd=held[-1]))
+        fd = os.open(below[-1], flags, dir_fd=held[-1])
+    except FileNotFoundError:
+        return None, "broken symbolic link", ()
+    except OSError:
+        return None, "unreadable", ()
+    finally:
+        for descriptor in held:
+            os.close(descriptor)
+    if stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        return None, "symbolic link to a folder", ()
+    return (*_checked(fd), tuple(below))
+
+
+def _kind(path: str, head: bytes) -> tuple[str, tuple[str, str] | None]:
+    """What a file is, from its first bytes alone, and the failure if it says it is a format and
+    is not. A zip is never opened here: by its name it is Word, Excel or PowerPoint, or nothing,
+    and the worker finds out."""
+    suffix = Path(path).suffix.lower().lstrip(".")
+    if head.startswith(b"PK\x03\x04"):
+        return (suffix, None) if suffix in OFFICE else ("", None)
+    fmt = detect(path, head) or ""
+    if fmt:
+        return fmt, None
+    if suffix in CLAIMED:  # it says what it is, and it is not
+        return suffix, ("format.unknown", f"{path} is not a valid {suffix} file.")
+    return "", None
+
+
+@dataclass
+class Read:
+    data: bytes | None = None
+    fmt: str = ""
+    skip: str = ""
+    size: int = 0
+    base: tuple | None = None  # (folder, names below it) for the images a file names
+    failure: tuple[str, str] | None = None
+
+
+def _read_file(found: Found, root: int, real_root: str, config: Config) -> Read:
+    """The file's bytes, read while it did not change, or why it is left out. Only the first
+    64 KiB are read to tell what it is; a file that is not a format we read is not read further."""
+    limit = config.max_bytes
     for _ in range(READ_TRIES):
-        fd = os.open(target, os.O_RDONLY | _NOFOLLOW | _NONBLOCK)
+        fd, skip, parts = _open_found(found, root, real_root)
+        if skip:
+            return Read(skip=skip)
         with os.fdopen(fd, "rb") as handle:
-            before = os.fstat(handle.fileno())
-            if not stat.S_ISREG(before.st_mode):
-                return None, "not a regular file"
+            before = os.fstat(fd)
+            if before.st_size == 0:
+                return Read(skip="empty")
             if before.st_size > limit:
-                return None, "over the size limit"
-            data = handle.read(limit + 1)
-            after = os.fstat(handle.fileno())
+                return Read(skip="over the size limit", size=before.st_size)
+            head = handle.read(HEAD)
+            fmt, failure = _kind(found.path, head)
+            if not fmt:
+                return Read(skip="unsupported", size=before.st_size)
+            data = head + handle.read(limit + 1 - len(head))
+            after = os.fstat(fd)
+        if len(data) > limit:
+            return Read(skip="over the size limit", size=len(data))
         if (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns) and len(
             data
         ) == after.st_size:
-            return data, ""
-    raise OSError(errno.EBUSY, f"changed {READ_TRIES} times while it was being read")
-
-
-def _zip_too_big(data: bytes, config: Config) -> str:
-    """Before a zip is opened here, look at its end record: an archive that claims more
-    entries than allowed, or a directory too big for that many, is not opened at all."""
-    if not data.startswith(b"PK\x03\x04"):
-        return ""
-    at = data.rfind(b"PK\x05\x06", max(0, len(data) - 65_557))
-    if at < 0 or len(data) < at + 22:
-        return ""
-    entries = int.from_bytes(data[at + 10 : at + 12], "little")
-    size = int.from_bytes(data[at + 12 : at + 16], "little")
-    if entries >= 0xFFFF or entries > config.max_zip_entries or size > config.max_zip_entries * 1024:
-        return f"The archive holds more than the {config.max_zip_entries} entries allowed."
-    return ""
+            return Read(data=data, fmt=fmt, size=len(data), base=(real_root, parts[:-1]), failure=failure)
+    message = f"The file could not be read (changed {READ_TRIES} times while it was being read)."
+    return Read(failure=("file.changed", message))
 
 
 # ---------------------------------------------------------------- reading one file
@@ -402,28 +544,31 @@ def _hash(settings: dict, fmt: str) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+@dataclass
 class _Context:
-    def __init__(self, config, engines, third_reader, worker, state: Path):
-        self.config, self.engines, self.third_reader = config, engines, third_reader
-        self.worker, self.state = worker, state
+    config: Config
+    engines: Sequence[OcrEngine]
+    third_reader: LineReader | None
+    worker: FileReader
+    held: _State = field(default=None)
 
 
-def _make(context: _Context, found: Found, target: str, data: bytes, fmt: str, out: Path) -> tuple:
-    """Read one file into `out`. Returns the document, or the (rule, message) it failed with."""
+def _make(context: _Context, found: Found, read: Read, out: Path) -> tuple:
+    """Read one file into `out` (a private folder). Returns the document, or the (rule, message)
+    it failed with."""
     config = context.config
-    base = Path(os.path.dirname(os.path.realpath(target)))
     started = time.monotonic()
     try:
-        if fmt == "pdf":
+        if read.fmt == "pdf":
             document = convert(
-                data,
+                read.data,
                 config=config,
                 engines=context.engines,
                 filename=found.path,
                 third_reader=context.third_reader,
             )
         else:
-            result = isolation.read_file(data, found.path, config, base=base, reader=context.worker)
+            result = isolation.read_file(read.data, found.path, config, base=read.base, reader=context.worker)
             deadline = started + config.file_timeout_seconds
             figures.describe(result, context.engines, config, deadline=deadline)
             figures.save(result, out, config, deadline=deadline)
@@ -462,9 +607,9 @@ def _entry_of(found: Found, data: bytes, fmt: str, settings: str, document, fail
         rule, message = failure
         entry.status, entry.error, entry.rule = "failed", message, rule
         return entry
-    entry.counts = {**document.summary, "chunks": 0}
-    entry.chunk_ids = _chunk_ids(out / "chunks.jsonl") or []
-    entry.counts["chunks"] = len(entry.chunk_ids)
+    with open(out / "chunks.jsonl", "rb") as handle:  # in a private folder made by this run
+        entry.chunk_ids = _ids_in(handle) or []
+    entry.counts = {**document.summary, "chunks": len(entry.chunk_ids)}
     entry.status = "review" if needs_review(document) else "ok"
     return entry
 
@@ -490,48 +635,88 @@ def _fail_output(
 # ---------------------------------------------------------------- a run
 
 
-def _carry(state: Path, old: FileEntry | None, found: Found, sha: str, settings: str) -> FileEntry | None:
+def _carry(held: _State, old: FileEntry | None, found: Found, sha: str, settings: str) -> FileEntry | None:
     """The last run's entry, if this file need not be read again: same bytes, same settings,
-    and its output is still there and is the output of those bytes."""
-    if old is None or old.status in ("skipped",) or old.sha256 != sha or old.settings != settings:
+    and its output is still there, is the output of those bytes, and is what the manifest says."""
+    if old is None or old.status == "skipped" or old.sha256 != sha or old.settings != settings:
         return None
-    if old.status == "failed" and old.rule in TRANSIENT:
+    if old.status == "failed" and (
+        old.rule in TRANSIENT or (old.rule == "file.timeout" and old.attempts < TIMEOUT_TRIES)
+    ):
         return None
-    folder = state / "files" / old.file_id
-    info = _lstat(folder)
-    if info is None or not stat.S_ISDIR(info.st_mode):
+    folder = _existing_dir(old.file_id, held.files)
+    if folder is None:
         return None
     try:
-        stored = FileEntry.model_validate_json(_read_state(folder / "entry.json", 1 << 26))
-        for name in ("document.json", "chunks.jsonl"):
-            if not stat.S_ISREG(os.lstat(folder / name).st_mode):
-                return None
+        stored = FileEntry.model_validate_json(_read_at("entry.json", folder, 1 << 26))
+        os.close(_open_file("document.json", folder))
+        ids = _chunk_ids_at(folder)
     except (OSError, ValidationError, ValueError):
+        return None
+    finally:
+        os.close(folder)
+    if ids is None or ids != old.chunk_ids:
         return None
     if (stored.path, stored.sha256, stored.settings) != (found.path, sha, settings):
         return None
-    ids = _chunk_ids(folder / "chunks.jsonl")
-    if ids is None:
-        return None
-    entry = old.model_copy(deep=True)
-    entry.chunk_ids = ids
-    return entry
+    return old.model_copy(deep=True)
 
 
-def _install(state: Path, out: Path, entry: FileEntry) -> None:
+def _copy_into(source: str, destination: int) -> None:
+    """Copy the files and folders of the private folder `source` into the folder `destination`
+    (a descriptor), made private."""
+    with os.scandir(source) as listing:
+        for item in list(listing):
+            if item.is_symlink():
+                continue
+            if item.is_dir(follow_symlinks=False):
+                os.mkdir(item.name, _PRIVATE_DIR, dir_fd=destination)
+                inner = os.open(item.name, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=destination)
+                try:
+                    _copy_into(item.path, inner)
+                finally:
+                    os.close(inner)
+            elif item.is_file(follow_symlinks=False):
+                fd = os.open(
+                    item.name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW,
+                    _PRIVATE_FILE,
+                    dir_fd=destination,
+                )
+                with open(item.path, "rb") as origin, os.fdopen(fd, "wb") as target:
+                    shutil.copyfileobj(origin, target)
+
+
+def _install(held: _State, out: Path, entry: FileEntry) -> None:
+    """Put a file's output in `files/<id>`: copied into `tmp/`, then renamed over the old one."""
     (out / "entry.json").write_text(entry.model_dump_json(indent=2), encoding="utf8")
-    files = state / "files"
-    _real_dir(files, replace=True)
-    target = files / entry.file_id
-    _remove(target)
-    os.replace(out, target)
+    _remove_at(entry.file_id, held.tmp)
+    os.mkdir(entry.file_id, _PRIVATE_DIR, dir_fd=held.tmp)
+    inner = os.open(entry.file_id, os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=held.tmp)
+    try:
+        _copy_into(os.fspath(out), inner)
+    finally:
+        os.close(inner)
+    _remove_at(entry.file_id, held.files)
+    os.rename(entry.file_id, entry.file_id, src_dir_fd=held.tmp, dst_dir_fd=held.files)
+
+
+def _sweep(held: _State, live: set[str]) -> None:
+    """Remove what is in `files/` and is not a live file's folder."""
+    with os.scandir(held.files) as listing:
+        names = [item.name for item in listing]
+    for name in names:
+        if name not in live:
+            _remove_at(name, held.files)
 
 
 def _present(manifest: Manifest | None) -> dict[str, FileEntry]:
     return {e.file_id: e for e in manifest.files if e.status != "skipped"} if manifest else {}
 
 
-def compare(old: Manifest | None, new: Manifest) -> Changes:
+def compare(old: Manifest | None, new: Manifest, leftover: set[str] = frozenset()) -> Changes:
+    """What differs. Without a last manifest everything is added, and `leftover` (ids found in
+    the folders of an earlier run) that are not in the new set are the chunks removed."""
     before, after = _present(old), _present(new)
     changed = [
         key
@@ -542,24 +727,33 @@ def compare(old: Manifest | None, new: Manifest) -> Changes:
             != (entry.sha256, entry.settings, entry.status, entry.chunk_ids)
         )
     ]
-    old_ids = {c for e in before.values() for c in e.chunk_ids}
+    old_ids = {c for e in before.values() for c in e.chunk_ids} if old else set(leftover)
     new_ids = {c for e in after.values() for c in e.chunk_ids}
+    kept = {c for key in changed for c in set(before[key].chunk_ids) & set(after[key].chunk_ids)}
     return Changes(
         added=[key for key in after if key not in before],
         changed=changed,
         removed=[key for key in before if key not in after],
-        chunks_added=sorted(new_ids - old_ids),
+        chunks_added=sorted(new_ids if old is None else new_ids - old_ids),
+        chunks_changed=sorted(kept),
         chunks_removed=sorted(old_ids - new_ids),
+        reset=old is None,
     )
 
 
-def _copy_chunks(state: Path, entries: list[FileEntry]):
+def _copy_chunks(held: _State, entries: list[FileEntry]):
     def write_to(handle) -> None:
         for entry in entries:
             if not entry.chunk_ids:
                 continue
-            with os.fdopen(_open_read(state / "files" / entry.file_id / "chunks.jsonl"), "rb") as source:
-                shutil.copyfileobj(source, handle)
+            folder = _existing_dir(entry.file_id, held.files)
+            if folder is None:
+                raise OSError(errno.ENOENT, f"the output of {entry.path} is gone")
+            try:
+                with os.fdopen(_open_file("chunks.jsonl", folder, single=True), "rb") as source:
+                    shutil.copyfileobj(source, handle)
+            finally:
+                os.close(folder)
 
     return write_to
 
@@ -575,118 +769,99 @@ def index(
 ) -> IndexReport:
     """Index the folder `root` (see the module's docstring). `engines=None` uses the OCR
     engines installed here; `[]` reads text layers only. `fresh` reads every file again."""
+    if os.name != "posix" or not hasattr(os, "fwalk"):
+        raise FolderError("ragnaroq index works on Linux and macOS only in this version.")
     root = Path(root)
-    if not root.is_dir():
-        raise FolderError(f"{root} is not a folder.")
-    real_root = os.path.realpath(root)
-    state = root / STATE
-    _real_dir(state, replace=False)
-    descriptor = _lock(state)
-    try:
-        return _run(root, real_root, state, config, engines, third_reader, fresh, progress)
-    finally:
-        os.close(descriptor)  # the lock goes with it
+    with contextlib.ExitStack() as stack:
+        try:
+            root_fd = os.open(root, os.O_RDONLY | _DIRECTORY)
+        except OSError:
+            raise FolderError(f"{root} is not a folder.") from None
+        stack.callback(os.close, root_fd)
+        state = _open_state(root_fd)
+        stack.callback(os.close, state)
+        stack.callback(os.close, _lock(state))  # the lock goes with it
+        files = _open_dir("files", state)
+        stack.callback(os.close, files)
+        _remove_at("tmp", state)  # what an interrupted run left
+        tmp = _open_dir("tmp", state)
+        stack.callback(os.close, tmp)
+        held = _State(root_fd, state, files, tmp)
+        return _run(held, os.path.realpath(root), config, engines, third_reader, fresh, progress)
 
 
-def _run(root, real_root, state, config, engines, third_reader, fresh, progress) -> IndexReport:
+def _run(held: _State, real_root, config, engines, third_reader, fresh, progress) -> IndexReport:
     notes: list[str] = []
     if engines is None:
         engines = available(config.languages)
     engines = list(engines)
-    _remove(state / "tmp")  # what an interrupted run left
-    os.mkdir(state / "tmp")
-    _real_dir(state / "files", replace=True)
-    old = _load_manifest(state, notes)
+    old = _load_manifest(held, notes)
+    leftover = set() if old else _leftover_ids(held)
     before = {entry.file_id: entry for entry in old.files} if old else {}
     settings = _settings(config, engines, third_reader)
     entries: list[FileEntry] = []
-    max_bytes = config.max_bytes
 
     def done(entry: FileEntry) -> None:
         entries.append(entry)
         if progress:
-            progress(entry.path, entry.status)
+            try:
+                progress(entry.path, entry.status)
+            except OSError:  # a closed pipe, a full disk: reporting is not the work
+                pass
 
     with FileReader(config) as worker:
-        context = _Context(config, engines, third_reader, worker, state)
-        for found in walk(root, real_root):
-            identity = file_id(found.path)
-            skip = found.skipped
-            target, data, fmt, guard, guard_rule = None, None, "", "", ""
-            if not skip:
-                target, skip = _resolve(found, real_root)
-            if not skip:
-                try:
-                    data, skip = _read_stable(target, max_bytes)
-                except OSError as error:
-                    failure = (
-                        "file.changed" if error.errno == errno.EBUSY else "file.unreadable",
-                        f"The file could not be read ({error.strerror or error}).",
-                    )
-                    out = state / "tmp" / identity
-                    _fail_output(found, b"", "", failure, config, out)
-                    entry = _entry_of(found, b"", "", "", None, failure, out)
+        context = _Context(config, engines, third_reader, worker, held)
+
+        def process(found: Found, read: Read, hashed: str, previous: FileEntry | None) -> FileEntry:
+            private = tempfile.mkdtemp(prefix="ragnaroq-")  # private, and never inside the folder
+            try:
+                out = Path(private) / "out"
+                if read.failure is not None:
+                    document, failure = None, read.failure
+                else:
+                    document, failure = _make(context, found, read, out)
+                if failure is not None:
+                    _fail_output(found, read.data or b"", read.fmt, failure, config, out)
+                entry = _entry_of(found, read.data or b"", read.fmt, hashed, document, failure, out)
+                if read.data is None:
                     entry.sha256 = ""  # nothing was read, so nothing can match it
-                    _install(state, out, entry)
-                    done(entry)
-                    continue
-                if not skip and not data:
-                    skip = "empty"
-                elif not skip and len(data) > max_bytes:
-                    skip = "over the size limit"
-                elif not skip:
-                    guard, guard_rule = _zip_too_big(data, config), "file.zip-limits"
-                    suffix = Path(found.path).suffix.lower().lstrip(".")
-                    if guard:  # not detected: that would open the archive here
-                        fmt = suffix if suffix in ("docx", "xlsx", "pptx") else ""
-                    else:
-                        fmt = detect(found.path, data) or ""
-                    if not fmt and suffix in CLAIMED:  # it says what it is, and it is not
-                        fmt = suffix
-                        guard = guard or f"{found.path} is not a valid {suffix} file."
-                        guard_rule = "format.unknown"
-                    skip = "" if fmt else "unsupported"
-            if skip:
-                done(
-                    FileEntry(
-                        path=found.path,
-                        file_id=identity,
-                        bytes=len(data or b""),
-                        status="skipped",
-                        skipped=skip,
-                    )
-                )
-                continue
-            sha = hashlib.sha256(data).hexdigest()
-            hashed = _hash(settings, fmt)
-            carried = None if fresh else _carry(state, before.get(identity), found, sha, hashed)
-            if carried is not None:
-                done(carried)
-                continue
-            out = state / "tmp" / identity
-            if guard:
-                document, failure = None, (guard_rule, guard)
+                if entry.rule == "file.timeout":
+                    again = previous is not None and previous.sha256 == entry.sha256
+                    entry.attempts = previous.attempts + 1 if again and previous.settings == hashed else 1
+                _install(held, out, entry)
+                return entry
+            finally:
+                shutil.rmtree(private, ignore_errors=True)
+
+        for found in walk(held.root):
+            identity = file_id(found.path)
+            if found.skipped:
+                read = Read(skip=found.skipped)
             else:
-                document, failure = _make(context, found, target, data, fmt, out)
-            if failure is not None:
-                _fail_output(found, data, fmt, failure, config, out)
-            entry = _entry_of(found, data, fmt, hashed, document, failure, out)
-            _install(state, out, entry)
-            del data, document
-            done(entry)
+                read = _read_file(found, held.root, real_root, config)
+            if read.skip:
+                skipped = FileEntry(path=found.path, file_id=identity, bytes=read.size, status="skipped")
+                skipped.skipped = read.skip
+                done(skipped)
+                continue
+            if read.data is None:  # it changed under every attempt
+                done(process(found, read, "", None))
+                continue
+            sha = hashlib.sha256(read.data).hexdigest()
+            hashed = _hash(settings, read.fmt)
+            previous = before.get(identity)
+            carried = None if fresh else _carry(held, previous, found, sha, hashed)
+            done(carried if carried is not None else process(found, read, hashed, previous))
+            read = None
 
     entries.sort(key=lambda entry: entry.path)
     manifest = Manifest(files=entries)
-    changes = compare(old, manifest)
-    _write_file(state, "chunks.jsonl", _copy_chunks(state, entries))
-    _write_file(state, "changes.json", lambda h: h.write(changes.model_dump_json(indent=2).encode()))
-    _write_file(state, "manifest.json", lambda h: h.write(manifest.model_dump_json(indent=2).encode()))
-    live = {entry.file_id for entry in entries if entry.status != "skipped"}
-    with os.scandir(state / "files") as listing:
-        for item in list(listing):
-            if item.name not in live:
-                _remove(item.path)
-    _remove(state / "tmp")
+    changes = compare(old, manifest, leftover)
+    _write_file(held, "chunks.jsonl", _copy_chunks(held, entries))
+    _write_file(held, "changes.json", lambda h: h.write(changes.model_dump_json(indent=2).encode()))
+    _write_file(held, "manifest.json", lambda h: h.write(manifest.model_dump_json(indent=2).encode()))
+    _sweep(held, {entry.file_id for entry in entries if entry.status != "skipped"})
+    _remove_at("tmp", held.state)
     failed = sum(entry.status == "failed" for entry in entries)
     review = any(entry.status == "review" for entry in entries)
     return IndexReport(manifest=manifest, changes=changes, failed=failed, needs_review=review, notes=notes)
