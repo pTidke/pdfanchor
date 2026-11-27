@@ -316,6 +316,12 @@
           "title": "Table Share",
           "type": "number"
         },
+        "largest_table_chars": {
+          "default": 0,
+          "description": "Characters in the largest table.",
+          "title": "Largest Table Chars",
+          "type": "integer"
+        },
         "figures": {
           "default": 0,
           "title": "Figures",

@@ -47,6 +47,7 @@ class StructureCounts(Model):
     definitions: list[GroundedDefinition] = Field(default_factory=list)
     tables: int = 0
     table_share: float = Field(default=0.0, description="Characters in tables over all characters.")
+    largest_table_chars: int = Field(default=0, description="Characters in the largest table.")
     figures: int = 0
     slides: int = 0
     records: int = 0

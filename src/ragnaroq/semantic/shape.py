@@ -59,6 +59,7 @@ class Shape:
     heading_depth: int = 0
     tables: int = 0
     table_chars: int = 0
+    largest_table_chars: int = 0
     body_chars: int = 0
     chars: int = 0
     figures: int = 0
@@ -259,6 +260,7 @@ def shape(paras: list[Para], document: Document) -> Shape:
         elif para.kind == "table":
             result.tables += 1
             result.table_chars += len(para.text)
+            result.largest_table_chars = max(result.largest_table_chars, len(para.text))
             result.definitions += _table_definitions(para)
         elif para.kind == "body":
             result.body_chars += len(para.text)

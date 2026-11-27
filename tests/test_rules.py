@@ -1,7 +1,14 @@
+from pathlib import Path
+
 import pytest
 
+from ragnaroq.config import Config
 from ragnaroq.crosscheck import compare, critical_tokens
 from ragnaroq.ocr.tesseract import parse_tsv
+from ragnaroq.readers import read_bytes
+from ragnaroq.semantic.describe import describe
+from ragnaroq.semantic.overrides import Override
+from ragnaroq.semantic.rules import MAX_CHARS_LIMITS, STRATEGIES, choose
 from ragnaroq.structure import scripts_of
 from ragnaroq.validators import run
 from ragnaroq.validators.dates import expected_suffix
@@ -164,3 +171,103 @@ def test_readings_a_letter_apart_agree_unless_letters_must_match():
     # Symbols and spacing are not letters: a checkbox read as "[_]" by one reader only.
     boxed = compare("Single [_] Married filing jointly", "Single Married filing jointly")
     assert boxed.letters_equal
+
+
+GENERATED = Path(__file__).parent.parent / "references" / "chunking" / "generated"
+
+
+def generated_meta(name):
+    document = read_bytes(
+        (GENERATED / name).read_bytes(), name, Config(), engines=[], base=GENERATED
+    ).document
+    return describe(document)
+
+
+def with_structure(meta, **changes):
+    return meta.model_copy(update={"structure": meta.structure.model_copy(update=changes)})
+
+
+def test_each_generated_document_gets_its_strategy():
+    got = {p.name: choose(generated_meta(p.name), Config()).strategy for p in sorted(GENERATED.iterdir())}
+    assert got == {
+        "notice.pdf": "numbered-paragraphs",
+        "faq.docx": "question-answer",
+        "manual.md": "sections",
+        "manual.html": "sections",
+        "contract.docx": "numbered-paragraphs",
+        "deck.pptx": "single",  # 1,273 characters: rule 1 comes first
+        "rates.xlsx": "table-rows",
+        "records.json": "single",  # 940 characters
+        "table.json": "single",  # 895 characters
+        "essay.md": "sentences",
+    }
+
+
+def test_the_plan_entry_names_its_reasons_parameters_and_filters():
+    plan = choose(generated_meta("notice.pdf"), Config())
+    assert plan.chosen_by == "rules"
+    assert plan.parameters == {
+        "max_chars": 1200,
+        "min_chars": 200,
+        "parent": "section",
+        "keep_with_parent": ["proviso", "explanation"],
+    }
+    assert plan.reasons[0].startswith("kind = numbered (numbered_paragraphs = ")
+    assert plan.reasons[1].startswith("length.chars = ") and plan.reasons[1].endswith("> 1500")
+    assert plan.filters == [f for f in ("dates", "periods", "references") if plan.filters.count(f)]
+
+
+def test_a_short_document_is_single_whatever_its_kind():
+    meta = generated_meta("notice.pdf")
+    short = meta.model_copy(update={"length": meta.length.model_copy(update={"chars": 900})})
+    plan = choose(short, Config())
+    assert plan.strategy == "single" and plan.parameters["parent"] == "document"
+    assert plan.reasons == ["length.chars = 900 < 1500"]
+    big_table = with_structure(short, tables=1, largest_table_chars=1300)
+    assert choose(big_table, Config()).strategy == "numbered-paragraphs"
+
+
+def longer(meta, chars):
+    return meta.model_copy(update={"length": meta.length.model_copy(update={"chars": chars})})
+
+
+def test_a_data_file_that_is_one_table_is_cut_as_table_rows():
+    meta = longer(generated_meta("table.json"), 5000)
+    plan = choose(meta, Config())
+    assert plan.strategy == "table-rows" and plan.parameters["parent"] == "table"
+    assert any("tables = 1" in r for r in plan.reasons)
+    assert choose(with_structure(meta, tables=2), Config()).strategy == "records"
+
+
+def test_the_other_long_generated_documents_take_the_strategy_of_their_kind():
+    assert choose(longer(generated_meta("deck.pptx"), 5000), Config()).strategy == "slides"
+    assert choose(longer(generated_meta("records.json"), 5000), Config()).strategy == "records"
+
+
+def test_an_override_replaces_the_strategy_and_the_limits():
+    meta = generated_meta("notice.pdf")
+    plan = choose(meta, Config(), Override("faq/*.pdf", "sentences", max_chars=800, min_chars=100))
+    assert plan.strategy == "sentences" and plan.chosen_by == "override"
+    assert plan.reasons == ["override: faq/*.pdf"]
+    assert plan.parameters == {
+        "max_chars": 800,
+        "min_chars": 100,
+        "parent": "document",
+        "keep_with_parent": [],
+    }
+    plain = choose(meta, Config(chunk_chars=900), Override("x", "sections"))
+    assert plain.parameters["max_chars"] == 900 and plain.parameters["min_chars"] == 200
+
+
+def test_the_strategy_names_and_limits_are_the_specs():
+    assert STRATEGIES == (
+        "single",
+        "question-answer",
+        "numbered-paragraphs",
+        "sections",
+        "table-rows",
+        "slides",
+        "records",
+        "sentences",
+    )
+    assert MAX_CHARS_LIMITS == (200, 4000)

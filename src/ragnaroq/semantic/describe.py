@@ -189,6 +189,7 @@ def describe(document: Document, *, path: str | None = None) -> DocumentMetadata
         definitions=lists["definitions"],
         tables=structure.tables,
         table_share=round(table_share(structure), 4),
+        largest_table_chars=structure.largest_table_chars,
         figures=structure.figures,
         slides=structure.slides,
         records=len(structure.records),
