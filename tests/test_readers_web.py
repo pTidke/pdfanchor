@@ -962,6 +962,15 @@ def timed(function, *args, **kwargs):
     return result, time.perf_counter() - start
 
 
+def parse_only_seconds() -> float:
+    """Seconds to read the rowspan tests' page with no rowspan in it: what parsing 150,000 cells
+    costs on this machine, now. Those tests bound the rowspan bookkeeping by this, not by a fixed
+    time, which a busy machine missed (3.4 s against 3). Without the work budget the page takes
+    about 4.6 times this; with it, about 1.1 times."""
+    plain = "<table><tr>" + "<td></td>" * 1000 + "</tr>" + "<tr><td>" * 150_000 + "</table><p>after</p>"
+    return timed(read_html, plain)[1]
+
+
 def test_c1_markdown_prose_naming_head_script_template_noscript_drops_nothing():
     head = read_md("The <head> element holds metadata.\n\nNext paragraph.\n\n# Heading\n")
     assert [(line.anchor.lines, line.text) for line in head.document.lines()] == [
@@ -1176,8 +1185,9 @@ def test_n1_a_row_never_rescans_the_columns_a_rowspan_holds():
         + "<tr><td>" * 150_000
         + "</table><p>after</p>"
     )
+    limit = 2 * parse_only_seconds() + 0.5
     result, seconds = timed(read_html, source)
-    assert seconds < 3 and texts(result) == ["after"] and page_flags(result) == ["html.table-limit"]
+    assert seconds < limit and texts(result) == ["after"] and page_flags(result) == ["html.table-limit"]
     held = body(
         "<table><tr><td rowspan=3>a</td><td rowspan=2>b</td><td>c</td></tr>"
         "<tr><td>d</td></tr><tr><td>e</td><td>f</td></tr><tr><td>g</td></tr></table>"
@@ -1378,6 +1388,7 @@ def test_r24_span_bookkeeping_has_a_work_budget_and_says_when_it_gives_up():
         + "<tr><td>" * 150_000
         + "</table><p>after</p>"
     )
+    limit = 2 * parse_only_seconds() + 0.5
     for source in (
         alternating,
         "<table><tr>"
@@ -1387,7 +1398,7 @@ def test_r24_span_bookkeeping_has_a_work_budget_and_says_when_it_gives_up():
         + "</table><p>after</p>",
     ):
         result, seconds = timed(read_html, source)
-        assert seconds < 3 and texts(result) == ["after"] and page_flags(result) == ["html.table-limit"]
+        assert seconds < limit and texts(result) == ["after"] and page_flags(result) == ["html.table-limit"]
         assert "positions" in result.document.pages[0].flags[0].message
 
 
