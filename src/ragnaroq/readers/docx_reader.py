@@ -212,15 +212,20 @@ class _Reader:
                 own = [item for item in items if item.tag == _W + "p"]
                 text = "\n".join(t for t in (_text(para) for para in own) if t)
                 anchor = DocxAnchor(table=number, cell=(r, start))
+                first = len(self.page.lines)
                 if text:
                     equation = any(_math(para) for para in own)
                     self.line(text, anchor, "table", table_id, equation=equation)
-                    cells.append(Cell(row=r - 1, column=start - 1, text=text, anchor=anchor))
                 for item in items:
                     if item.tag == _W + "tbl":
                         self.blocks([item], anchor, "table", table_id)
                     else:
                         self.paragraph(item, anchor, "table", table_id, own_line=False)
+                # The cell holds every line anchored to it, in order: its own paragraphs, then its
+                # nested tables and text boxes. A cell with only a nested table has a cell too.
+                held = [line.text for line in self.page.lines[first:]]
+                if held:
+                    cells.append(Cell(row=r - 1, column=start - 1, text="\n".join(held), anchor=anchor))
         if cells:
             self.page.tables.append(Table(id=table_id, page=1, rows=rows, columns=columns, cells=cells))
 

@@ -462,3 +462,35 @@ def test_an_equation_under_a_fallback_is_not_read_twice():
     )
     result = read_docx(docx_bytes(body))
     assert [line.text for line in result.document.lines()] == ["Real a"]
+
+
+# --- final review C3: a nested table's text reaches the outer cell --------------------------------
+
+
+def test_an_outer_cell_holds_the_text_of_every_line_anchored_to_it():
+    from ragnaroq.export.chunks import to_chunks
+    from ragnaroq.export.markdown import to_markdown
+
+    inner = tbl(tr(tc(p("Individual 1,50,000")), tc(p("HUF 1,50,000"))))
+    cell = tc(p("Limits by person:") + inner + p("Subject to section 80CCE."))
+    result = read_docx(docx_bytes(tbl(tr(tc(p("80C")), cell))))
+    (table,) = result.document.pages[0].tables
+    texts = {(c.row, c.column): c.text for c in table.cells}
+    assert texts == {
+        (0, 0): "80C",
+        (0, 1): "Limits by person:\nSubject to section 80CCE.\nIndividual 1,50,000\nHUF 1,50,000",
+    }
+    chunk_text = " ".join(c["text"] for c in to_chunks(result.document, Config()))
+    assert "Individual 1,50,000" in chunk_text and "HUF 1,50,000" in chunk_text
+    assert "HUF 1,50,000" in to_markdown(result.document)
+
+
+def test_a_cell_holding_only_a_nested_table_gets_a_cell():
+    inner = tbl(tr(tc(p("Individual 1,50,000")), tc(p("HUF 1,50,000"))))
+    result = read_docx(docx_bytes(tbl(tr(tc(p("Section")), tc(p("Limit"))), tr(tc(p("80C")), tc(inner)))))
+    (table,) = result.document.pages[0].tables
+    texts = {(c.row, c.column): c.text for c in table.cells}
+    assert texts[(1, 1)] == "Individual 1,50,000\nHUF 1,50,000"
+    (cell,) = [c for c in table.cells if (c.row, c.column) == (1, 1)]
+    assert cell.anchor == DocxAnchor(table=1, cell=(2, 2))
+    assert all(line.anchor == cell.anchor for line in result.document.lines() if "1,50,000" in line.text)
