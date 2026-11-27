@@ -343,6 +343,77 @@ def test_a_small_table_is_still_one_chunk():
     assert chunk["text"] == "| Section | Amount |\n| --- | --- |\n| 80C | 150000 |\n| 80D | 25000 |"
 
 
+def test_a_sheet_with_a_value_in_the_far_corner_is_cut_in_time_proportional_to_its_cells():
+    """Final review N1: a 5 KB workbook with a long A1 and one value in XFD1048576 spans
+    1,048,576 rows by 16,384 columns. Cutting it walked every row of that span and summed a
+    16,384-column width list for each, about two minutes in the main process with no limit."""
+    import io
+    import time
+
+    import pytest
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from ragnaroq import read_bytes
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet["A1"] = "word " * 300  # longer than chunk_chars, so the table is cut into groups
+    sheet["XFD1048576"] = "corner"
+    buffer = io.BytesIO()
+    book.save(buffer)
+    document = read_bytes(buffer.getvalue(), "corner.xlsx", Config()).document
+    table = document.pages[0].tables[0]
+    assert (table.rows, table.columns) == (1_048_576, 16_384)
+    started = time.perf_counter()
+    (chunk,) = to_chunks(document, Config())
+    assert time.perf_counter() - started < 2  # 126 seconds before
+    assert chunk["metadata"]["cite"] == "corner.xlsx, Sheet!A1:XFD1048576"
+    assert chunk["text"].endswith("| --- | --- |\n|  | corner |")  # the rows and columns that hold a cell
+
+
+def test_a_stray_cell_far_to_the_right_does_not_widen_every_chunk():
+    """One note in XFD1 above a column of 2,000 values made each row a chunk of its own, with
+    16,384 columns of empty cells: 375 MB of chunk text. Columns that hold no cell are left out."""
+    import io
+
+    import pytest
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from ragnaroq import read_bytes
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet["A1"], sheet["XFD1"] = "Section", "stray note"
+    for row in range(2, 2_002):
+        sheet[f"A{row}"] = f"80C-{row}"
+    buffer = io.BytesIO()
+    book.save(buffer)
+    document = read_bytes(buffer.getvalue(), "stray.xlsx", Config()).document
+    tables = assert_table_chunks_fit(document, Config())
+    assert len(tables) < 60  # 2,000 before, one a row
+    assert all(c["text"].startswith("| Section | stray note |\n| --- | --- |\n") for c in tables)
+    assert sum(_rows_shown(c) for c in tables) == 2_000
+    assert tables[1]["metadata"]["cite"].startswith(f"stray.xlsx, Sheet!A{_rows_shown(tables[0]) + 2}:A")
+
+
+def test_an_empty_row_or_column_inside_a_sheet_is_left_out_of_its_markdown():
+    from ragnaroq.export import table_markdown
+
+    cells = [Cell(row=0, column=0, text="Section"), Cell(row=0, column=2, text="Amount")]
+    cells += [Cell(row=3, column=0, text="80C"), Cell(row=3, column=2, text="150000")]
+    table = Table(id="t", page=1, rows=4, columns=3, cells=cells)
+    assert table_markdown(table) == "| Section | Amount |\n| --- | --- |\n| 80C | 150000 |"
+
+
+def test_a_table_with_no_cells_keeps_its_declared_shape():
+    from ragnaroq.export import table_markdown
+
+    assert (
+        table_markdown(Table(id="t", page=1, rows=2, columns=2, cells=[]))
+        == "|  |  |\n| --- | --- |\n|  |  |"
+    )
+
+
 def test_every_demo_table_chunk_fits_or_holds_one_row_and_starts_with_its_header():
     from ragnaroq import read_bytes
     from ragnaroq.readers import ReaderRefused

@@ -262,7 +262,7 @@ A chunk's `text` is the file's own text, raw, not escaped. Escape it before you 
 
 A figure is its own chunk, with `kind` `image`, its description as the text and its saved file in `image_path` (relative to the file's folder in `.ragnaroq/files/`).
 
-A chunk never splits a paragraph and may run across a page break. A table is always its own chunk. A PDF table is one chunk. A table of any other file is cut into groups of rows that fit `chunk_chars` (1,200 characters by default), each with the table's header row (its first row) above it, so every chunk reads on its own and stays small enough for a store's metadata limit. A row longer than that is a chunk of its own. Each group has its own id, anchors and citation: for a sheet, the range its rows cover (`rates.xlsx, Rates!A32:C60`).
+A chunk never splits a paragraph and may run across a page break. A table is always its own chunk. A PDF table is one chunk. A table of any other file is cut into groups of rows that fit `chunk_chars` (1,200 characters by default), each with the table's header row (its first row) above it, so every chunk reads on its own and stays small enough for a store's metadata limit. A row longer than that is a chunk of its own. A table shows only the rows and columns that hold a cell, so an empty row or column inside a sheet, or one value far from the rest (`XFD1048576`), never widens a chunk or `document.md`; the citation still names the exact cells. Each group has its own id, anchors and citation: for a sheet, the range its rows cover (`rates.xlsx, Rates!A32:C60`).
 
 ## How it decides
 

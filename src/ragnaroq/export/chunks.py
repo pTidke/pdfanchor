@@ -15,7 +15,7 @@ from collections import deque
 from ..anchors import Anchor, PdfAnchor, XlsxAnchor, cite
 from ..config import Config
 from ..model import SCHEMA_VERSION, Document, Line, Table
-from . import Unit, grid_cell, table_markdown, units
+from . import Unit, grid_cell, grid_markdown, layout, units
 
 NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/pTidke/ragnaroq")
 
@@ -254,34 +254,35 @@ def _line_rows(unit: Unit) -> dict[int, list[Line]]:
     return rows
 
 
-def _row_chars(widths: list[int]) -> int:
-    """The length of "| a | b |", from the cells' lengths."""
-    return 4 + sum(widths) + 3 * (len(widths) - 1) if widths else 2
+def _row_chars(widths: dict[int, int], columns: int) -> int:
+    """The length of "| a | b |" in a grid of `columns`, from the lengths of the cells it holds."""
+    return 4 + sum(widths.values()) + 3 * (columns - 1) if columns else 2
 
 
 def _table_groups(unit: Unit, limit: int) -> list[Unit]:
     """A table of a file that is not a PDF, as groups of rows whose Markdown fits in `limit`, each
     with the header row (row 1) above its rows. The header's lines belong to the first group and
-    are context to the others; a row that alone is over the limit is a group of its own."""
+    are context to the others; a row that alone is over the limit is a group of its own. Only the
+    rows and columns that hold a cell are laid out (`layout`), so the work follows the cells, not
+    the span of a sheet; every group is laid out in the whole table's columns."""
     table = unit.table
     if len(unit.text) <= limit:
         return [unit]
     lines = _line_rows(unit)
+    shown, places = layout(table)
+    columns = len(places)
     cells: dict[int, list] = {}
     for cell in table.cells:
-        cells.setdefault(cell.row, []).append(cell)
-    empty = [0] * table.columns
+        cells.setdefault(cell.row, []).append(cell.model_copy(update={"column": places[cell.column]}))
     sizes = {}
     for row, members in cells.items():
-        widths = list(empty)
-        for cell in members:
-            widths[cell.column] = len(grid_cell(cell.text))
-        sizes[row] = _row_chars(widths)
-    base = sizes.get(0, _row_chars(empty)) + 1 + len("|" + " --- |" * table.columns)
+        # of two cells at one place, the last shows
+        sizes[row] = _row_chars({cell.column: len(grid_cell(cell.text)) for cell in members}, columns)
+    base = sizes.get(0, _row_chars({}, columns)) + 1 + 1 + 6 * columns  # the header, then "| --- |…"
     groups: deque[list[int]] = deque()
     current, size = [], base
-    for row in range(1, table.rows):
-        cost = 1 + sizes.get(row, _row_chars(empty))
+    for row in shown[1:]:
+        cost = 1 + sizes.get(row, _row_chars({}, columns))  # a row is empty only in a table with no cells
         if current and size + cost > limit:
             groups.append(current)
             current, size = [], base
@@ -294,23 +295,24 @@ def _table_groups(unit: Unit, limit: int) -> list[Unit]:
     while groups:
         rows = groups.popleft()
         moved = [c.model_copy(update={"row": i}) for i, row in enumerate(rows, 1) for c in cells.get(row, [])]
+        text = grid_markdown(len(rows) + 1, columns, [*header, *moved])
+        if len(rows) > 1 and len(text) > limit:  # a grid too large is written cell by cell
+            groups.extendleft([row] for row in reversed(rows))
+            continue
         grid = Table(
             id=table.id,
             page=table.page,
             rows=len(rows) + 1,
-            columns=table.columns,
+            columns=columns,
             cells=[*header, *moved],
             status=status,
             flags=table.flags,
         )
-        if len(rows) > 1 and len(table_markdown(grid)) > limit:  # a grid too large is written cell by cell
-            groups.extendleft([row] for row in reversed(rows))
-            continue
         own = [line for row in rows for line in lines.get(row, [])]
         if not made:
             own = [*heads, *own]
         if own:  # rows with no text have nothing to show or cite
-            made.append(Unit("table", unit.page, own, grid, context=heads if made else []))
+            made.append(Unit("table", unit.page, own, grid, context=heads if made else [], markdown=text))
     return made
 
 

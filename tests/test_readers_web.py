@@ -1242,7 +1242,10 @@ def test_n4_a_colspan_stops_stretching_the_grid_and_an_export_stays_small():
     assert table.columns <= Config().max_cells + 1000
     assert len(texts(result)) == 1020 and seconds < 5
     markdown, seconds = timed(table_markdown, table)
-    assert len(markdown) < 200_000 and seconds < 5 and "row 1, column 1: x" in markdown
+    assert len(markdown) < 200_000 and seconds < 5
+    assert (
+        markdown.startswith("| x | x |") and markdown.count("\n") == 21
+    )  # the 1,000 columns that hold a cell
     small = body("<table><tr><td>a</td><td>b|c</td></tr><tr><td>d</td></tr></table>")
     assert table_markdown(small.document.pages[0].tables[0]) == "| a | b\\|c |\n| --- | --- |\n| d |  |"
 
