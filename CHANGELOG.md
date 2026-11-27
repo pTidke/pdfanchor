@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.3.0 — 27 November 2026
+
+Folders and formats. `ragnaroq index ./folder` reads a folder of mixed files and writes `.ragnaroq/`, ready for a vector database. The PDF engine and its numbers are unchanged.
+
+### Added
+
+- **`ragnaroq index`.** It reads every supported file and writes `.ragnaroq/` inside the folder: `manifest.json`, `changes.json`, `chunks.jsonl` for the whole folder, and for each file `document.json`, `document.md`, `chunks.jsonl` and `images/`. The originals are never changed. A second run reads only files whose content, reader or settings changed, and deletes the output of removed files. Exit code `1` when any file failed, `2` when anything needs a person, else `0`. One file's failure never stops a run.
+  - **POSIX only in 0.3** (Linux and macOS). On Windows it exits `1`.
+  - **Skipped, and listed with the reason:** hidden files and folders, symbolic links that lead outside the folder, empty files, files over 100 MiB, and files of a type it does not read.
+  - **Private:** `.ragnaroq/` folders are `0700` and files `0600`. A run that is killed may leave one private `ragnaroq-*` folder in `TMPDIR`.
+  - **Options:** the PDF options of `convert` that apply (`--ocr`, `--lang`, `--dpi`, `--exclude-script`, `--third-reader` and its model options, `--easyocr-models`), `--fresh`, and `--file-timeout`.
+- **Readers for Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV.** Each writes the same `document.json`, with a location suited to its file: paragraph or table cell, sheet and cell, slide and shape, element path, line range, JSON pointer, XML path, row and column. Every anchor has a short citation (`Rates!C7`, `¶18`, `slide 4, Title 1`, `lines 40–42`). Detection is by content first. JSON, CSV and XML are in the core install; the others need the new extra `ragnaroq[formats]`.
+  - Excel shows cells as Excel does (`5%`, `₹1,50,000`), and keeps the stored value, formula and format in `Line.value`. Hidden sheets, rows and columns are left out, with a flag. A formula with no stored value is flagged `xlsx.no-cached-value`; a number format it does not know is flagged `xlsx.format-unknown`.
+  - Word tracked changes are read as accepted, flagged `docx.tracked-changes`. Comments are left out, flagged `docx.comments`. Footnotes, endnotes and PowerPoint speaker notes are kept, each at its own anchor.
+  - CSV is read as UTF-16 with a byte-order mark, else UTF-8, else Windows-1252 (flagged `encoding.guessed`). A duplicate JSON key is flagged `json.duplicate-key`; the last wins.
+- **Images.** Every image in those files is saved under `images/`, in its own format when a browser can show it, and appears in `document.md` where it sits and as a chunk of its own (`kind` `image`). Its description comes from the file's caption or alt text, otherwise from the text OCR finds in it, read by the same two-reader rules as a scanned page. Images under 32 by 32 pixels are not saved, and a flag counts them. An image with no description is flagged `image.no-description`.
+- **Model-written descriptions, optional.** The new extra `ragnaroq[describe]` with `--describe-images`, `--describe-models` and `--describe-download` asks SmolVLM-500M-Instruct (Apache-2.0, a pinned revision, checksummed, no remote code) for one sentence per image. It is off by default. The download is about 1 GB, and a description takes about 7 seconds an image on 4 CPUs. The sentence is a label marked "(model)", never in `text`, and never changes a status. It is kept only if it is a whole sentence of three or more words and every number, currency, percent, date, negation, month and scale word in it appears in the image's OCR text. Claims about structure ("a table with 31 rows") are not checked.
+- **`changes.json`**, for keeping a vector database in step: `chunks_added`, `chunks_changed`, `chunks_removed`, and `reset`. A store upserts added and changed, and deletes removed. On `reset` (no usable last run), it drops every chunk not in `chunks.jsonl`. [docs/vector-databases.md](docs/vector-databases.md) shows Qdrant, Chroma, Pinecone and pgvector.
+- **A demo folder**, `references/demo/`, of awkward files with hand-written answer keys, and a scoring mode in `ragnaroq evaluate` for them: a folder with `*.expected.jsonl` files is scored by anchor. Every exact-format file scores `ok`.
+- **Safety for files you did not choose.**
+  - Each file is read in an isolated worker, with a time limit (`--file-timeout`, 120 seconds by default) and a memory limit (2,048 MB). A failed file is read again when its limit is raised.
+  - Zip-based files are checked for unpacked size and entry count before anything opens them.
+  - XML is read with defusedxml, so a file with entities or a DTD is refused (`xml.entities`).
+  - Image paths cannot leave the file's folder, and Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM, so Ghostscript never runs.
+  - Nothing reaches the network. A remote image is kept with its URL and flagged `image.remote-not-fetched`.
+
+### Changed
+
+- **Schema 0.3.0.** Every line has an `anchor` (new, one type per file kind). `Page.kind` gains `sheet`, `slide` and `body`, and `Page.name` is new. `Line.box` and the page size are optional outside PDF. `Line.source` names the format. `Figure` is new: an image's id, anchor, saved path, size, description and where the description came from. A 0.1 or 0.2 `document.json` still loads, and is restamped `0.3.0`.
+- **Chunks have a new shape** that loads into any vector database: a UUID `id`, `text`, `embedding_text`, `anchors` and flat `metadata` (no nulls, no nesting, the same 19 keys on every chunk, `anchors_json` capped at 20,000 bytes). Tables and images are chunks of their own. `metadata.cite` is a short citation. The ids are stable for the same file content and lines.
+- **Policy 0.6.** Text from a file's own content (any source other than `native` and `ocr:*`) is accepted unless a validator flags it, because it was not read from a picture. Cells of Word, Excel, HTML, CSV and JSON tables are accepted the same way. Text read from an image follows the scanned-page rules. A model's sentence is never accepted: it is a label.
+- **`document.md` escapes `\ [ ] < > &`** in text from the file, so file text cannot make an image, link, raw HTML or a comment. This is the one change to PDF output. `document.json`, chunks and evaluation are unchanged. `document.md` is for viewing, not a sanitiser: block structure (`#` headings, lists) can still render, and bare URLs become links where a viewer links them. A chunk's `text` is the file's own text, raw: escape it before you render it.
+
+### Measured
+
+The PDF numbers did not move. The four sets were scored again from their stored readings under the 0.3.0 code, with nothing read again, and match the 0.2.2 table: IRS 0 wrong on a number, date or negation and 1,255 lines to a person; code table 0 and 322; held-out IRS with the third reader 1 and 686 (1,126 with two readers); CBDT with the third reader 1 and 74 (134 with two readers). See [references/](references/README.md#checked-again-for-030). On the demo folder, every exact-format file scores `ok`.
+
+### Known limits
+
+- Charts in Word, Excel and PowerPoint are not read. Each is flagged `chart.not-read`.
+- PDF embedded images are not extracted in 0.3.
+- `.doc`, `.xls` and `.ppt` are not read.
+- Remote images are not fetched: they are kept with their URL and flagged.
+- Word headers and footers, and PowerPoint footer, date and slide-number placeholders, are left out, with a flag on the document.
+- Hidden HTML text is read and flagged `html.hidden`.
+- Equations are read as plain symbols and flagged. SmartArt, OLE objects and image fills are flagged, not read.
+- Hidden Excel sheets, rows and columns are left out, with a flag.
+- Two shapes on one slide with the same name share an anchor.
+- `ragnaroq index` does not run on Windows.
+- From 0.2: a number both readers leave out is not seen.
+
 ## 0.2.2 — 26 November 2026
 
 Measured on Indian tax documents for the first time: two CBDT documents, Circular 7/2026 and Notification 1/2026. See [references/](references/README.md#cbdt-set-022).

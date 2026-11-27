@@ -82,6 +82,32 @@ The release gate for 0.2.0 was: no settled line wrong on a number, date or negat
 
 The same set found 6 accepted lines wrong on a number with and without the third reader. They come from the two-reader rule: both OCR readers read a "1" as "|" and agree. Since 0.2.1 a lone "|" in text read from an image is flagged, and 1 remains (a title where both readers missed the small "(Form 1040)").
 
+## Exact formats: the demo folder
+
+Word, Excel, PowerPoint, HTML, Markdown, JSON, XML and CSV files hold their text exactly, so there is nothing to misread and no need for a scan. They are scored a different way: against an answer key written by hand.
+
+[`references/demo/`](../references/demo) holds one file for each format, made on purpose to hold awkward cases (`references/make_demo_folder.py` records how). Beside each file is `<file>.expected.jsonl`, one JSON object per line:
+
+- a line: its `anchor` and its `text`, and a `flag` if the line must carry that rule;
+- a figure: its anchor, `description` and `description_source`;
+- a `document_flag` that the document must carry. A file the reader must refuse, such as an XML entity bomb, has only this.
+
+```bash
+ragnaroq evaluate references/demo --out results/demo
+```
+
+A folder with `*.expected.jsonl` files is scored in this mode. Each expected line is matched to the line at the same anchor, and its text is compared after Unicode NFC normalisation and nothing else: no trimming, no case folding. The report has a row for each file:
+
+| Column | What it means |
+| --- | --- |
+| Right | Expected lines found at their anchor with the right text, and flags and figures as expected |
+| Wrong | Found, with different text or description |
+| Missing | An expected anchor with no line |
+| Flags missing | A flag the answer key requires that is not there |
+| Extra | Lines at anchors the key does not list. Reported, but they do not fail the file |
+
+A file is `ok` when nothing is wrong, missing or unflagged. The bar for 0.3.0 is `ok` on every exact-format file in the demo folder, and it holds. The PDF scoring above is unchanged: a folder with `*.truth.json` files is scored as before.
+
 ## Limits of synthetic references
 
 A page rendered from a born-digital PDF is cleaner than real paper in several ways:

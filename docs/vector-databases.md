@@ -1,15 +1,15 @@
 # Loading chunks into a vector database
 
-`chunks.jsonl` is built to load as it stands. Every line is one chunk:
+`ragnaroq index ./folder` writes `.ragnaroq/chunks.jsonl`, with every chunk of the folder. `ragnaroq convert` writes one for a single PDF. Either file is built to load as it stands. Every line is one chunk:
 
 ```json
 {"id": "6f1c…", "text": "…", "embedding_text": "…", "metadata": {…}, "anchors": […]}
 ```
 
 - `id` is a UUID, stable for the same file content and the same lines. Upsert by it.
-- `embedding_text` is what to embed. `text` is what to show.
+- `embedding_text` is what to embed. `text` is what to show. `text` is the file's own text, raw: escape it before you render it as Markdown or HTML.
 - `metadata` is flat: every value is a string, integer, float or boolean, never null, and every chunk has the same keys. It loads into stores that reject nested or null metadata.
-- `anchors` is the full list of places the chunk came from. `metadata["anchors_json"]` holds the same list as a string, cut to 20,000 characters if needed; a cut chunk carries the rule `chunk.anchors-truncated` in `metadata["rules"]`.
+- `anchors` is the full list of places the chunk came from. `metadata["anchors_json"]` holds the same list as a string. It is cut to 20,000 bytes if needed, by dropping whole anchors from the end, so it is always valid JSON; a cut chunk carries the rule `chunk.anchors-truncated` in `metadata["rules"]`.
 - `metadata["cite"]` is a citation you can show as it is: `native.pdf, p. 1`, `rates.xlsx, Rates!A1:D12`, `guide.docx, ¶18–¶24`.
 
 | Key | Meaning |
@@ -25,6 +25,29 @@
 | `chars` | Length of `text` |
 | `anchors_json` | The anchors as JSON text |
 | `image_path` | The saved image on an `image` chunk, else `""` |
+
+## Keeping a database in step
+
+A second `ragnaroq index` writes `changes.json`, which says what differs from the last run:
+
+```json
+{
+  "added": ["<file id>"],
+  "changed": ["<file id>"],
+  "removed": ["<file id>"],
+  "chunks_added": ["<chunk id>"],
+  "chunks_changed": ["<chunk id>"],
+  "chunks_removed": ["<chunk id>"],
+  "reset": false
+}
+```
+
+- **Upsert** `chunks_added` and `chunks_changed`. A changed chunk keeps its id: its file's content or verdict changed.
+- **Delete** `chunks_removed`.
+- **On `reset`, drop every chunk whose id is not in `chunks.jsonl`.** `reset` is `true` when there was no usable last run to compare with (the first run, or a manifest that is missing or cannot be read), so `changes.json` cannot list what to delete.
+- Every chunk also carries `file_id`, so a store can delete a file's chunks by filter.
+
+Ids are stable: the same file content and lines give the same ids, so loading the same run twice does not duplicate anything. The snippets below upsert every chunk, which is always safe; to send only what changed, filter `chunks` on `chunks_added` and `chunks_changed`.
 
 To embed, use any model. The snippets below use `embed(texts)` for yours, and read a folder index at `.ragnaroq/`.
 
@@ -85,7 +108,7 @@ index.upsert(vectors=[
 ])
 ```
 
-Pinecone limits a record's metadata to 40 KB, including `text` if you store it there. `anchors_json` is capped at 20,000 bytes, so it leaves room; keep the rest under the limit too.
+Pinecone limits a record's metadata to about 40 KB, including `text` if you store it there. `anchors_json` is capped at 20,000 bytes, so it leaves room; keep the rest under the limit too.
 
 ## pgvector
 
