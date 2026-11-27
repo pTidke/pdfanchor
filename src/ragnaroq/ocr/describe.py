@@ -18,10 +18,11 @@ import os
 import re
 import time
 import unicodedata
+from collections.abc import Sequence
 from pathlib import Path
 
-from ..crosscheck import critical_tokens
-from . import EngineUnavailable
+from ..crosscheck import NEGATIONS
+from . import EngineUnavailable, disable_xet
 
 REPO = "HuggingFaceTB/SmolVLM-500M-Instruct"
 REVISION = "753c1752602b5e739af7a7fa6947a635051897a3"
@@ -53,41 +54,109 @@ FILES: dict[str, str] = {
 # --------------------------------------------------------------------------------- the filter
 
 _END = re.compile(r"""[.!?]["”’')\]]*(?=\s|$)""")
+_ABBREVIATION = re.compile(
+    r"(?:^|[^\w.])(?:fig|no|dr|mr|mrs|ms|rs|st|sr|jr|co|inc|ltd|vs|etc|e\.g|i\.e|a\.m|p\.m)\.$", re.IGNORECASE
+)
+MIN_WORDS = 3
+_NUMBER = re.compile(r"(?<![\d.,/\-])(\d+(?:,\d+|,\s\d{3}(?!\d)|[./\-]\d+)*)(\s?%)?")
+_WORD = re.compile(r"[^\W\d_]+")
+_MONTHS = ("january february march april may june july august september october november december").split()
+_MONTH = {name: name for name in _MONTHS} | {name[:3]: name for name in _MONTHS} | {"sept": "september"}
+# One entry per currency: its sign and the words that name it. Either one in the picture will do.
+_CURRENCIES = (
+    ("₹", {"rupee", "rupees", "inr", "rs"}),
+    ("$", {"dollar", "dollars", "usd"}),
+    ("€", {"euro", "euros", "eur"}),
+    ("¥", {"yen", "jpy"}),
+    ("£", {"pound", "pounds", "gbp"}),
+)
+_SCALES = {"thousand", "lakh", "lakhs", "crore", "crores", "million", "millions", "billion", "billions"}
 
 
-def _squash(text: str) -> str:
-    """Letters, digits, currency signs and percent signs only, case-folded: every separator
-    (spaces, commas, points, slashes, dashes, brackets) is gone."""
-    folded = unicodedata.normalize("NFKC", text).casefold()
-    return "".join(ch for ch in folded if ch.isalnum() or ch == "%" or unicodedata.category(ch) == "Sc")
+def _fold(text: str) -> str:
+    return unicodedata.normalize("NFKC", text).casefold()
+
+
+def _ascii_digits(text: str) -> str:
+    return "".join(str(unicodedata.digit(ch)) if ch.isdigit() else ch for ch in text)
+
+
+def _numbers(text: str) -> set[str]:
+    """The numbers in `text` as tokens: the commas and spaces inside a number removed, the
+    point, "/" and "-" kept, a percent sign kept. "1.5" is not "15" and "12" is not "1.2"."""
+    found = set()
+    for match in _NUMBER.finditer(_ascii_digits(_fold(text))):
+        number = re.sub(r"[,\s]", "", match[1])
+        found.add(number + "%" if match[2] else number)
+    return found
+
+
+def _ocr_numbers(lines: Sequence[str]) -> set[str]:
+    """The numbers of each OCR line on its own: lines are never joined, so "Line 1" and
+    "2 apples" do not make 12. A number with a percent sign also stands as itself."""
+    found: set[str] = set()
+    for line in lines:
+        for token in _numbers(line):
+            found.add(token)
+            found.add(token.rstrip("%"))
+    return found
 
 
 def first_sentence(raw: str) -> str:
     """The text up to the first sentence end, or "" when it is empty or has no clean end (a
-    model stopped at its token limit does not end)."""
+    model stopped at its token limit does not end). A point after an abbreviation ("Fig.",
+    "No.", "Rs.", "e.g.") is not an end."""
     text = " ".join(raw.split())
-    found = _END.search(text)
-    sentence = text[: found.end()] if found else ""
-    return sentence if any(ch.isalpha() for ch in sentence) else ""
+    for found in _END.finditer(text):
+        if text[found.start()] == "." and _ABBREVIATION.search(text[: found.start() + 1]):
+            continue
+        sentence = text[: found.end()]
+        return sentence if any(ch.isalpha() for ch in sentence) else ""
+    return ""
 
 
-def accept(raw: str, ocr_text: str) -> str | None:
-    """The first sentence of what the model said, if it can stand beside the image's OCR text;
-    otherwise None. Every critical token (a number, date or percent, as
-    `crosscheck.critical_tokens` gives them) and every currency sign in the sentence must be in
-    the OCR text, separators ignored. With no OCR text, only a sentence with none is kept."""
+def _groups(words: set[str], signs: set[str]) -> set[str]:
+    """The currencies a text names, by sign or by word."""
+    return {sign for sign, names in _CURRENCIES if sign in signs or names & words}
+
+
+def accept(raw: str, ocr: "Sequence[str] | str") -> str | None:
+    """The first sentence of what the model said, if it can stand beside the image's OCR text
+    (one string per OCR line); otherwise None.
+
+    A sentence is dropped when it has fewer than `MIN_WORDS` words, or when any of these is not
+    in the OCR text: a number, date or percent (matched as a token, one OCR line at a time); a
+    currency sign, or the currency a word such as "rupees" names; a month name; a scale word
+    (lakh, crore, million ...); a negation. With no OCR text, only a sentence with none of
+    them is kept. Structural claims ("31 rows", "two columns") cannot be checked."""
     sentence = first_sentence(raw)
-    if not sentence:
+    if len(sentence.split()) < MIN_WORDS:
         return None
-    seen = _squash(ocr_text)
-    needed = {_squash(token) for token in critical_tokens(sentence) if any(c.isdigit() for c in token)}
-    signs = {ch for ch in _squash(sentence) if unicodedata.category(ch) == "Sc"}
-    if any(sign not in seen for sign in signs):
+    lines = ocr.splitlines() if isinstance(ocr, str) else list(ocr)
+    seen_text = _fold(" ".join(lines))
+    seen_words = set(_WORD.findall(seen_text))
+    seen_signs = {ch for ch in seen_text if unicodedata.category(ch) == "Sc"}
+    said = _fold(sentence)
+    words = set(_WORD.findall(said))
+    signs = {ch for ch in said if unicodedata.category(ch) == "Sc"}
+    if not _numbers(sentence) <= _ocr_numbers(lines):
         return None
-    for token in needed:
-        # Not inside a longer number: "6" is not in "16".
-        if not re.search(rf"(?<!\d){re.escape(token)}(?!\d)", seen):
-            return None
+    if not NEGATIONS & words <= seen_words:
+        return None
+    months = {_MONTH[word] for word in words if word in _MONTH and word != "may"}
+    if re.search(r"\bmay\s+\d|\d\s+may\b", said):
+        months.add("may")
+    if not months <= {_MONTH[word] for word in seen_words if word in _MONTH}:
+        return None
+    wanted = _groups(words, signs)
+    if not wanted <= _groups(seen_words, seen_signs):
+        return None
+    known = {sign for sign, _ in _CURRENCIES}
+    if not (signs - known) <= seen_signs:  # a sign no word names must be there itself
+        return None
+    scales = {word.rstrip("s") for word in words & _SCALES}
+    if not scales <= {word.rstrip("s") for word in seen_words & _SCALES}:
+        return None
     return sentence
 
 
@@ -141,6 +210,7 @@ class SmolVlm:
     def __init__(self, model_dir: str | None = None, download: bool = False):
         self.model_dir, self.download = model_dir, download
         self._loaded: tuple | None = None  # processor, model, torch
+        self._found: Path | None = None  # where check() found the files
         self._version: str | None = None
 
     def _folder(self) -> Path:
@@ -169,39 +239,62 @@ class SmolVlm:
             )
         return self._version
 
-    def prepare(self) -> None:
-        if self._loaded:
-            return
-        folder = self._folder()
+    def _missing(self, folder: Path) -> list[str]:
+        """The files not in `folder`; without `download`, any missing file is an error."""
         missing = [name for name in FILES if not (folder / name).is_file()]
         if missing and not self.download:
             raise EngineUnavailable(
                 f"SmolVLM files are missing from {folder} ({', '.join(missing)}). Pass "
                 f"--describe-download to fetch {REPO} at revision {REVISION[:12]} (1.0 GB)."
             )
+        return missing
+
+    def _locate(self) -> Path:
+        """The folder holding the files: `model_dir` or the cache, after a download when it is
+        asked for and files are missing. Nothing is checked or loaded."""
+        folder = self._folder()
+        if not self._missing(folder):
+            return folder
+        disable_xet()  # Xet transfers hang behind a proxy
+        try:
+            from huggingface_hub import snapshot_download
+
+            # Checked and loaded where the files landed, whatever the cache settings.
+            return Path(
+                snapshot_download(
+                    REPO,
+                    revision=REVISION,
+                    allow_patterns=list(FILES),
+                    **({"local_dir": self.model_dir} if self.model_dir else {}),
+                )
+            )
+        except Exception as error:
+            raise EngineUnavailable(
+                f"Could not download {REPO}@{REVISION[:12]} ({type(error).__name__}: {error})."
+            ) from error
+
+    def check(self) -> None:
+        """What a run asks for at its start: the libraries are installed and the files are
+        there (fetched first, with `download=True`). Their checksums and the loading wait for
+        the first image, so a folder with no images pays nothing."""
+        self._missing(self._folder())  # the files first: that is what a person can fix
+        self._torch()
+        try:
+            import transformers  # noqa: F401
+        except ImportError as error:
+            raise EngineUnavailable(NEEDS) from error
+        self._found = self._locate()
+
+    def prepare(self) -> None:
+        if self._loaded:
+            return
+        self._missing(self._folder())
         torch = self._torch()
         try:
             import transformers
         except ImportError as error:
             raise EngineUnavailable(NEEDS) from error
-        if missing:
-            os.environ["HF_HUB_DISABLE_XET"] = "1"  # Xet transfers hang behind a proxy
-            try:
-                from huggingface_hub import snapshot_download
-
-                # Checked and loaded where the files landed, whatever the cache settings.
-                folder = Path(
-                    snapshot_download(
-                        REPO,
-                        revision=REVISION,
-                        allow_patterns=list(FILES),
-                        **({"local_dir": self.model_dir} if self.model_dir else {}),
-                    )
-                )
-            except Exception as error:
-                raise EngineUnavailable(
-                    f"Could not download {REPO}@{REVISION[:12]} ({type(error).__name__}: {error})."
-                ) from error
+        folder = self._found or self._locate()
         verify(folder)
         # Only the checked files: nothing fetched, no code run, no pickled weights.
         offline = {"trust_remote_code": False, "local_files_only": True, "use_safetensors": True}

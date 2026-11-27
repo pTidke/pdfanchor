@@ -48,6 +48,7 @@ _SKIPPED = "Not read within the file's time limit."
 _LATE = "Not converted within the file's time limit."
 _UNCHECKED = "Not checked within the file's time limit."
 # What describe works out afresh each time it runs, so a later run replaces them.
+DESCRIBE_FAILED = ("describe", "failed")  # images the describer failed on, in `ReadResult.cache`
 _OWN_FLAGS = {"image.ocr-skipped", "image.too-large", "image.not-viewable"}
 
 
@@ -347,9 +348,10 @@ def _label(
             try:
                 if sha not in reads and engines:
                     reads[sha] = _read(data, engines, config)
-                ocr = " ".join(line.text for line in reads[sha].lines) if sha in reads else ""
+                ocr = [line.text for line in reads[sha].lines] if sha in reads else []
                 labels[sha] = accept(describer.describe(_for_ocr(data, config), SECONDS), ocr)
-            except Exception:  # a picture the model cannot describe is left as it is
+            except Exception:  # a picture the model cannot describe is left as it is, and counted
+                result.cache[DESCRIBE_FAILED] = result.cache.get(DESCRIBE_FAILED, 0) + 1
                 continue
         figure.model_description = labels[sha]
 

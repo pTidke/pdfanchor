@@ -543,8 +543,11 @@ def _settings(
     }
 
 
+NO_FIGURES = {"pdf", "csv", "json", "xml"}
+
+
 def _hash(settings: dict, fmt: str) -> str:
-    if fmt == "pdf":  # a PDF has no figures to describe: the describer is not part of its reading
+    if fmt in NO_FIGURES:  # nothing to describe: the describer is not part of how they are read
         settings = {key: value for key, value in settings.items() if key != "describe"}
     body = json.dumps({**settings, "reader": _reader_name(fmt), "format": fmt}, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
@@ -558,6 +561,7 @@ class _Context:
     worker: FileReader
     held: _State = field(default=None)
     describer: object = None  # writes a sentence for each image; None leaves images as they are
+    described_failed: int = 0  # images it failed on, for the run's notes
 
 
 def _make(context: _Context, found: Found, read: Read, out: Path) -> tuple:
@@ -578,6 +582,7 @@ def _make(context: _Context, found: Found, read: Read, out: Path) -> tuple:
             result = isolation.read_file(read.data, found.path, config, base=read.base, reader=context.worker)
             deadline = started + config.file_timeout_seconds
             figures.describe(result, context.engines, config, deadline=deadline, describer=context.describer)
+            context.described_failed += result.cache.get(figures.DESCRIBE_FAILED, 0)
             figures.save(result, out, config, deadline=deadline)
             document = result.document
         write(document, out, config)
@@ -882,6 +887,8 @@ def _run(held: _State, real_root, config, engines, third_reader, describer, fres
             done(carried if carried is not None else process(found, read, hashed, previous))
             read = None
 
+    if context.described_failed:
+        notes.append(f"{context.described_failed} images could not be described by the model.")
     entries.sort(key=lambda entry: entry.path)
     manifest = Manifest(files=entries)
     changes = compare(old, manifest, leftover)

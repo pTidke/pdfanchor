@@ -15,7 +15,7 @@ import re
 import time
 from pathlib import Path
 
-from . import EngineUnavailable, LineUnreadable
+from . import EngineUnavailable, LineUnreadable, disable_xet
 
 REPO = "PaddlePaddle/PaddleOCR-VL-1.6"
 REVISION = "132c45f52c0a26ed5a6b2f6bd8e3985794cc27dd"
@@ -166,6 +166,7 @@ class PaddleOcrVl:
         except ImportError as error:
             raise EngineUnavailable(NEEDS) from error
         if missing:
+            disable_xet()
             try:
                 from huggingface_hub import snapshot_download
 

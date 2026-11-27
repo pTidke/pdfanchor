@@ -250,7 +250,7 @@ def to_chunks(
         if unit.status not in include:
             continue
         if unit.figure:
-            if _figure_embedding(unit.figure):
+            if unit.figure.description.strip():
                 flush()
                 chunks.append(_chunk(document, path, heading, [unit]))
             continue

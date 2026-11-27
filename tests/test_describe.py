@@ -101,9 +101,9 @@ def test_a_sentence_that_does_not_end_cleanly_is_dropped(raw):
 
 
 def test_a_long_answer_is_cut_at_its_first_sentence_end():
-    assert accept("A form. It then goes on and on 999.", "") == "A form."
+    assert accept("A red form here. It then goes on 999.", "") == "A red form here."
     assert accept('A sign saying "Open." and more', "") == 'A sign saying "Open."'
-    assert accept("Part I Income.", "part i income") == "Part I Income."
+    assert accept("Part I Income.", "part i income") == "Part I Income."  # three words, no number
     assert accept("Pay 5.50 now. Then 7.", "5.50") == "Pay 5.50 now."  # a decimal point is no end
 
 
@@ -111,10 +111,12 @@ def test_a_critical_token_must_be_in_the_ocr_text():
     assert accept("The rate is 12%.", "rate 12 %") == "The rate is 12%."
     assert accept("The rate is 15%.", "rate 12 %") is None
     assert accept("Due 31 March 2026.", "Due date: 31/03/2026") is None  # a date written another way
-    assert accept("Due 12/31/2026.", "due 12-31-2026") == "Due 12/31/2026."
+    assert accept("Due 12/31/2026 here.", "due 12-31-2026") is None  # "/" and "-" are not alike
+    assert accept("Due 12/31/2026 here.", "due 12/31/2026") == "Due 12/31/2026 here."
     assert accept("It is Form 1040.", "SCHEDULE C (Form 1040)") == "It is Form 1040."
     assert accept("About 6 boxes.", "line 16") is None  # a number inside another number is not found
-    assert accept("It is not 5.", "5") == "It is not 5."  # words such as "not" are never required
+    assert accept("It is not 5.", "5") is None  # a "not" the picture does not have
+    assert accept("It is not 5.", "is not 5") == "It is not 5."
 
 
 def test_a_currency_sign_must_be_in_the_ocr_text_too():
@@ -213,10 +215,15 @@ def test_the_chunk_keeps_the_description_and_embeds_the_label_marked_model():
     assert chunk["text"] == "₹12,000"
     assert chunk["embedding_text"].endswith("₹12,000\n(model) A price tag reading ₹12,000.")
     assert chunk["metadata"]["chars"] == len("₹12,000")
-    only = figure.model_copy(update={"description": "", "description_source": "none"})
-    res.document.pages[0].figures = [only]
-    (chunk,) = chunks.to_chunks(res.document, CONFIG, include=("accepted", "flagged"))
-    assert chunk["text"] == "" and chunk["embedding_text"].endswith("(model) A price tag reading ₹12,000.")
+
+
+def test_a_figure_whose_only_text_is_the_label_makes_no_chunk_but_keeps_the_label():
+    figure, _ = described("Two boxes joined by a line.", engines=[])
+    assert figure.description == "" and figure.model_description
+    res = result((figure, None))
+    assert chunks.to_chunks(res.document, CONFIG) == []
+    assert "— model: Two boxes joined by a line." in markdown.to_markdown(res.document)
+    assert "Two boxes joined" in res.document.model_dump_json()
 
 
 def test_document_md_shows_the_label_after_the_description_and_escapes_it():
@@ -242,16 +249,17 @@ def test_the_describer_is_part_of_the_settings_and_reaches_the_figures(tmp_path)
         return folder.index(str(root), CONFIG, engines=[], describer=describer)
 
     base = run(None)
-    one = run(Says("A picture."))
+    one = run(Says("A small picture here."))
     assert one.changes.changed == [e.file_id for e in one.manifest.files]  # the settings changed
-    again = run(Says("A picture."))
+    again = run(Says("A small picture here."))
     assert again.changes.changed == []
-    other = Says("A picture.")
+    other = Says("A small picture here.")
     other.version = lambda: "says 2"
     assert run(other).changes.changed == one.changes.changed
     assert [e.settings for e in base.manifest.files] != [e.settings for e in one.manifest.files]
     state = root / folder.STATE
-    assert "(model) A picture." in (state / "chunks.jsonl").read_text(encoding="utf8")
+    documents = [path.read_text(encoding="utf8") for path in state.rglob("document.json")]
+    assert any("A small picture here." in text for text in documents)
     assert folder._settings(CONFIG, [], None, Says("x"))["describe"] == ["says", "says 1"]
 
 
@@ -408,3 +416,150 @@ def test_the_real_model_describes_a_picture_and_the_filter_checks_it(capsys):
         print(f"\nREAL MODEL raw={raw!r} kept={kept!r}")
     assert isinstance(raw, str) and (kept is None or kept in raw)
     assert reader.version().startswith(describe.REPO)
+
+
+# --- fix round 1 (R32) ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("which", ["describe", "paddle_vl"])
+def test_the_download_switches_xet_off_in_the_library_as_well_as_the_environment(
+    which, monkeypatch, tmp_path
+):
+    from ragnaroq.ocr import paddle_vl
+
+    reader = SmolVlm if which == "describe" else paddle_vl.PaddleOcrVl
+    seen = []
+    constants = types.SimpleNamespace(HF_HUB_DISABLE_XET=False)  # read once, when the library loaded
+
+    def snapshot_download(repo, **kwargs):
+        seen.append((constants.HF_HUB_DISABLE_XET, os.environ.get("HF_HUB_DISABLE_XET")))
+        raise ConnectionError("stop here")
+
+    hub = types.SimpleNamespace(snapshot_download=snapshot_download, constants=constants)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace())
+    monkeypatch.delenv("HF_HUB_DISABLE_XET", raising=False)
+    monkeypatch.setattr(reader, "_torch", staticmethod(lambda: types.SimpleNamespace()))
+    with pytest.raises(EngineUnavailable):
+        reader(model_dir=str(tmp_path / "none"), download=True).prepare()
+    assert seen == [(True, "1")]
+
+
+@pytest.mark.parametrize(
+    ("raw", "ocr"),
+    [
+        ("The amount is not 12,000.", "Amount 12,000"),  # a negation the picture does not have
+        ("There is no balance due.", "Balance due"),
+        ("Dated 5 January 2024.", "Dated 5 March 2024"),
+        ("It shows 12,000 rupees.", "$12,000"),
+        ("It shows 12,000 dollars.", "₹12,000"),
+        ("It shows 12,000 euros.", "₹12,000"),
+        ("It shows 12,000 yen in total.", "₹12,000"),
+        ("It shows 12 lakh in total.", "12 crore"),
+        ("It shows 12 million in total.", "12"),
+    ],
+)
+def test_negations_months_currency_words_and_scales_must_be_in_the_ocr_text(raw, ocr):
+    assert accept(raw, [ocr]) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "ocr"),
+    [
+        ("The amount is not 12,000.", "Amount is NOT 12,000"),
+        ("Dated 5 Jan 2024 here.", "Dated 5 January 2024"),
+        ("It shows 12,000 rupees.", "Rs. 12,000"),
+        ("It shows 12,000 rupees.", "₹12,000"),
+        ("It shows INR 12,000.", "₹12,000"),
+        ("It shows 12 lakh in total.", "12 Lakh"),
+        ("It may be 12 here.", "12"),  # "may" the verb is not a month
+    ],
+)
+def test_the_same_facts_in_other_words_are_kept(raw, ocr):
+    assert accept(raw, [ocr]) == raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "lines"),
+    [
+        ("The rate is 1.5 here.", ["Rate 15"]),
+        ("The rate is 15 here.", ["Rate 1.5"]),
+        ("The value is 12 here.", ["Value 1.2"]),
+        ("The page is 12 here.", ["Line 1", "2 apples"]),  # never across lines
+        ("The page is 12 here.", ["Line 1 2 apples"]),
+        ("The date is 2024-01-15 here.", ["Date 15/01/2024"]),
+        ("The range is 10-20 here.", ["range 1020"]),
+        ("The tax rate is 5% here.", ["Rate 5"]),
+        ("The tax rate is 5% here.", ["Rate 15%"]),
+        ("The total is 1,234 here.", ["Total 1,234,567"]),
+    ],
+)
+def test_numbers_are_matched_as_tokens_one_ocr_line_at_a_time(raw, lines):
+    assert accept(raw, lines) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "lines"),
+    [
+        ("The total is 12,000 here.", ["Total 12000"]),
+        ("The total is 12000 here.", ["Total 12,000"]),
+        ("The total is 12, 000 here.", ["Total 12,000"]),
+        ("The rate is 1.5 here.", ["x", "Rate 1.5"]),
+        ("The tax rate is 5% here.", ["Rate 5 %"]),
+        ("The date is 15/01/2024 here.", ["Date 15/01/2024"]),
+    ],
+)
+def test_commas_and_spaces_inside_a_number_do_not_matter(raw, lines):
+    assert accept(raw, lines) == raw
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "See Fig. 3 for the chart.",
+        "It is No. 12 on the form.",
+        "Dr. Rao paid Rs. 99 on the form.",
+        "Meet at 10 a.m. for the forms.",
+        "A form, e.g. a tax return, is shown.",
+    ],
+)
+def test_a_point_after_an_abbreviation_is_not_a_sentence_end(raw):
+    assert describe.first_sentence(raw) == raw
+
+
+def test_an_abbreviation_with_no_real_end_gives_nothing_and_short_sentences_are_dropped():
+    assert describe.first_sentence("See Fig. 3 for the chart") == ""
+    assert accept("See Fig.", "") is None
+    assert accept("A form.", "") is None
+    assert accept("A red form.", "") == "A red form."
+
+
+def test_the_describers_failures_are_counted_for_the_index_notes(tmp_path):
+    class Broken(Says):
+        def describe(self, image, seconds):
+            raise RuntimeError("out of memory")
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "deck.pptx").write_bytes((DEMO / "deck.pptx").read_bytes())
+    report = folder.index(str(root), CONFIG, engines=[], describer=Broken(""))
+    assert any("could not be described" in note and note.startswith("1 ") for note in report.notes)
+    assert not folder.index(str(root), CONFIG, engines=[], describer=Says("A small picture here.")).notes
+
+
+def test_the_describer_is_not_part_of_the_settings_of_formats_without_figures():
+    settings = folder._settings(CONFIG, [], None, Says("x"))
+    for fmt in ("pdf", "csv", "json", "xml"):
+        assert folder._hash(settings, fmt) == folder._hash({**settings, "describe": None}, fmt)
+    for fmt in ("docx", "pptx", "xlsx", "html", "md"):
+        assert folder._hash(settings, fmt) != folder._hash({**settings, "describe": None}, fmt)
+
+
+def test_startup_only_checks_that_the_files_exist(fake_stack, tmp_path):
+    for name in FILES:
+        (tmp_path / name).write_text("x")  # not the real files: a checksum would refuse them
+    reader = SmolVlm(model_dir=str(tmp_path))
+    reader.check()
+    assert fake_stack == []  # nothing verified or loaded
+    with pytest.raises(EngineUnavailable, match="--describe-download"):
+        SmolVlm(model_dir=str(tmp_path / "empty")).check()

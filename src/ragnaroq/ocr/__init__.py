@@ -56,6 +56,21 @@ def available(
     return found
 
 
+def disable_xet() -> None:
+    """Make huggingface_hub download over plain HTTPS: Xet transfers hang behind a proxy. The
+    library reads `HF_HUB_DISABLE_XET` once, when it is first imported (and transformers imports
+    it), so the variable alone is too late: its constant is set as well, right before a download."""
+    import os
+
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    try:
+        from huggingface_hub import constants
+
+        constants.HF_HUB_DISABLE_XET = True
+    except ImportError:
+        pass
+
+
 class LineUnreadable(RuntimeError):
     """A line reader gave up on one crop. The message says why and is shown to a reviewer."""
 

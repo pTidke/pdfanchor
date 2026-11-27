@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
 
         describer = SmolVlm(model_dir=args.describe_models, download=args.describe_download)
         try:
-            describer.prepare()
+            describer.check()
         except (EngineUnavailable, OSError) as error:
             print(json.dumps({"error": str(error)}), file=sys.stderr)
             return 1
