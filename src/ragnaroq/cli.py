@@ -72,6 +72,11 @@ def main(argv: list[str] | None = None) -> int:
     check = sub.add_parser("evaluate", help="Run the engine on references and measure how often it is wrong")
     check.add_argument("folder", help="Folder of references: *.pdf with *.truth.json beside each")
     check.add_argument("--out", required=True, help="Where evaluation.md and evaluation.json go")
+    check.add_argument(
+        "--chunking",
+        metavar="QUESTIONS",
+        help="A JSON Lines file of questions: compare 0.3's chunker with the current one instead",
+    )
     check.add_argument("--lang", default="eng")
     check.add_argument("--dpi", type=int, default=200)
     check.add_argument("--exclude-script", action="append", default=[])
@@ -209,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.same_letters:
             config = replace(config, policy=replace(config.policy, same_letters=True))
         config = with_budget(config)
+        if args.chunking:
+            return _chunking(args, config)
         try:
             report = evaluate.run(
                 args.folder,
@@ -343,3 +350,24 @@ def _summary(report, root) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _chunking(args, config) -> int:
+    from . import chunkeval
+
+    try:
+        report = chunkeval.run_chunking(Path(args.folder), Path(args.chunking), config)
+    except (OSError, ValueError) as error:
+        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        return 1
+    files = chunkeval.write_chunking(report, Path(args.out))
+    scores = {
+        name: {"top1": s.top1, "top3": s.top3, "top10": s.top10, "mrr": round(s.mrr, 3)}
+        for name, s in report.scores.items()
+    }
+    print(
+        json.dumps(
+            {"scores": scores, "missing": report.missing, "files": {k: str(v) for k, v in files.items()}}
+        )
+    )
+    return 1 if report.missing else 0
