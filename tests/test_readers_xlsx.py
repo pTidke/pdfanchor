@@ -319,3 +319,28 @@ def test_a_chartsheet_is_flagged_and_cell_comments_are_left_out_and_flagged():
 def test_a_plain_workbook_has_none_of_these_flags():
     document = read_xlsx(workbook_bytes(_with_picture)).document
     assert document.flags == [] and document.pages[0].flags == []
+
+
+# --- final review I6: times round as Excel rounds them ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, fmt, shown",
+    [
+        (1 / 24 - 1e-9, "h:mm:ss", "1:00:00"),  # a formula's hour, with floating error below it
+        (1 / 24 - 1e-9, "h:mm", "1:00"),
+        (0.5 + 0.6 / 86400, "h:mm:ss", "12:00:01"),
+        (0.5 + 0.4 / 86400, "h:mm:ss", "12:00:00"),
+        (__import__("datetime").time(12, 0, 0, 600000), "h:mm:ss", "12:00:01"),
+        (datetime(2026, 11, 26, 9, 59, 59, 700000), "dd-mmm-yyyy h:mm", "26-Nov-2026 10:00"),
+        (datetime(2026, 11, 26, 9, 59, 59, 700000), "h:mm:ss", "10:00:00"),
+        (datetime(2026, 11, 26, 9, 59, 40), "h:mm", "9:59"),  # minutes are not rounded, only seconds
+        (45987.99999999, "dd-mmm-yyyy", "27-Nov-2025"),
+        (datetime(2026, 11, 26, 9, 30, 15, 260000), "h:mm:ss.0", "9:30:15.3"),
+        (datetime(2026, 11, 26, 9, 30, 15, 994000), "h:mm:ss.00", "9:30:15.99"),
+        (datetime(2026, 11, 26, 9, 30, 15, 996000), "h:mm:ss.00", "9:30:16.00"),
+        (datetime(2026, 11, 26, 23, 59, 59, 600000), "h:mm AM/PM", "12:00 AM"),
+    ],
+)
+def test_times_round_to_the_second_or_the_shown_fraction_as_excel_does(value, fmt, shown):
+    assert numformat.render(value, fmt) == shown

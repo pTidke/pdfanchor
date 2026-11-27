@@ -255,25 +255,58 @@ def _moment(value) -> datetime:
     if isinstance(value, date):
         return datetime(value.year, value.month, value.day)
     if isinstance(value, time):
-        return datetime(1900, 1, 1, value.hour, value.minute, value.second)
+        return datetime(1900, 1, 1, value.hour, value.minute, value.second, value.microsecond)
     return datetime(1899, 12, 30) + timedelta(days=float(value))
 
 
+def _fraction(tokens: list) -> tuple[list, int]:
+    """The tokens with a shown fraction of a second ("ss.00") taken out, and its digits. A dot or
+    digit placeholder anywhere else is a format this module does not know."""
+    kept, digits, i = [], 0, 0
+    while i < len(tokens):
+        kind, text = tokens[i]
+        if kind == "dot" and kept and kept[-1][0] == "date" and kept[-1][1] in ("s", "ss"):
+            j = i + 1
+            while j < len(tokens) and tokens[j] == ("ph", "0"):
+                j += 1
+            if not 1 <= j - i - 1 <= 3 or digits:
+                raise _Unknown
+            digits = j - i - 1
+            kept.append(("fraction", ""))
+            i = j
+            continue
+        if kind in ("ph", "dot", "pct", "at", "comma"):
+            raise _Unknown
+        kept.append((kind, text))
+        i += 1
+    return kept, digits
+
+
+def _rounded(moment: datetime, digits: int) -> datetime:
+    """As Excel does: to the nearest second, or to the fraction of a second shown, half up, before
+    anything is shown; minutes and hours are then shown as they are, never rounded themselves."""
+    unit = 10 ** (6 - digits)
+    microseconds = (moment.microsecond + unit // 2) // unit * unit
+    return moment.replace(microsecond=0) + timedelta(microseconds=microseconds)
+
+
 def _date(section: _Section, value) -> str:
-    if any(kind in ("ph", "dot", "pct", "at", "comma") for kind, _ in section.tokens):
-        raise _Unknown
-    moment = _moment(value)
-    dated = [i for i, (kind, _) in enumerate(section.tokens) if kind == "date"]
-    meridian = any(section.tokens[i][1] in ("am/pm", "a/p") for i in dated)
+    tokens, digits = _fraction(section.tokens)
+    moment = _rounded(_moment(value), digits)
+    dated = [i for i, (kind, _) in enumerate(tokens) if kind == "date"]
+    meridian = any(tokens[i][1] in ("am/pm", "a/p") for i in dated)
     out = []
-    for index, (kind, text) in enumerate(section.tokens):
+    for index, (kind, text) in enumerate(tokens):
         if kind == "lit":
             out.append(text)
             continue
+        if kind == "fraction":
+            out.append("." + f"{moment.microsecond:06d}"[:digits])
+            continue
         if text in ("m", "mm"):
             at = dated.index(index)
-            before = section.tokens[dated[at - 1]][1] if at else ""
-            after = section.tokens[dated[at + 1]][1] if at + 1 < len(dated) else ""
+            before = tokens[dated[at - 1]][1] if at else ""
+            after = tokens[dated[at + 1]][1] if at + 1 < len(dated) else ""
             if before in ("h", "hh") or after in ("s", "ss"):
                 out.append(f"{moment.minute:0{len(text)}d}")
                 continue

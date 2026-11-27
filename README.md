@@ -170,7 +170,7 @@ Every line records where it came from, in a form suited to its file.
 
 The format is found from the file's content first, then its name. A file that says it is a `.docx` and is not fails alone, with the reason in the manifest.
 
-Text from these files is exact: it is the file's own text, not a reading of a picture. It is accepted unless a rule flags it. Only text read from an image goes through the two-reader rules. Excel shows a cell as Excel does (`5%`, not `0.05`; `₹1,50,000` with lakh grouping) and keeps the stored value and any formula in the line's `value`. A number format it does not know gives the stored value, flagged `xlsx.format-unknown`.
+Text from these files is exact: it is the file's own text, not a reading of a picture. It is accepted unless a rule flags it. Only text read from an image goes through the two-reader rules. Excel shows a cell as Excel does (`5%`, not `0.05`; `₹1,50,000` with lakh grouping; a time rounded to the second, or to the fraction of a second the format shows, before it is shown) and keeps the stored value and any formula in the line's `value`. A number format it does not know gives the stored value, flagged `xlsx.format-unknown`.
 
 ### What it writes
 
