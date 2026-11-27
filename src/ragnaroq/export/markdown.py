@@ -1,8 +1,10 @@
 """Markdown for a language model to read. Page breaks and review flags are HTML comments,
 so they survive in the text without being mistaken for content."""
 
+import re
+
 from ..anchors import cite
-from ..model import Document, Page
+from ..model import Document, Figure, Page
 from . import units
 
 
@@ -17,6 +19,19 @@ def marker(page: Page) -> str:
     return f"<!-- page {page.number} -->"
 
 
+_REMOTE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.\-]*:|//)")
+
+
+def _figure(figure: Figure) -> str:
+    """A saved image is embedded. One with no file is text, and a remote one a plain link, so
+    no viewer fetches an address a file only named."""
+    place = f"*({cite(figure.anchor)})*"
+    if figure.path and not _REMOTE.match(figure.path):
+        return f"![{figure.description}]({figure.path}) {place}"
+    link = f"({figure.path})" if figure.path else ""
+    return f"[image: {figure.description}]{link} {place}"
+
+
 def to_markdown(document: Document, include: tuple[str, ...] = ("accepted", "flagged")) -> str:
     out: list[str] = []
     page = 0
@@ -29,7 +44,7 @@ def to_markdown(document: Document, include: tuple[str, ...] = ("accepted", "fla
             out.append(f"<!-- omitted ({unit.status}): {', '.join(unit.rules)} -->")
             continue
         figure = unit.figure
-        text = f"![{figure.description}]({figure.path}) *({cite(figure.anchor)})*" if figure else unit.text
+        text = _figure(figure) if figure else unit.text
         if not text:
             continue
         out.append(f"## {text}" if unit.kind == "heading" else text)

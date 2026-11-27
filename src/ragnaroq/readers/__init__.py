@@ -36,6 +36,7 @@ class ReaderRefused(Exception):
 class ReadResult:
     document: Document
     images: dict[str, bytes] = field(default_factory=dict)  # keyed by figure id
+    cache: dict = field(default_factory=dict, repr=False, compare=False)  # what the figure stage learns
 
 
 def _installed(distribution: str) -> str | None:

@@ -209,8 +209,9 @@ def _decide_figure(figure: Figure, policy: Policy) -> None:
     # The two verdicts below are this function's own; any other flag was set by the reader.
     figure.flags = [flag for flag in figure.flags if flag.rule not in _FIGURE_RULES]
     _decide_lines(figure.ocr_lines, True, False, policy)
-    if figure.description_source == "ocr" and figure.ocr_lines:
-        if any(line.status != "accepted" for line in figure.ocr_lines):
+    if figure.description_source == "ocr" and figure.description:
+        # A figure past the document's line cap keeps its description and has no lines: unsettled.
+        if not figure.ocr_lines or any(line.status != "accepted" for line in figure.ocr_lines):
             _flag(figure, "image.ocr-unverified", "Text read from the image is not settled; compare it.")
     elif figure.description_source not in {"caption", "alt"} or not figure.description:
         _flag(figure, "image.no-description", "The image has no description from the file.")

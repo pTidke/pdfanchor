@@ -99,6 +99,9 @@ class Config:
     max_zip_entries: int = 10_000
     # Largest image a reader will take from a file's folder or a data: URI.
     max_image_bytes: int = 20 * 1024**2
+    # Most OCR lines copied onto the figures of one document; past it a figure keeps its
+    # description and loses its lines (each figure holds its own copy of an image's lines).
+    max_figure_ocr_lines: int = 20_000
     policy: Policy = field(default_factory=Policy)
     third_reader: ThirdReaderSettings = field(default_factory=ThirdReaderSettings)
 
@@ -112,5 +115,6 @@ class Config:
         ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
         # The limits for JSON, CSV, XML and zip-based files do not change how a PDF is read.
         ignored |= {"max_depth", "max_cells", "max_unzipped_bytes", "max_zip_entries", "max_image_bytes"}
+        ignored |= {"max_figure_ocr_lines"}
         settings = {key: value for key, value in asdict(self).items() if key not in ignored}
         return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
