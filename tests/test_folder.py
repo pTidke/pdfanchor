@@ -1241,3 +1241,44 @@ def test_images_behind_links_inside_the_folder_load_and_links_out_do_not(tmp_pat
         assert "image.outside-folder" not in rules[name] and "image.not-found" not in rules[name], name
     assert figures[0]["path"].startswith("images/") and figures[1]["path"] == figures[0]["path"]
     assert "image.outside-folder" in rules["d"] and "image.outside-folder" in rules["e"]
+
+
+# --- final review I4: index takes convert's output options ---------------------------------------
+
+
+def test_index_passes_convert_options_and_max_cells_to_the_run(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_index(root, config, **kwargs):
+        seen["config"] = config
+        raise folder.FolderError("stop here")
+
+    monkeypatch.setattr(folder, "index", fake_index)
+    options = ["--chunk-chars", "300", "--trust-native", "--same-letters", "--page-timeout", "30",
+               "--page-memory-mb", "4096", "--max-cells", "5000", "--file-timeout", "9"]
+    assert main(["index", str(tmp_path), "--ocr", "none", *options]) == 1
+    config = seen["config"]
+    assert (config.chunk_chars, config.page_timeout_seconds, config.page_memory_mb) == (300, 30, 4096)
+    assert (config.max_cells, config.file_timeout_seconds) == (5000, 9)
+    assert config.policy.accept_native_without_crosscheck and config.policy.same_letters
+
+
+def test_every_option_that_changes_output_changes_the_settings_hash():
+    def digest(fmt, **changes):
+        config = replace(Config(), **changes)
+        return folder._hash(folder._settings(config, [], None), fmt)
+
+    base = {fmt: digest(fmt) for fmt in ("pdf", "csv", "docx")}
+    for change in (
+        {"chunk_chars": 300},
+        {"max_cells": 5000},
+        {"policy": replace(Config().policy, accept_native_without_crosscheck=True)},
+        {"policy": replace(Config().policy, same_letters=True)},
+    ):
+        assert all(digest(fmt, **change) != base[fmt] for fmt in base), change
+    # A PDF's pages are read under the page limits, so they change its output; other files are
+    # read whole under file_timeout_seconds and page_memory_mb, and a failure records its limit.
+    for change in ({"page_timeout_seconds": 30.0}, {"page_memory_mb": 4096}):
+        assert digest("pdf", **change) != base["pdf"], change
+        assert digest("csv", **change) == base["csv"] and digest("docx", **change) == base["docx"], change
+    assert digest("csv", file_timeout_seconds=9.0) == base["csv"]

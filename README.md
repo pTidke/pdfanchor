@@ -150,7 +150,7 @@ It reads every file it supports and writes `.ragnaroq/` inside the folder. Your 
 
 `ragnaroq index` works on Linux and macOS only in 0.3. On Windows it exits with code `1`.
 
-The options for PDFs (`--ocr`, `--lang`, `--dpi`, `--exclude-script`, `--third-reader` and the rest, and `--easyocr-models`) work the same as in `convert`. `--fresh` reads every file again.
+The options of `convert` (`--ocr`, `--lang`, `--dpi`, `--exclude-script`, `--chunk-chars`, `--trust-native`, `--same-letters`, `--page-timeout`, `--page-memory-mb`, `--third-reader` and the rest, and `--easyocr-models`) work the same as there. `--file-timeout` sets the time a file that is not a PDF may take, and `--max-cells` the most cells or lines read from one (200,000 by default; the rest is cut and flagged). `--fresh` reads every file again. A file is read again when an option that changes its output changes; for a PDF that includes `--page-timeout` and `--page-memory-mb`.
 
 ### Formats and anchors
 
@@ -197,7 +197,7 @@ The exit code is `1` when any file failed, else `2` when anything needs a person
 
 A hostile file must not hang or crash a run, or run anything.
 
-- Each file is read in an isolated worker process, with a time limit (`--file-timeout`, 120 seconds by default) and a memory limit (2,048 MB, `Config.page_memory_mb`). A PDF's pages also keep their own limits (see above).
+- Each file is read in an isolated worker process, with a time limit (`--file-timeout`, 120 seconds by default) and a memory limit (`--page-memory-mb`, 2,048 MB by default). A PDF's pages also keep their own limits (see above).
 - A file that breaks a limit fails alone, flagged with the limit. It is read again when you raise that limit.
 - Word, Excel and PowerPoint files are zip files. Their size when unpacked (500 MiB) and entry count (10,000) are checked before any library opens them.
 - XML is read with defusedxml. A file that declares entities or a DTD is refused (`xml.entities`).

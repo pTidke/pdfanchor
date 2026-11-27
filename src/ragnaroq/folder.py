@@ -537,6 +537,10 @@ def _settings(
         "policy": asdict(config.policy),
         "ragnaroq": __version__,
         "limits": {name: getattr(config, name) for name in limits},
+        # A PDF's pages are read under these, so a page may fail under one and not another. Any
+        # other file is read whole under file_timeout_seconds and page_memory_mb, and a failure
+        # records the limit it broke (FileEntry.limit): those files leave them out.
+        "pages": {name: getattr(config, name) for name in ("page_timeout_seconds", "page_memory_mb")},
         "ocr": [_identity(engine) for engine in engines],
         "third": _identity(third_reader) if third_reader is not None else None,
         "describe": _identity(describer) if describer is not None else None,
@@ -549,6 +553,8 @@ NO_FIGURES = {"pdf", "csv", "json", "xml"}
 def _hash(settings: dict, fmt: str) -> str:
     if fmt in NO_FIGURES:  # nothing to describe: the describer is not part of how they are read
         settings = {key: value for key, value in settings.items() if key != "describe"}
+    if fmt != "pdf":
+        settings = {key: value for key, value in settings.items() if key != "pages"}
     body = json.dumps({**settings, "reader": _reader_name(fmt), "format": fmt}, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
 

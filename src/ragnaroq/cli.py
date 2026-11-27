@@ -31,21 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--lang", default="eng", help="OCR languages joined by +, for example eng+hin")
     run.add_argument("--dpi", type=int, default=200)
     run.add_argument("--exclude-script", action="append", default=[], help="For example Deva")
-    run.add_argument("--chunk-chars", type=int, default=1200)
-    run.add_argument(
-        "--trust-native", action="store_true", help="Accept clean text-layer lines with no OCR cross-check"
-    )
-    run.add_argument("--page-timeout", type=float, help="Seconds a page may take to read (default 60)")
-    run.add_argument("--page-memory-mb", type=int, help="Memory the page reader may use (default 2048)")
     run.add_argument(
         "--no-isolation",
         action="store_true",
         help="Read pages in this process: quicker to start, with no time or memory limit",
-    )
-    run.add_argument(
-        "--same-letters",
-        action="store_true",
-        help="Strict: two readings must have the same letters and digits, not only be similar",
     )
     idx = sub.add_parser(
         "index", help="Make a folder ready for retrieval: .ragnaroq/ holds chunks.jsonl, a manifest, changes"
@@ -57,6 +46,12 @@ def main(argv: list[str] | None = None) -> int:
     idx.add_argument("--dpi", type=int, default=200)
     idx.add_argument("--exclude-script", action="append", default=[], help="For example Deva")
     idx.add_argument("--file-timeout", type=float, help="Seconds a file may take to read (default 120)")
+    idx.add_argument(
+        "--max-cells",
+        type=int,
+        help="Most cells or lines read from one file that is not a PDF; the rest is cut and flagged "
+        "(default 200000)",
+    )
     sub.add_parser("schema", help="Print the JSON schema of document.json")
     listing = sub.add_parser("engines", help="List the OCR engines that can run here")
     ref = sub.add_parser("reference", help="Make reference PDFs whose correct text is known")
@@ -108,6 +103,25 @@ def main(argv: list[str] | None = None) -> int:
             "--third-reader-budget", type=float, help="Seconds the third reader may spend on each document"
         )
     for command in (run, idx):
+        command.add_argument("--chunk-chars", type=int, default=1200, help="Longest chunk (default 1200)")
+        command.add_argument(
+            "--trust-native",
+            action="store_true",
+            help="Accept clean text-layer lines with no OCR cross-check",
+        )
+        command.add_argument(
+            "--same-letters",
+            action="store_true",
+            help="Strict: two readings must have the same letters and digits, not only be similar",
+        )
+        command.add_argument(
+            "--page-timeout", type=float, help="Seconds a PDF page may take to read (default 60)"
+        )
+        command.add_argument(
+            "--page-memory-mb",
+            type=int,
+            help="Memory the page reader (for index, also the file reader) may use (default 2048)",
+        )
         command.add_argument(
             "--describe-images",
             action="store_true",
@@ -216,20 +230,11 @@ def main(argv: list[str] | None = None) -> int:
         return 3 if too_high else 0
     if args.command == "index":
         return _index(args, with_budget, engines_here, third_reader, describer)
-    config = Config(
+    config = _output_options(args, Config(
         dpi=args.dpi,
         languages=tuple(args.lang.split("+")),
         exclude_scripts=tuple(args.exclude_script),
-        chunk_chars=args.chunk_chars,
-    )
-    if args.trust_native:
-        config = replace(config, policy=replace(config.policy, accept_native_without_crosscheck=True))
-    if args.same_letters:
-        config = replace(config, policy=replace(config.policy, same_letters=True))
-    if args.page_timeout is not None:
-        config = replace(config, page_timeout_seconds=args.page_timeout)
-    if args.page_memory_mb is not None:
-        config = replace(config, page_memory_mb=args.page_memory_mb)
+    ))
     if args.no_isolation:
         config = replace(config, isolate_pages=False)
     config = with_budget(config)
@@ -244,6 +249,20 @@ def main(argv: list[str] | None = None) -> int:
     return 2 if needs_review(document) else 0
 
 
+def _output_options(args, config: Config) -> Config:
+    """The options convert and index share: chunk size, the two policy switches, and the page limits."""
+    config = replace(config, chunk_chars=args.chunk_chars)
+    if args.trust_native:
+        config = replace(config, policy=replace(config.policy, accept_native_without_crosscheck=True))
+    if args.same_letters:
+        config = replace(config, policy=replace(config.policy, same_letters=True))
+    if args.page_timeout is not None:
+        config = replace(config, page_timeout_seconds=args.page_timeout)
+    if args.page_memory_mb is not None:
+        config = replace(config, page_memory_mb=args.page_memory_mb)
+    return config
+
+
 def _plain(text: str) -> str:
     """A name that is safe to print: control characters (C0, C1 and DEL) written as \\xNN."""
     return re.sub(r"[\x00-\x1f\x7f-\x9f]", lambda found: f"\\x{ord(found.group()):02x}", text)
@@ -253,8 +272,11 @@ def _index(args, with_budget, engines_here, third_reader, describer=None) -> int
     config = Config(
         dpi=args.dpi, languages=tuple(args.lang.split("+")), exclude_scripts=tuple(args.exclude_script)
     )
+    config = _output_options(args, config)
     if args.file_timeout is not None:
         config = replace(config, file_timeout_seconds=args.file_timeout)
+    if args.max_cells is not None:
+        config = replace(config, max_cells=args.max_cells)
     config = with_budget(config)
     try:
         engines = engines_here(config.languages) if args.ocr == "auto" else []
