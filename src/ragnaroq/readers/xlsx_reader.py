@@ -143,21 +143,35 @@ class _RawPicture:
         self.width = self.height = 0  # measured later, by the figure stage
 
 
-_PATCH = threading.Lock()
+_HERE = threading.local()
+
+
+def _install() -> None:
+    """Put a dispatcher where openpyxl looks up `Image` for a workbook's pictures, once. It
+    makes a raw picture only in a thread that is inside `_raw_pictures`; for every other
+    caller in the process it is openpyxl's own `Image`."""
+    from openpyxl.reader import drawings
+
+    if getattr(drawings.Image, "_ragnaroq", False):
+        return
+    original = drawings.Image
+
+    def dispatch(source):
+        return _RawPicture(source) if getattr(_HERE, "raw", False) else original(source)
+
+    dispatch._ragnaroq = True
+    drawings.Image = dispatch
 
 
 @contextlib.contextmanager
 def _raw_pictures():
-    """While a workbook loads, openpyxl takes pictures as raw bytes."""
-    from openpyxl.reader import drawings
-
-    with _PATCH:
-        original = drawings.Image
-        drawings.Image = _RawPicture
-        try:
-            yield
-        finally:
-            drawings.Image = original
+    """While this thread loads a workbook, openpyxl takes pictures as raw bytes."""
+    _install()
+    _HERE.raw = True
+    try:
+        yield
+    finally:
+        _HERE.raw = False
 
 
 def read(data: bytes, name: str, config: Config) -> ReadResult:

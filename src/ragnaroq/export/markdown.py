@@ -9,7 +9,7 @@ from . import table_markdown, units
 
 _REMOTE = re.compile(r"^(?:https?:|//)", re.IGNORECASE)
 _SAFE_PATH = re.compile(r"images/[a-z0-9][a-z0-9-]*\.[a-z0-9]+")
-_MARKUP = str.maketrans({ch: "\\" + ch for ch in "\\[]<>"})
+_MARKUP = str.maketrans({ch: "\\" + ch for ch in "\\[]<>&"})
 _URL = str.maketrans({ch: f"%{ord(ch):02X}" for ch in " ()<>\\\r\n\t"})
 
 

@@ -46,6 +46,7 @@ _PROLOG = re.compile(
 _TINY = "image.tiny-skipped"
 _SKIPPED = "Not read within the file's time limit."
 _LATE = "Not converted within the file's time limit."
+_UNCHECKED = "Not checked within the file's time limit."
 # What describe works out afresh each time it runs, so a later run replaces them.
 _OWN_FLAGS = {"image.ocr-skipped", "image.too-large", "image.not-viewable"}
 
@@ -222,7 +223,7 @@ class _Index:
             held = self._sha[id(data)] = (data, hashlib.sha256(data).hexdigest())
         sha = held[1]
         if sha not in self._info:
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline and not _svg(data):
                 return sha, data, None
             self._info[sha] = probe(data, self.config)
         return sha, data, self._info[sha]
@@ -334,7 +335,8 @@ def describe(
             continue
         sha, data, info = got
         if info is None:
-            _add(figure, "image.ocr-skipped", _SKIPPED)
+            if figure.description_source == "none":
+                _add(figure, "image.ocr-skipped", _SKIPPED)
             continue
         _note(figure, info)
         if figure.description_source != "none" or not engines:
@@ -399,7 +401,8 @@ def _payload(
     nothing is decoded: the original bytes are kept."""
     if info is None or (late and info.kind == "convert"):
         ext = _sniff(data) if info is None else info.own_ext
-        return data, ext, [Flag(rule="image.not-viewable", severity="review", message=_LATE)], None
+        message = _UNCHECKED if info is None and ext in WEB.values() else _LATE
+        return data, ext, [Flag(rule="image.not-viewable", severity="review", message=message)], None
     if info.kind != "convert" or info.too_large:
         return data, info.ext if info.kind != "convert" else info.own_ext, [], None
     flags = []
@@ -463,7 +466,7 @@ def save(result: "ReadResult", out: str | Path, config: Config, deadline: float 
                 figure.width, figure.height = size or (info.width, info.height)
             for flag in flags:
                 _add(figure, flag.rule, flag.message)
-            if info is None or (flags and flags[0].message == _LATE):
+            if info is None or (flags and flags[0].message in (_LATE, _UNCHECKED)):
                 if figure.description_source == "none":
                     _add(figure, "image.ocr-skipped", _SKIPPED)
             kept.append(figure)

@@ -815,7 +815,9 @@ def test_n1_pillow_is_untouched_by_loading_a_workbook():
     assert Image.open is before
     import openpyxl.reader.drawings as drawings
 
-    assert drawings.Image.__module__ == "openpyxl.drawing.image"  # the patch is undone
+    assert (
+        type(drawings.Image(io.BytesIO(picture()))).__module__ == "openpyxl.drawing.image"
+    )  # others get openpyxl's
 
 
 def tiffs(count, side=300):
@@ -909,3 +911,83 @@ def test_r2_a_figure_past_the_line_cap_still_names_its_ocr_sources():
     figures.describe(res, engines, config)
     chunks = [c for c in to_chunks(res.document, config) if c["metadata"]["kind"] == "image"]
     assert [c["metadata"]["sources"] for c in chunks] == ["ocr:one", "ocr:one"]
+
+
+# --- fix round 3 (R28) -----------------------------------------------------------------------------------
+
+
+def test_o1_other_threads_keep_openpyxls_own_image_while_the_reader_runs():
+    import threading
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from openpyxl.drawing.image import Image as XlImage
+
+    book = xlsx_with(picture())
+    failures, stop = [], threading.Event()
+
+    def reads():
+        while not stop.is_set():
+            read_bytes(book, "x.xlsx", CONFIG)
+
+    def other():
+        for _ in range(40):
+            workbook = openpyxl.load_workbook(io.BytesIO(book))
+            image = workbook.active._images[0]
+            if not isinstance(image, XlImage):
+                failures.append(type(image).__name__)
+                continue
+            workbook.save(io.BytesIO())
+
+    worker = threading.Thread(target=reads)
+    worker.start()
+    try:
+        other()
+    except Exception as error:  # a save that fails is a failure too
+        failures.append(repr(error))
+    stop.set()
+    worker.join()
+    assert failures == []
+
+
+def test_o1_an_error_inside_the_window_clears_the_flag():
+    import openpyxl.reader.drawings as drawings
+    from openpyxl.drawing.image import Image as XlImage
+
+    from ragnaroq.readers import xlsx_reader
+
+    with pytest.raises(RuntimeError):
+        with xlsx_reader._raw_pictures():
+            raise RuntimeError("boom")
+    image = drawings.Image(io.BytesIO(picture()))
+    assert isinstance(image, XlImage)
+    read_bytes(xlsx_with(picture()), "x.xlsx", CONFIG)
+    assert isinstance(drawings.Image(io.BytesIO(picture())), XlImage)
+
+
+def test_o2_a_late_svg_is_still_svg_and_a_late_web_image_says_it_was_not_checked(tmp_path):
+    import time
+
+    svg = b"<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'/>"
+    res = result(
+        (fig("a"), svg),
+        (fig("b", PptxAnchor(slide=1, shape="b")), picture()),
+        (fig("c", PptxAnchor(slide=2, shape="c")), tiffs(1)[0]),
+        (
+            fig("d", PptxAnchor(slide=3, shape="d"), description="Logo", description_source="alt"),
+            picture((50, 50)),
+        ),
+    )
+    past = time.monotonic() - 1
+    figures.describe(res, twice(), CONFIG, deadline=past)
+    figures.save(res, tmp_path, CONFIG, deadline=past)
+    a, b, c, d = lines(res)
+    assert a.path.endswith(".svg") and "image.not-viewable" not in {f.rule for f in a.flags}
+    assert b.path.endswith(".png")
+    messages = {f.rule: f.message for f in b.flags}
+    assert messages["image.not-viewable"] == "Not checked within the file's time limit."
+    assert c.path.endswith(".tif")
+    assert {f.rule: f.message for f in c.flags}[
+        "image.not-viewable"
+    ] == "Not converted within the file's time limit."
+    assert "image.ocr-skipped" not in {f.rule for f in d.flags}  # it has its own description
+    assert "image.ocr-skipped" in {f.rule for f in b.flags}

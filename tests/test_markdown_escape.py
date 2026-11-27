@@ -114,3 +114,9 @@ def test_the_real_html_reader_cases_do_not_fetch_anything(tmp_path):
         figures.describe(res, [], Config())
         figures.save(res, tmp_path / "out", Config())
         assert fetched(to_markdown(res.document)) == [], tag
+
+
+def test_an_ampersand_is_escaped_so_a_literal_entity_shows_as_written():
+    md = to_markdown(decided(exact_document("docx", ["a &lt;b&gt; &amp; c"])))
+    assert "a \\&lt;b\\&gt; \\&amp; c" in md
+    assert "&amp;lt;b&amp;gt; &amp;amp; c" in VIEWER.render(md)  # the viewer shows the text as written
