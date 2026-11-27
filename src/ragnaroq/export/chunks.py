@@ -10,11 +10,12 @@ in `metadata["cite"]`, and the full anchors are in `anchors` and, as a string, i
 import json
 import re
 import uuid
+from collections import deque
 
 from ..anchors import Anchor, PdfAnchor, XlsxAnchor, cite
 from ..config import Config
-from ..model import SCHEMA_VERSION, Document, Line
-from . import Unit, units
+from ..model import SCHEMA_VERSION, Document, Line, Table
+from . import Unit, grid_cell, table_markdown, units
 
 NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/pTidke/ragnaroq")
 
@@ -228,6 +229,90 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
     }
 
 
+def _key(anchor: Anchor | None) -> str:
+    return anchor.model_dump_json() if anchor is not None else ""
+
+
+def _line_rows(unit: Unit) -> dict[int, list[Line]]:
+    """The table's lines by the row of the cell each belongs to (0 is the header row). A line is
+    matched to a cell by anchor, in order: two cells may share one (a Markdown row, a JSON header
+    and its first value), and several lines one cell (Word's paragraphs and nested tables)."""
+    waiting: dict[str, deque[int]] = {}
+    for cell in unit.table.cells:
+        waiting.setdefault(_key(cell.anchor), deque()).append(cell.row)
+    last: dict[str, int] = {}
+    rows: dict[int, list[Line]] = {}
+    row = 0
+    for line in unit.lines:
+        key = _key(line.anchor)
+        if waiting.get(key):
+            row = last[key] = waiting[key].popleft()
+        elif key in last:
+            row = last[key]
+        rows.setdefault(row, []).append(line)  # a line no cell names stays with the line before it
+    return rows
+
+
+def _row_chars(widths: list[int]) -> int:
+    """The length of "| a | b |", from the cells' lengths."""
+    return 4 + sum(widths) + 3 * (len(widths) - 1) if widths else 2
+
+
+def _table_groups(unit: Unit, limit: int) -> list[Unit]:
+    """A table of a file that is not a PDF, as groups of rows whose Markdown fits in `limit`, each
+    with the header row (row 1) above its rows. The header's lines belong to the first group and
+    are context to the others; a row that alone is over the limit is a group of its own."""
+    table = unit.table
+    if len(unit.text) <= limit:
+        return [unit]
+    lines = _line_rows(unit)
+    cells: dict[int, list] = {}
+    for cell in table.cells:
+        cells.setdefault(cell.row, []).append(cell)
+    empty = [0] * table.columns
+    sizes = {}
+    for row, members in cells.items():
+        widths = list(empty)
+        for cell in members:
+            widths[cell.column] = len(grid_cell(cell.text))
+        sizes[row] = _row_chars(widths)
+    base = sizes.get(0, _row_chars(empty)) + 1 + len("|" + " --- |" * table.columns)
+    groups: deque[list[int]] = deque()
+    current, size = [], base
+    for row in range(1, table.rows):
+        cost = 1 + sizes.get(row, _row_chars(empty))
+        if current and size + cost > limit:
+            groups.append(current)
+            current, size = [], base
+        current.append(row)
+        size += cost
+    groups.append(current)
+    header, heads = cells.get(0, []), lines.get(0, [])
+    status = table.status if table.flags else "accepted"  # an exact table's status is its lines'
+    made: list[Unit] = []
+    while groups:
+        rows = groups.popleft()
+        moved = [c.model_copy(update={"row": i}) for i, row in enumerate(rows, 1) for c in cells.get(row, [])]
+        grid = Table(
+            id=table.id,
+            page=table.page,
+            rows=len(rows) + 1,
+            columns=table.columns,
+            cells=[*header, *moved],
+            status=status,
+            flags=table.flags,
+        )
+        if len(rows) > 1 and len(table_markdown(grid)) > limit:  # a grid too large is written cell by cell
+            groups.extendleft([row] for row in reversed(rows))
+            continue
+        own = [line for row in rows for line in lines.get(row, [])]
+        if not made:
+            own = [*heads, *own]
+        if own:  # rows with no text have nothing to show or cite
+            made.append(Unit("table", unit.page, own, grid, context=heads if made else []))
+    return made
+
+
 def to_chunks(
     document: Document,
     config: Config,
@@ -247,6 +332,12 @@ def to_chunks(
             pending = []
 
     for unit in units(document):
+        if unit.kind == "table" and unit.table is not None and document.source.format != "pdf":
+            if unit.text:  # cut into groups of rows, each decided alone; a PDF table stays one chunk
+                flush()
+                groups = _table_groups(unit, config.chunk_chars)
+                chunks += [_chunk(document, path, heading, [g]) for g in groups if g.status in include]
+            continue
         if unit.status not in include:
             continue
         if unit.figure:

@@ -11,6 +11,7 @@
 - `metadata` is flat: every value is a string, integer, float or boolean, never null, and every chunk has the same keys. It loads into stores that reject nested or null metadata.
 - `anchors` is the full list of places the chunk came from. `metadata["anchors_json"]` holds the same list as a string. It is cut to 20,000 bytes if needed, by dropping whole anchors from the end, so it is always valid JSON; a cut chunk carries the rule `chunk.anchors-truncated` in `metadata["rules"]`.
 - `metadata["cite"]` is a citation you can show as it is: `native.pdf, p. 1`, `rates.xlsx, Rates!A1:D12`, `guide.docx, ¶18–¶24`.
+- A table chunk of a file that is not a PDF holds a group of rows that fits `chunk_chars` (1,200 characters by default), with the table's header row repeated above it, so a long CSV or sheet never makes one record too large for Pinecone's 40 KB metadata limit. Only a single row longer than `chunk_chars` is a larger chunk. A PDF table is one chunk.
 
 | Key | Meaning |
 | --- | --- |

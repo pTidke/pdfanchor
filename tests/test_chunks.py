@@ -194,3 +194,122 @@ def test_anchors_json_is_cut_at_20000_bytes_not_characters():
     assert len(meta["anchors_json"].encode("utf8")) <= 20_000
     assert len(json.loads(meta["anchors_json"])) > 0
     assert "chunk.anchors-truncated" in meta["rules"].split(",")
+
+
+# --- a table of a file that is not a PDF is cut into groups of rows (final review C2) --------------
+
+DEMO = __import__("pathlib").Path(__file__).parent.parent / "references" / "demo"
+
+
+def _header(table) -> str:
+    from ragnaroq.export import table_markdown
+
+    return "\n".join(table_markdown(table).split("\n")[:2])
+
+
+def _rows_shown(chunk) -> int:
+    """Data rows in a table chunk's grid: every line after the header and the --- line."""
+    return len(chunk["text"].split("\n")) - 2
+
+
+def assert_table_chunks_fit(document, config):
+    chunks = to_chunks(document, config, path=document.source.filename)
+    assert len({c["id"] for c in chunks}) == len(chunks)
+    headers = [_header(t) for page in document.pages for t in page.tables]
+    tables = [c for c in chunks if c["metadata"]["kind"] == "table"]
+    for chunk in tables:
+        assert any(chunk["text"].startswith(h + "\n") or chunk["text"] == h for h in headers), chunk["text"]
+        assert len(chunk["text"]) <= config.chunk_chars or _rows_shown(chunk) <= 1, chunk["text"]
+        assert chunk["metadata"]["chars"] == len(chunk["text"])
+    return tables
+
+
+def test_a_2000_row_csv_is_cut_into_chunks_that_fit_each_with_the_header():
+    from ragnaroq import read_bytes
+
+    rows = ["Section,Amount,Note"] + [f"80C-{i},{i * 100},row note number {i}" for i in range(2000)]
+    document = read_bytes("\n".join(rows).encode(), "big.csv", Config()).document
+    tables = assert_table_chunks_fit(document, Config())
+    assert len(tables) > 70  # 86,715 characters in one chunk before
+    assert all(c["text"].startswith("| Section | Amount | Note |\n| --- | --- | --- |\n") for c in tables)
+    assert sum(_rows_shown(c) for c in tables) == 2000  # every row once, the header in each
+    assert tables[0]["metadata"]["cite"].startswith("big.csv, row 1, Section–row ")
+    assert tables[1]["metadata"]["cite"].startswith(f"big.csv, row {_rows_shown(tables[0]) + 2}, Section–")
+    assert max(len(json.dumps(c["metadata"]).encode()) for c in tables) < 40_000
+
+
+def test_a_2000_row_sheet_cites_each_group_by_its_own_range():
+    import io
+
+    import pytest
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from ragnaroq import read_bytes
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Rates"
+    sheet.append(["Section", "Amount", "Note"])
+    for i in range(2000):
+        sheet.append([f"80C-{i}", i * 100, f"row note number {i}"])
+    buffer = io.BytesIO()
+    book.save(buffer)
+    document = read_bytes(buffer.getvalue(), "big.xlsx", Config()).document
+    tables = assert_table_chunks_fit(document, Config())
+    first, second = tables[0], tables[1]
+    shown = _rows_shown(first)
+    assert first["metadata"]["cite"] == f"big.xlsx, Rates!A1:C{shown + 1}"
+    assert second["metadata"]["cite"] == f"big.xlsx, Rates!A{shown + 2}:C{shown + 1 + _rows_shown(second)}"
+    cell = second["metadata"]["cite"].split("!")[1]
+    assert second["anchors"] == [{"type": "xlsx", "sheet": "Rates", "cell": cell}]
+    assert sum(_rows_shown(c) for c in tables) == 2000
+
+
+def test_a_row_longer_than_chunk_chars_is_a_chunk_of_its_own():
+    from ragnaroq import read_bytes
+
+    long = "x " * 400
+    data = f"Name,Note\na,short\nb,{long}\nc,short\n".encode()
+    document = read_bytes(data, "wide.csv", Config()).document
+    tables = assert_table_chunks_fit(document, replace(Config(), chunk_chars=300))
+    assert [_rows_shown(c) for c in tables] == [1, 1, 1]
+    assert all(c["text"].startswith("| Name | Note |\n| --- | --- |\n") for c in tables)
+
+
+def test_a_small_table_is_still_one_chunk():
+    from ragnaroq import read_bytes
+
+    document = read_bytes(b"Section,Amount\n80C,150000\n80D,25000\n", "r.csv", Config()).document
+    (chunk,) = to_chunks(document, Config())
+    assert chunk["text"] == "| Section | Amount |\n| --- | --- |\n| 80C | 150000 |\n| 80D | 25000 |"
+
+
+def test_every_demo_table_chunk_fits_or_holds_one_row_and_starts_with_its_header():
+    from ragnaroq import read_bytes
+    from ragnaroq.readers import ReaderRefused
+
+    for path in sorted(DEMO.iterdir()):
+        if path.name.endswith(".expected.jsonl") or path.suffix == ".png":
+            continue
+        try:
+            document = read_bytes(path.read_bytes(), path.name, Config(), base=DEMO).document
+        except ReaderRefused:
+            continue  # bomb.xml
+        for size in (1200, 120, 40):
+            assert_table_chunks_fit(document, replace(Config(), chunk_chars=size))
+
+
+def test_each_group_of_rows_is_decided_alone_and_shows_its_header_status():
+    from ragnaroq import read_bytes
+
+    rows = ["Section,Amount"] + [f"80C-{i},{i}" for i in range(500)]
+    document = read_bytes("\n".join(rows).encode(), "big.csv", Config()).document
+    lines = document.pages[0].lines
+    before = to_chunks(document, Config())
+    lines[0].status = "flagged"  # the header cell "Section"
+    blocked = next(line for line in lines if line.text == "80C-250")
+    blocked.status = "blocked"
+    after = to_chunks(document, Config())
+    assert len(after) == len(before) - 1
+    assert [c["id"] for c in after] == [c["id"] for c in before if "| 80C-250 |" not in c["text"]]
+    assert {c["metadata"]["status"] for c in after} == {"flagged"}  # each shows the flagged header

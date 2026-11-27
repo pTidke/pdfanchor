@@ -260,7 +260,7 @@ A chunk's `text` is the file's own text, raw, not escaped. Escape it before you 
 
 A figure is its own chunk, with `kind` `image`, its description as the text and its saved file in `image_path` (relative to the file's folder in `.ragnaroq/files/`).
 
-A chunk never splits a paragraph and may run across a page break. A table is always its own chunk.
+A chunk never splits a paragraph and may run across a page break. A table is always its own chunk. A PDF table is one chunk. A table of any other file is cut into groups of rows that fit `chunk_chars` (1,200 characters by default), each with the table's header row (its first row) above it, so every chunk reads on its own and stays small enough for a store's metadata limit. A row longer than that is a chunk of its own. Each group has its own id, anchors and citation: for a sheet, the range its rows cover (`rates.xlsx, Rates!A32:C60`).
 
 ## How it decides
 
@@ -271,7 +271,7 @@ Rules, in `policy.py`. Nothing is decided by engine confidence, because confiden
 - Two engines can agree on the same mistake. In text read from an image, a code that mixes letters and digits is therefore flagged when it holds a letter readers take for a digit: `R28C0` read as `R28CO`, `PAN AABTS1181R`. So is a bracket the line never pairs, as in `4a)` read for `4(a)`. Measured: this cut the critical errors let through from 5 to 3 on the IRS set, and from 30 to 0 on the code table.
 - A scanned page whose image holds under 150 dots per inch is read at 300 instead of 200. On low-resolution scans this removed the critical errors no text rule can see, such as `113208` read for `11320B`.
 - In text read from an image, a "|" standing alone is flagged (`glyph.lone-bar`): it is a printed "1", "I" or "l" both readers mistook, or a box or table border read as text. On the reference sets it was never the right text.
-- Anything else is **flagged** with the rule that caused it. Tables are always flagged.
+- Anything else is **flagged** with the rule that caused it. PDF tables are always flagged; a table of any other file follows its cells.
 - A page with ink and no way to read it is **blocked**. It is never silently empty.
 - Text is never invented or edited. A flag says what looks wrong. A line the third reader settles carries the text of the OCR reader it agreed with, exactly as that reader read it.
 

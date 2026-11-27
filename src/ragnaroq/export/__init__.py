@@ -1,20 +1,23 @@
 """Turn a Document into files a language model or a vector index can use."""
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..model import Document, Figure, Line, Table
 
 
 @dataclass
 class Unit:
-    """One heading, paragraph or table in reading order."""
+    """One heading, paragraph or table in reading order. `context` holds lines the unit shows
+    but does not hold (a table's header row repeated above a later group of its rows): they
+    count for its status and rules, never for its anchors or id."""
 
     kind: str
     page: int
     lines: list[Line]
     table: Table | None = None
     figure: Figure | None = None
+    context: list[Line] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -26,20 +29,26 @@ class Unit:
 
     @property
     def status(self) -> str:
-        states = {line.status for line in self.lines} | ({self.table.status} if self.table else set())
+        states = {line.status for line in [*self.lines, *self.context]}
+        states |= {self.table.status} if self.table else set()
         if self.figure:
             states.add(self.figure.status)
         return "blocked" if "blocked" in states else "flagged" if "flagged" in states else "accepted"
 
     @property
     def rules(self) -> list[str]:
-        flags = [flag for line in self.lines for flag in line.flags]
+        flags = [flag for line in [*self.lines, *self.context] for flag in line.flags]
         flags += self.table.flags if self.table else []
         flags += self.figure.flags if self.figure else []
         return sorted({flag.rule for flag in flags})
 
 
 MAX_GRID = 100_000  # a table with more cells than this is not laid out as a grid
+
+
+def grid_cell(text: str | None, escape=lambda text: text) -> str:
+    """A cell's words as a Markdown grid shows them."""
+    return escape(" ".join((text or "").split())).replace("|", "\\|")
 
 
 def table_markdown(table: Table, escape=lambda text: text) -> str:
@@ -52,7 +61,7 @@ def table_markdown(table: Table, escape=lambda text: text) -> str:
         )
     grid = [["" for _ in range(table.columns)] for _ in range(table.rows)]
     for cell in table.cells:
-        grid[cell.row][cell.column] = escape(" ".join((cell.text or "").split())).replace("|", "\\|")
+        grid[cell.row][cell.column] = grid_cell(cell.text, escape)
     rows = ["| " + " | ".join(row) + " |" for row in grid]
     return "\n".join([rows[0], "|" + " --- |" * table.columns, *rows[1:]])
 
