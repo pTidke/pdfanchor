@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -65,3 +67,25 @@ def test_the_evaluate_command_writes_the_chunking_report(tmp_path, capsys):
     (tmp_path / "two").mkdir()
     _, q2 = _folder(tmp_path / "two", "nothing like this")
     assert main(["evaluate", str(tmp_path / "two" / "docs"), "--chunking", str(q2), "--out", str(out)]) == 1
+
+
+def test_the_chunking_evaluation_runs_as_a_module(tmp_path):
+    docs, q = _folder(tmp_path)
+    out = tmp_path / "out"
+    run = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ragnaroq.cli",
+            "evaluate",
+            str(docs),
+            "--chunking",
+            str(q),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    assert (out / "chunking.md").exists()

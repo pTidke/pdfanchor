@@ -348,10 +348,6 @@ def _summary(report, root) -> None:
     )
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def _chunking(args, config) -> int:
     from . import chunkeval
 
@@ -371,3 +367,7 @@ def _chunking(args, config) -> int:
         )
     )
     return 1 if report.missing else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
