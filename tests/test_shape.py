@@ -261,7 +261,21 @@ def test_each_definition_form(text, term):
     assert terms(text + "\n") == [term]
 
 
-@pytest.mark.parametrize("text", ["This means that we left.", "It includes tax.", "Nothing here means harm."])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "This means that we left.",
+        "It includes tax.",
+        "Nothing here means harm.",
+        "The new fee means a lot.",
+        "Thus the rate means 5%.",
+        "The word means x.",
+        "That means we stop.",
+        "So it means more.",
+        "the fee means a lot.",
+        "A very long subject phrase means this.",
+    ],
+)
 def test_ordinary_prose_with_means_is_not_a_definition(text):
     assert terms(text + "\n") == []
 

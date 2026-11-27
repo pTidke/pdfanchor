@@ -15,9 +15,13 @@ _ANSWER_MARK = re.compile(r"(?:A[.:]|Ans\.|Answer\b)")
 _SHORT_QUESTION = 200
 
 _QUOTED_TERM = re.compile(r'(?:"([^"\n]{1,80})"|“([^”\n]{1,80})”)\s+(?:means|shall\s+mean|includes)\b')
-_PLAIN_TERM = re.compile(r"(?P<term>[A-Za-z][\w'’&/-]*(?:\s[\w'’&/-]+){0,3}?):?\s(?:means|shall\s+mean)\b")
+_PLAIN_TERM = re.compile(r"(?P<term>[A-Z][\w'’&/-]*(?:\s[\w'’&/-]+){0,2}?):?\s(?:means|shall\s+mean)\b")
 _NOT_TERMS = frozenset(
     "this that it which what who he she they these those there here nothing everything anything not".split()
+)
+_NOT_OPENERS = frozenset(
+    "the a an thus so hence therefore however also then now here there this that these those it its"
+    " which what who he she they we you i if when where while as in on of for to by with".split()
 )
 _SENTENCE_END = re.compile(r"\.(?=\s+[A-Z\"“(]|\s*$)")
 _SENTENCE_START = re.compile(r"[.;]\s+")
@@ -176,7 +180,8 @@ def _definitions_in(para: Para) -> list[Definition]:
         found[match.start()] = Definition(term, para, match.start(), _sentence_end(text, match.end()))
     for start in _sentence_starts(text):
         match = _PLAIN_TERM.match(text, start)
-        if match and not any(w.lower() in _NOT_TERMS for w in match.group("term").split()):
+        words = match.group("term").split() if match else []
+        if match and words[0].lower() not in _NOT_OPENERS and not any(w.lower() in _NOT_TERMS for w in words):
             found.setdefault(
                 start, Definition(match.group("term"), para, start, _sentence_end(text, match.end()))
             )
