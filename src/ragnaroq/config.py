@@ -89,6 +89,8 @@ class Config:
     isolate_pages: bool = True
     page_timeout_seconds: float = 60.0
     page_memory_mb: int = 2048
+    # The time one file that is not a PDF may take to read (the worker is stopped after it).
+    file_timeout_seconds: float = 120.0
     max_page_chars: int = 200_000
     # Limits for structured files (JSON, CSV, XML): nesting depth, and cells or lines read.
     max_depth: int = 200
@@ -113,6 +115,7 @@ class Config:
         reading can be decided again under another policy without reading it again."""
         # The safety limits decide whether a page is read, not how: left out too.
         ignored = {"policy", "third_reader", "isolate_pages", "page_timeout_seconds", "page_memory_mb"}
+        ignored |= {"file_timeout_seconds"}
         # The limits for JSON, CSV, XML and zip-based files do not change how a PDF is read.
         ignored |= {"max_depth", "max_cells", "max_unzipped_bytes", "max_zip_entries", "max_image_bytes"}
         ignored |= {"max_figure_ocr_lines"}

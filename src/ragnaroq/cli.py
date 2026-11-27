@@ -1,7 +1,7 @@
 """Command line: `ragnaroq convert file.pdf --out dir`, and `reference make` / `evaluate` to measure it.
 
 Exit codes: 0 everything accepted by rule; 2 files were written but something needs a
-person; 1 the file could not be processed.
+person; 1 the file (for `index`, any file) could not be processed.
 """
 
 import argparse
@@ -10,7 +10,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from . import __version__, evaluate, reference
+from . import __version__, evaluate, folder, reference
 from .config import Config
 from .model import Document
 from .ocr import EngineUnavailable, available
@@ -44,6 +44,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Strict: two readings must have the same letters and digits, not only be similar",
     )
+    idx = sub.add_parser(
+        "index", help="Make a folder ready for retrieval: .ragnaroq/ holds chunks.jsonl, a manifest, changes"
+    )
+    idx.add_argument("folder")
+    idx.add_argument("--fresh", action="store_true", help="Read every file again")
+    idx.add_argument("--ocr", choices=["auto", "none"], default="auto")
+    idx.add_argument("--lang", default="eng", help="OCR languages joined by +, for example eng+hin")
+    idx.add_argument("--dpi", type=int, default=200)
+    idx.add_argument("--exclude-script", action="append", default=[], help="For example Deva")
+    idx.add_argument("--file-timeout", type=float, help="Seconds a file may take to read (default 120)")
     sub.add_parser("schema", help="Print the JSON schema of document.json")
     listing = sub.add_parser("engines", help="List the OCR engines that can run here")
     ref = sub.add_parser("reference", help="Make reference PDFs whose correct text is known")
@@ -76,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         help="Exit 3 when the share of accepted lines wrong on a critical token is above this, e.g. 0.001",
     )
-    for command in (run, check):
+    for command in (run, check, idx):
         command.add_argument(
             "--third-reader",
             action="store_true",
@@ -92,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument(
             "--third-reader-budget", type=float, help="Seconds the third reader may spend on each document"
         )
-    for command in (run, listing, check):
+    for command in (run, listing, check, idx):
         command.add_argument(
             "--easyocr-models", help="Folder with EasyOCR's model files (the second reader)"
         )
@@ -129,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"references": made}))
         return 0
     third_reader = None
-    if args.command in ("convert", "evaluate") and args.third_reader:
+    if args.command in ("convert", "evaluate", "index") and args.third_reader:
         from .ocr.paddle_vl import PaddleOcrVl
 
         third_reader = PaddleOcrVl(model_dir=args.vlm_models, download=args.vlm_download)
@@ -172,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
         limit = args.max_critical_false_accepts
         too_high = limit is not None and (rates["critical_false_accept_rate"] or 0) > limit
         return 3 if too_high else 0
+    if args.command == "index":
+        return _index(args, with_budget, engines_here, third_reader)
     config = Config(
         dpi=args.dpi,
         languages=tuple(args.lang.split("+")),
@@ -198,6 +210,54 @@ def main(argv: list[str] | None = None) -> int:
     files = write(document, args.out, config)
     print(json.dumps({"summary": document.summary, "files": {k: str(v) for k, v in files.items()}}))
     return 2 if needs_review(document) else 0
+
+
+def _index(args, with_budget, engines_here, third_reader) -> int:
+    config = Config(
+        dpi=args.dpi, languages=tuple(args.lang.split("+")), exclude_scripts=tuple(args.exclude_script)
+    )
+    if args.file_timeout is not None:
+        config = replace(config, file_timeout_seconds=args.file_timeout)
+    config = with_budget(config)
+    try:
+        engines = engines_here(config.languages) if args.ocr == "auto" else []
+        report = folder.index(
+            args.folder,
+            config,
+            engines=engines,
+            third_reader=third_reader,
+            fresh=args.fresh,
+            progress=lambda path, status: print(f"{status:8} {path}", file=sys.stderr, flush=True),
+        )
+    except (folder.FolderError, EngineUnavailable, OSError) as error:
+        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        return 1
+    for note in report.notes:
+        print(note, file=sys.stderr)
+    # The same hint for many files is said once.
+    hints = {e.error.rsplit(": ", 1)[-1] for e in report.manifest.files if e.rule == "reader.unavailable"}
+    for hint in sorted(hints):
+        print(f"Some files were not read, because a library is missing: {hint}", file=sys.stderr)
+    changes = report.changes
+    print(
+        json.dumps(
+            {
+                "files": {
+                    status: sum(e.status == status for e in report.manifest.files)
+                    for status in ("ok", "review", "failed", "skipped")
+                },
+                "changes": {
+                    "added": len(changes.added),
+                    "changed": len(changes.changed),
+                    "removed": len(changes.removed),
+                    "chunks_added": len(changes.chunks_added),
+                    "chunks_removed": len(changes.chunks_removed),
+                },
+                "out": str(Path(args.folder) / folder.STATE),
+            }
+        )
+    )
+    return 1 if report.failed else 2 if report.needs_review else 0
 
 
 if __name__ == "__main__":
