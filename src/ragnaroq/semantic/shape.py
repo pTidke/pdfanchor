@@ -20,8 +20,14 @@ _NOT_TERMS = frozenset(
     "this that it which what who he she they these those there here nothing everything anything not".split()
 )
 _NOT_OPENERS = frozenset(
-    "the a an thus so hence therefore however also then now here there this that these those it its"
-    " which what who he she they we you i if when where while as in on of for to by with".split()
+    "this that these those it which what who he she they we you i if when where while as in on of for"
+    " to by with here there".split()
+)
+# These open a term only before a capitalised word ("The Company", "Each Party"), not before a
+# lowercase one ("The new fee", "Thus the rate", "Every assessee").
+_SOFT_OPENERS = frozenset(
+    "the a an thus so hence therefore however also then now every each such any our no some all"
+    " his her their my your its".split()
 )
 _SENTENCE_END = re.compile(r"\.(?=\s+[A-Z\"“(]|\s*$)")
 _SENTENCE_START = re.compile(r"[.;]\s+")
@@ -172,6 +178,13 @@ def _sentence_end(text: str, after: int) -> int:
     return end.end() if end else len(text)
 
 
+def _is_term(words: list[str]) -> bool:
+    first = words[0].lower()
+    if first in _NOT_OPENERS or any(w.lower() in _NOT_TERMS for w in words):
+        return False
+    return first not in _SOFT_OPENERS or (len(words) > 1 and words[1][0].isupper())
+
+
 def _definitions_in(para: Para) -> list[Definition]:
     text = para.text
     found: dict[int, Definition] = {}
@@ -181,7 +194,7 @@ def _definitions_in(para: Para) -> list[Definition]:
     for start in _sentence_starts(text):
         match = _PLAIN_TERM.match(text, start)
         words = match.group("term").split() if match else []
-        if match and words[0].lower() not in _NOT_OPENERS and not any(w.lower() in _NOT_TERMS for w in words):
+        if match and _is_term(words):
             found.setdefault(
                 start, Definition(match.group("term"), para, start, _sentence_end(text, match.end()))
             )

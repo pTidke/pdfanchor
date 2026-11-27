@@ -255,6 +255,11 @@ def test_definitions_record_the_term_as_written():
         ('In this Act, "assessee" means a person.', "assessee"),
         ("(a) “Premises” means the building.", "Premises"),
         ("Start Date means 1 April.", "Start Date"),
+        ("The Company means ABC Ltd.", "The Company"),
+        ("The Agreement means this deal.", "The Agreement"),
+        ("An Employee means a person.", "An Employee"),
+        ("Each Party means a person.", "Each Party"),
+        ("No Party means a person.", "No Party"),
     ],
 )
 def test_each_definition_form(text, term):
@@ -274,6 +279,11 @@ def test_each_definition_form(text, term):
         "So it means more.",
         "the fee means a lot.",
         "A very long subject phrase means this.",
+        "Every assessee means a person.",
+        "Such fee means the charge.",
+        "Our fee means the charge.",
+        "Any amount means a sum.",
+        "Some fee means a lot.",
     ],
 )
 def test_ordinary_prose_with_means_is_not_a_definition(text):
