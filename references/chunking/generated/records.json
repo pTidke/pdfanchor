@@ -1,0 +1,70 @@
+{
+  "equipment": {
+    "excavator-01": {
+      "description": "Tracked excavator used for foundations and drainage trenches",
+      "location": {
+        "site": "Millbrook Road",
+        "bay": 3
+      },
+      "service": {
+        "last": "2026-09-14",
+        "hours": 1840,
+        "notes": "Hydraulic hose replaced after a small leak"
+      }
+    },
+    "generator-07": {
+      "description": "Quiet diesel generator that powers the site office",
+      "location": {
+        "site": "Millbrook Road",
+        "bay": 1
+      },
+      "service": {
+        "last": "2026-10-02",
+        "hours": 620,
+        "notes": "Oil and filters changed, fuel tank cleaned"
+      }
+    },
+    "scaffold-12": {
+      "description": "Steel scaffold tower set with six boards and a safety rail",
+      "location": {
+        "site": "Church Lane",
+        "bay": 2
+      },
+      "service": {
+        "last": "2026-08-21",
+        "hours": 0,
+        "notes": "Inspected by the safety officer and tagged green"
+      }
+    },
+    "mixer-03": {
+      "description": "Portable concrete mixer with a one hundred and fifty litre drum",
+      "location": {
+        "site": "Church Lane",
+        "bay": 5
+      },
+      "service": {
+        "last": "2026-07-30",
+        "hours": 410,
+        "notes": "Drum paddles welded and the motor belt replaced"
+      }
+    }
+  },
+  "operators": [
+    {
+      "name": "Ines Carvalho",
+      "licence": "Class B",
+      "approved": [
+        "excavator-01",
+        "mixer-03"
+      ]
+    },
+    {
+      "name": "Tomas Brandt",
+      "licence": "Class A",
+      "approved": [
+        "generator-07",
+        "scaffold-12"
+      ]
+    }
+  ]
+}

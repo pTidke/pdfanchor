@@ -1,4 +1,5 @@
 import functools
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -106,3 +107,40 @@ def test_every_held_out_answer_is_in_its_document_once():
     for q in questions:
         text = " ".join(" ".join(line.text for line in read_public(q.path).lines()).split())
         assert text.count(" ".join(q.answer.split())) == 1, q.question
+
+
+GENERATED = ROOT / "references" / "chunking" / "generated"
+
+
+def load_generator():
+    path = ROOT / "references" / "chunking" / "make_generated.py"
+    spec = importlib.util.spec_from_file_location("make_generated", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@functools.cache
+def read_generated(name):
+    return read_bytes((GENERATED / name).read_bytes(), name, Config(), engines=[], base=GENERATED).document
+
+
+def test_the_generated_set_is_made_again_byte_for_byte(tmp_path):
+    load_generator().make_generated(tmp_path)
+    made_files = sorted(tmp_path.iterdir())
+    assert len(made_files) == len(list(GENERATED.iterdir()))
+    for made in made_files:
+        assert made.read_bytes() == (GENERATED / made.name).read_bytes(), made.name
+
+
+def test_every_generated_answer_is_in_its_document_once():
+    questions = load_questions(GENERATED / "../generated.questions.jsonl")
+    assert len(questions) >= 30
+    per_file = {}
+    for q in questions:
+        per_file[q.path] = per_file.get(q.path, 0) + 1
+        text = " ".join(" ".join(line.text for line in read_generated(q.path).lines()).split())
+        assert text.count(" ".join(q.answer.split())) == 1, q.question
+        assert len(q.answer) >= 40, q.question
+    assert len(per_file) == len(list(GENERATED.iterdir()))
+    assert min(per_file.values()) >= 3

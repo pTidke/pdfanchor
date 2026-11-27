@@ -1,0 +1,66 @@
+[
+  {
+    "stop": "Harbour Gate",
+    "route": "14",
+    "first_bus": "05:40",
+    "last_bus": "23:10",
+    "accessible": "yes",
+    "note": "Sheltered stop beside the ferry terminal"
+  },
+  {
+    "stop": "Market Square",
+    "route": "14",
+    "first_bus": "05:44",
+    "last_bus": "23:14",
+    "accessible": "yes",
+    "note": "Stop is closed on Saturdays when the market is held"
+  },
+  {
+    "stop": "Old Mill",
+    "route": "9",
+    "first_bus": "06:05",
+    "last_bus": "22:35",
+    "accessible": "no",
+    "note": "Steep kerb and no ramp, so wheelchairs cannot board here"
+  },
+  {
+    "stop": "Station Road",
+    "route": "9",
+    "first_bus": "06:12",
+    "last_bus": "22:42",
+    "accessible": "yes",
+    "note": "Ticket machine and a covered bench outside the station"
+  },
+  {
+    "stop": "Hilltop School",
+    "route": "21",
+    "first_bus": "06:30",
+    "last_bus": "19:50",
+    "accessible": "no",
+    "note": "Runs on school days only and stops at the main gate"
+  },
+  {
+    "stop": "Riverside Park",
+    "route": "21",
+    "first_bus": "06:36",
+    "last_bus": "19:56",
+    "accessible": "yes",
+    "note": "Level boarding next to the playground and the cafe"
+  },
+  {
+    "stop": "County Hospital",
+    "route": "33",
+    "first_bus": "05:15",
+    "last_bus": "00:20",
+    "accessible": "yes",
+    "note": "Night service stops outside the emergency entrance"
+  },
+  {
+    "stop": "Airport Terminal",
+    "route": "33",
+    "first_bus": "05:55",
+    "last_bus": "00:50",
+    "accessible": "yes",
+    "note": "Luggage racks on every bus and a fifteen minute wait at peak times"
+  }
+]
