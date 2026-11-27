@@ -563,3 +563,202 @@ def test_startup_only_checks_that_the_files_exist(fake_stack, tmp_path):
     assert fake_stack == []  # nothing verified or loaded
     with pytest.raises(EngineUnavailable, match="--describe-download"):
         SmolVlm(model_dir=str(tmp_path / "empty")).check()
+
+
+# --- metadata of a document (semantic.describe) ---------------------------------------------
+
+import json  # noqa: E402
+
+from ragnaroq.anchors import PdfAnchor  # noqa: E402
+from ragnaroq.model import Document, Engine, Line, Page, Source  # noqa: E402
+from ragnaroq.readers import ReaderRefused, ReaderUnavailable, read_bytes  # noqa: E402
+from ragnaroq.readers._build import start as empty_start  # noqa: E402
+from ragnaroq.semantic.describe import describe as describe_document  # noqa: E402
+from ragnaroq.semantic.describe import mentions  # noqa: E402
+from ragnaroq.semantic.model import DocumentMetadata  # noqa: E402
+from ragnaroq.semantic.paragraphs import paragraphs  # noqa: E402
+from ragnaroq.semantic.rules import kind_of  # noqa: E402
+from ragnaroq.semantic.shape import shape  # noqa: E402
+
+GENERATED = Path(__file__).parent.parent / "references" / "chunking" / "generated"
+GENERATED_NAMES = sorted(p.name for p in GENERATED.iterdir())
+
+
+def read_file(folder, name):
+    return read_bytes((folder / name).read_bytes(), name, Config(), engines=[], base=folder).document
+
+
+def md_document(text, status="accepted"):
+    lines = []
+    for i, block in enumerate(text.split("\n\n")):
+        heading = block.startswith("# ")
+        block = block[2:] if heading else block
+        lines.append(
+            Line(
+                id=f"l{i}",
+                page=1,
+                order=i,
+                raw=block,
+                text=block,
+                source="native",
+                paragraph=i,
+                role="heading" if heading else "body",
+                level=1 if heading else 0,
+                status=status,
+                anchor=PdfAnchor(page=1, box=(0, 10 * i, 100, 10 * i + 9)),
+            )
+        )
+    return Document(
+        source=Source(sha256="0", bytes=1, filename="a.pdf", pages=1, format="pdf"),
+        engine=Engine(name="t", version="0", policy_version="0.6", config_sha256="0", components={}),
+        created_at="2026-01-01T00:00:00Z",
+        pages=[Page(number=1, kind="native", lines=lines)],
+    )
+
+
+def empty_document(name):
+    return empty_start(b"", name, "csv", Config(), {})
+
+
+def kind_of_file(name):
+    document = read_file(GENERATED, name)
+    return kind_of(shape(paragraphs(document), document), document).value
+
+
+def every_file():
+    for where in (GENERATED, DEMO):
+        for path in sorted(where.iterdir()):
+            if path.suffix not in (".png", ".jsonl", ".toml"):
+                yield where, path.name
+
+
+def grounded_values(meta):
+    yield from (meta.dates + meta.periods + meta.amounts + meta.references + meta.files)
+    yield from meta.structure.definitions
+
+
+def squash(text):
+    return " ".join(text.split())
+
+
+def test_every_value_names_lines_whose_text_holds_it():
+    checked = 0
+    for base, name in every_file():
+        try:
+            document = read_file(base, name)
+        except (ReaderRefused, ReaderUnavailable):
+            continue
+        meta = describe_document(document)
+        by_id = {line.id: line for line in document.lines()}
+        if not meta.title.line_ids:
+            assert meta.title.text == document.source.filename
+        for value in [meta.title, *grounded_values(meta), *mentions(document)]:
+            if not value.line_ids:
+                continue
+            held = squash(" ".join(by_id[i].text for i in value.line_ids))
+            assert squash(value.text) in held, (name, value, held)
+            assert value.cite and value.status in ("accepted", "flagged", "blocked")
+            checked += 1
+        for value in grounded_values(meta):
+            assert value.line_ids, (name, value)
+    assert checked > 40
+
+
+def test_a_date_on_a_flagged_line_is_flagged():
+    meta = describe_document(md_document("# Notice\n\nIssued on 5 January 2026."))
+    assert [d.status for d in meta.dates] == ["accepted"]
+    meta = describe_document(md_document("# Notice\n\nIssued on 5 January 2026.", status="flagged"))
+    assert [(d.value, d.status) for d in meta.dates] == [("2026-01-05", "flagged")]
+    assert meta.trust.flagged == 1.0
+
+
+def test_a_list_over_1000_values_is_cut_and_flagged():
+    meta = describe_document(md_document("\n\n".join(f"On 1 January {2000 + i % 20}." for i in range(1500))))
+    assert len(meta.dates) == 1000 and [f.rule for f in meta.flags] == ["metadata.list-limit"]
+    assert "dates" in meta.flags[0].message
+
+
+def test_an_empty_document_has_a_valid_entry_titled_by_its_file_name():
+    meta = describe_document(empty_document("empty.csv"))
+    assert meta.title.text == "empty.csv" and meta.kind.value == "spreadsheet" and meta.length.chars == 0
+    assert meta.length.parts == 1 and meta.path == "empty.csv" and meta.format == "csv"
+    assert meta.trust.accepted == meta.trust.flagged == meta.trust.blocked == 0
+    DocumentMetadata.model_validate(meta.model_dump())
+
+
+def test_the_title_is_the_first_heading_else_the_first_line_else_the_file_name():
+    assert describe_document(md_document("# Big Notice\n\nBody text.")).title.text == "Big Notice"
+    first = describe_document(md_document("Just a line.\n\nMore."), path="x/a.pdf")
+    assert first.title.text == "Just a line." and first.title.line_ids == ["l0"] and first.path == "x/a.pdf"
+
+
+def test_values_in_table_cells_are_grounded_to_the_cell_line():
+    document = read_bytes(
+        b"# T\n\n| Item | Due |\n|---|---|\n| Fee | 5 January 2026 |\n| Tax | Rs. 1,500 |\n",
+        "a.md",
+        Config(),
+        engines=[],
+    ).document
+    meta = describe_document(document)
+    cell_ids = {line.id for line in document.lines() if line.role == "table"}
+    assert [d.value for d in meta.dates] == ["2026-01-05"]
+    assert set(meta.dates[0].line_ids) <= cell_ids and set(meta.amounts[0].line_ids) <= cell_ids
+    assert meta.amounts[0].value == {"amount": 1500, "currency": "INR"}
+    assert meta.structure.tables == 1 and 0 < meta.structure.table_share < 1
+
+
+def test_a_table_definition_is_grounded_to_its_row():
+    document = read_bytes(
+        b"# T\n\n| Term | Definition |\n|---|---|\n| Fee | The money. |\n| Day | 24 hours. |\n",
+        "a.md",
+        Config(),
+        engines=[],
+    ).document
+    definitions = describe_document(document).structure.definitions
+    assert [d.term for d in definitions] == ["Fee", "Day"]
+    by_id = {line.id: line.text for line in document.lines()}
+    assert [[by_id[i] for i in d.line_ids] for d in definitions] == [
+        ["Fee", "The money."],
+        ["Day", "24 hours."],
+    ]
+
+
+def test_scripts_and_exclusion():
+    document = md_document("Hello world.\n\nनमस्ते दुनिया")
+    document.pages[0].lines[0].scripts = ["Latn"]
+    document.pages[0].lines[1].scripts = ["Deva"]
+    document.pages[0].lines[1].excluded = "script:Deva"
+    meta = describe_document(document)
+    assert {s.script: s.excluded for s in meta.scripts} == {"Latn": False, "Deva": True}
+    assert next(s for s in meta.scripts if s.script == "Latn").share == 1.0
+    assert meta.length.chars == len("Hello world.")
+
+
+def test_kinds_of_the_generated_documents():
+    assert {name: kind_of_file(name) for name in GENERATED_NAMES} == {
+        "notice.pdf": "numbered",
+        "faq.docx": "faq",
+        "manual.md": "sectioned",
+        "manual.html": "sectioned",
+        "contract.docx": "numbered",
+        "deck.pptx": "slides",
+        "rates.xlsx": "spreadsheet",
+        "records.json": "data",
+        "table.json": "data",
+        "essay.md": "prose",
+    }
+
+
+def test_the_kind_says_which_counts_decided_it():
+    kind = describe_document(read_file(GENERATED, "notice.pdf")).kind
+    assert kind.value == "numbered" and any(b.startswith("numbered_paragraphs = ") for b in kind.because)
+
+
+def test_the_metadata_schema_file_is_in_sync():
+    schema = Path(__file__).parents[1] / "schemas" / "metadata.schema.json"
+    assert json.loads(schema.read_text()) == DocumentMetadata.model_json_schema()
+
+
+def test_schema_metadata_prints_the_schema(capsys):
+    assert main(["schema", "--metadata"]) == 0
+    assert json.loads(capsys.readouterr().out) == DocumentMetadata.model_json_schema()

@@ -53,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Most cells or lines read from one file that is not a PDF; the rest is cut and flagged "
         "(default 200000)",
     )
-    sub.add_parser("schema", help="Print the JSON schema of document.json")
+    schema = sub.add_parser("schema", help="Print the JSON schema of document.json")
+    schema.add_argument("--metadata", action="store_true", help="Print the schema of metadata.json instead")
     listing = sub.add_parser("engines", help="List the OCR engines that can run here")
     ref = sub.add_parser("reference", help="Make reference PDFs whose correct text is known")
     ref_sub = ref.add_subparsers(dest="action", required=True)
@@ -155,7 +156,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.command == "schema":
-        print(json.dumps(Document.model_json_schema(), indent=2))
+        if args.metadata:
+            from .semantic.model import DocumentMetadata
+
+            print(json.dumps(DocumentMetadata.model_json_schema(), indent=2))
+        else:
+            print(json.dumps(Document.model_json_schema(), indent=2))
         return 0
     if args.command == "engines":
         for engine in engines_here():

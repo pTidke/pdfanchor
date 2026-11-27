@@ -125,7 +125,8 @@ def chunk_anchors(lines: list[Line]) -> list[dict]:
     return anchors
 
 
-def _citation(lines: list[Line]) -> str:
+def citation(lines: list[Line]) -> str:
+    """A short citation for the lines, as a chunk carries it."""
     groups = _groups(lines)
     if not groups:
         return ""
@@ -184,9 +185,9 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
             if isinstance(figure.anchor, PdfAnchor)
             else {"from": _dump(figure.anchor), "to": _dump(figure.anchor)}
         ]
-        citation, numbers = cite(figure.anchor), [figure.page]
+        cited, numbers = cite(figure.anchor), [figure.page]
     else:
-        anchors, citation = chunk_anchors(lines), _citation(lines)
+        anchors, cited = chunk_anchors(lines), citation(lines)
         numbers = sorted({line.page for line in lines})
     states = {unit.status for unit in members}
     rules = sorted({rule for unit in members for rule in unit.rules})
@@ -209,7 +210,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
         "status": "blocked" if "blocked" in states else "flagged" if "flagged" in states else "accepted",
         "rules": ",".join(rules),
         "sources": ",".join(sorted(sources)),
-        "cite": f"{path}, {citation}" if citation else path,
+        "cite": f"{path}, {cited}" if cited else path,
         "part": _part(document, numbers[0]) if numbers else "",
         "part_index": numbers[0] if numbers else 0,
         "page_first": numbers[0] if pdf and numbers else 0,

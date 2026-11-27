@@ -1,0 +1,475 @@
+{
+  "$defs": {
+    "Chunking": {
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "title": "Strategy",
+          "type": "string"
+        },
+        "chosen_by": {
+          "enum": [
+            "rules",
+            "override"
+          ],
+          "title": "Chosen By",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "filters": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Filters",
+          "type": "array"
+        }
+      },
+      "required": [
+        "strategy",
+        "chosen_by",
+        "parameters",
+        "reasons",
+        "filters"
+      ],
+      "title": "Chunking",
+      "type": "object"
+    },
+    "Flag": {
+      "additionalProperties": false,
+      "description": "Why a rule did not accept something. `rule` is a stable identifier.",
+      "properties": {
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "review",
+            "blocking"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "severity",
+        "message"
+      ],
+      "title": "Flag",
+      "type": "object"
+    },
+    "Grounded": {
+      "additionalProperties": false,
+      "description": "A value and the lines it came from.",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          ],
+          "default": "",
+          "description": "The normalised form, or \"\" when it cannot be normalised without guessing.",
+          "title": "Value"
+        },
+        "text": {
+          "description": "The words as they stand in the lines.",
+          "title": "Text",
+          "type": "string"
+        },
+        "line_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Line Ids",
+          "type": "array"
+        },
+        "cite": {
+          "title": "Cite",
+          "type": "string"
+        },
+        "status": {
+          "description": "The lowest status of the lines it came from.",
+          "enum": [
+            "accepted",
+            "flagged",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "line_ids",
+        "cite",
+        "status"
+      ],
+      "title": "Grounded",
+      "type": "object"
+    },
+    "GroundedDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          ],
+          "default": "",
+          "description": "The normalised form, or \"\" when it cannot be normalised without guessing.",
+          "title": "Value"
+        },
+        "text": {
+          "description": "The words as they stand in the lines.",
+          "title": "Text",
+          "type": "string"
+        },
+        "line_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Line Ids",
+          "type": "array"
+        },
+        "cite": {
+          "title": "Cite",
+          "type": "string"
+        },
+        "status": {
+          "description": "The lowest status of the lines it came from.",
+          "enum": [
+            "accepted",
+            "flagged",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "term": {
+          "description": "The term as written.",
+          "title": "Term",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "line_ids",
+        "cite",
+        "status",
+        "term"
+      ],
+      "title": "GroundedDefinition",
+      "type": "object"
+    },
+    "Kind": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "enum": [
+            "spreadsheet",
+            "slides",
+            "data",
+            "faq",
+            "numbered",
+            "sectioned",
+            "prose"
+          ],
+          "title": "Value",
+          "type": "string"
+        },
+        "because": {
+          "description": "The counts that decided it, for example \"numbered_paragraphs = 14\".",
+          "items": {
+            "type": "string"
+          },
+          "title": "Because",
+          "type": "array"
+        }
+      },
+      "required": [
+        "value",
+        "because"
+      ],
+      "title": "Kind",
+      "type": "object"
+    },
+    "Length": {
+      "additionalProperties": false,
+      "properties": {
+        "chars": {
+          "title": "Chars",
+          "type": "integer"
+        },
+        "parts": {
+          "description": "Pages, sheets or slides; 1 for a single-body document.",
+          "title": "Parts",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "chars",
+        "parts"
+      ],
+      "title": "Length",
+      "type": "object"
+    },
+    "ScriptShare": {
+      "additionalProperties": false,
+      "properties": {
+        "script": {
+          "title": "Script",
+          "type": "string"
+        },
+        "share": {
+          "description": "Share of the letters in lines that are kept; for an excluded script, its share of the letters in all lines.",
+          "title": "Share",
+          "type": "number"
+        },
+        "excluded": {
+          "description": "Every line carrying the script is excluded.",
+          "title": "Excluded",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "script",
+        "share",
+        "excluded"
+      ],
+      "title": "ScriptShare",
+      "type": "object"
+    },
+    "StructureCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "headings": {
+          "default": 0,
+          "title": "Headings",
+          "type": "integer"
+        },
+        "heading_depth": {
+          "default": 0,
+          "title": "Heading Depth",
+          "type": "integer"
+        },
+        "numbered_paragraphs": {
+          "default": 0,
+          "title": "Numbered Paragraphs",
+          "type": "integer"
+        },
+        "provisos": {
+          "default": 0,
+          "title": "Provisos",
+          "type": "integer"
+        },
+        "explanations": {
+          "default": 0,
+          "title": "Explanations",
+          "type": "integer"
+        },
+        "qa_pairs": {
+          "default": 0,
+          "title": "Qa Pairs",
+          "type": "integer"
+        },
+        "definitions": {
+          "items": {
+            "$ref": "#/$defs/GroundedDefinition"
+          },
+          "title": "Definitions",
+          "type": "array"
+        },
+        "tables": {
+          "default": 0,
+          "title": "Tables",
+          "type": "integer"
+        },
+        "table_share": {
+          "default": 0.0,
+          "description": "Characters in tables over all characters.",
+          "title": "Table Share",
+          "type": "number"
+        },
+        "figures": {
+          "default": 0,
+          "title": "Figures",
+          "type": "integer"
+        },
+        "slides": {
+          "default": 0,
+          "title": "Slides",
+          "type": "integer"
+        },
+        "records": {
+          "default": 0,
+          "title": "Records",
+          "type": "integer"
+        }
+      },
+      "title": "StructureCounts",
+      "type": "object"
+    },
+    "Trust": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "title": "Accepted",
+          "type": "number"
+        },
+        "flagged": {
+          "title": "Flagged",
+          "type": "number"
+        },
+        "blocked": {
+          "title": "Blocked",
+          "type": "number"
+        }
+      },
+      "required": [
+        "accepted",
+        "flagged",
+        "blocked"
+      ],
+      "title": "Trust",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "0.4.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "format": {
+      "title": "Format",
+      "type": "string"
+    },
+    "sha256": {
+      "title": "Sha256",
+      "type": "string"
+    },
+    "title": {
+      "$ref": "#/$defs/Grounded"
+    },
+    "kind": {
+      "$ref": "#/$defs/Kind"
+    },
+    "dates": {
+      "items": {
+        "$ref": "#/$defs/Grounded"
+      },
+      "title": "Dates",
+      "type": "array"
+    },
+    "periods": {
+      "items": {
+        "$ref": "#/$defs/Grounded"
+      },
+      "title": "Periods",
+      "type": "array"
+    },
+    "amounts": {
+      "items": {
+        "$ref": "#/$defs/Grounded"
+      },
+      "title": "Amounts",
+      "type": "array"
+    },
+    "references": {
+      "items": {
+        "$ref": "#/$defs/Grounded"
+      },
+      "title": "References",
+      "type": "array"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/Grounded"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "structure": {
+      "$ref": "#/$defs/StructureCounts"
+    },
+    "length": {
+      "$ref": "#/$defs/Length"
+    },
+    "scripts": {
+      "items": {
+        "$ref": "#/$defs/ScriptShare"
+      },
+      "title": "Scripts",
+      "type": "array"
+    },
+    "trust": {
+      "$ref": "#/$defs/Trust"
+    },
+    "chunking": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Chunking"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "flags": {
+      "items": {
+        "$ref": "#/$defs/Flag"
+      },
+      "title": "Flags",
+      "type": "array"
+    }
+  },
+  "required": [
+    "path",
+    "format",
+    "sha256",
+    "title",
+    "kind",
+    "dates",
+    "periods",
+    "amounts",
+    "references",
+    "structure",
+    "length",
+    "scripts",
+    "trust"
+  ],
+  "title": "DocumentMetadata",
+  "type": "object"
+}
