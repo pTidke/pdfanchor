@@ -287,3 +287,37 @@ def test_needs_review_truth_table():
     }
     got = {name: needs_review(doc) for name, (doc, _) in cases.items()}
     assert got == {name: want for name, (_, want) in cases.items()}
+
+
+def test_ten_thousand_one_cell_tables_decide_and_export_in_seconds():
+    """Final review I3: lines are grouped by table once per page, not scanned once per table."""
+    import time
+
+    from ragnaroq import Config
+    from ragnaroq.export.chunks import to_chunks
+
+    n = 10_000
+    lines = [
+        Line(id=f"p1-l{i}", page=1, order=i, raw=f"cell {i}", text=f"cell {i}", source="html",
+             table_id=f"p1-t{i}", role="table", anchor=DocxAnchor(table=i + 1, cell=(1, 1)))
+        for i in range(n)
+    ]
+    tables = [
+        Table(id=f"p1-t{i}", page=1, rows=1, columns=1, cells=[Cell(row=0, column=0, text=f"cell {i}")])
+        for i in range(n)
+    ]
+    figures = [figure(order=i) for i in range(0, n, 2)]
+    for i, fig in enumerate(figures):
+        fig.id = f"f{i}"
+    page = Page(number=1, kind="body", lines=lines, tables=tables, figures=figures)
+    doc = exact_document("html", [])
+    doc.pages = [page]
+    started = time.monotonic()
+    for _ in range(3):  # a file is decided three times on its way through index
+        decide(doc, Policy())
+    chunks = to_chunks(doc, Config())
+    md = to_markdown(doc)
+    assert time.monotonic() - started < 6
+    assert {t.status for t in tables} == {"accepted"}
+    assert len([c for c in chunks if c["metadata"]["kind"] == "table"]) == n
+    assert md.count("| cell ") == n

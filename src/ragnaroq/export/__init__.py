@@ -1,5 +1,6 @@
 """Turn a Document into files a language model or a vector index can use."""
 
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -66,11 +67,11 @@ def table_markdown(table: Table, escape=lambda text: text) -> str:
     return "\n".join([rows[0], "|" + " --- |" * table.columns, *rows[1:]])
 
 
-def _due(figures: list[Figure], position: int) -> list[Figure]:
+def _due(figures: deque[Figure], position: int) -> list[Figure]:
     """Take from `figures` those that belong before the line at `position`."""
     due = []
     while figures and figures[0].order <= position:
-        due.append(figures.pop(0))
+        due.append(figures.popleft())
     return due
 
 
@@ -79,7 +80,11 @@ def units(document: Document) -> Iterator[Unit]:
     A figure comes just before the line at its `order`, or after the last line."""
     for page in document.pages:
         tables = {table.id: table for table in page.tables}
-        figures = sorted(page.figures, key=lambda figure: figure.order)  # stable: ties keep list order
+        members: dict[str, list[Line]] = {}  # each table's lines, found once per page
+        for line in page.lines:
+            if line.table_id:
+                members.setdefault(line.table_id, []).append(line)
+        figures = deque(sorted(page.figures, key=lambda figure: figure.order))  # stable: ties keep order
         seen: set[str] = set()
         current: list[Line] = []
 
@@ -97,8 +102,7 @@ def units(document: Document) -> Iterator[Unit]:
                     current = []
                 if line.table_id not in seen:
                     seen.add(line.table_id)
-                    members = [m for m in page.lines if m.table_id == line.table_id]
-                    yield Unit("table", page.number, members, tables.get(line.table_id))
+                    yield Unit("table", page.number, members[line.table_id], tables.get(line.table_id))
                 continue
             if current and line.paragraph != current[0].paragraph:
                 yield Unit(current[0].role, page.number, current)

@@ -225,13 +225,16 @@ def decide(document: Document, policy: Policy) -> None:
         image_backed = any(flag.rule == "native.image-backed" for flag in page.flags)
         for table in page.tables:
             table.flags = []
+        members: dict[str, list[Line]] = {}  # each table's lines, found once per page
         for line in page.lines:
             line.text = unicodedata.normalize("NFC", line.raw)
             line.resolution = None
             line.flags = [f for f in line.flags if f.rule.startswith(READER_RULES)]
+            if line.table_id:
+                members.setdefault(line.table_id, []).append(line)
         for table in page.tables:
-            members = [line for line in page.lines if line.table_id == table.id]
-            if members and all(line.source in EXACT_SOURCES for line in members):
+            held = members.get(table.id, [])
+            if held and all(line.source in EXACT_SOURCES for line in held):
                 continue  # its status follows its lines, below
             table.flags.append(
                 Flag(
@@ -244,7 +247,7 @@ def decide(document: Document, policy: Policy) -> None:
         _decide_lines(page.lines, page.kind == "scanned", image_backed, policy)
         for table in page.tables:
             if not table.flags:
-                states = {line.status for line in page.lines if line.table_id == table.id}
+                states = {line.status for line in members.get(table.id, [])}
                 table.status = (
                     "blocked" if "blocked" in states else "flagged" if "flagged" in states else "accepted"
                 )
