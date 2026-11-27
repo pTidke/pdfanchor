@@ -280,7 +280,7 @@ class Reader:
         if self.full():
             return
         loaded = self.loader.load(element.get("src"))
-        alt = collapse(element.get("alt") or "")
+        alt = _build.alt_text(collapse(element.get("alt") or ""))
         description, source = (caption, "caption") if caption else (alt, "alt") if alt else ("", "none")
         flags = [loaded.flag] if loaded.flag else []
         if hidden:

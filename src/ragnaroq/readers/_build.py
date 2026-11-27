@@ -3,12 +3,40 @@ anchored lines, and finishing it. Core only; nothing here imports a format libra
 
 import hashlib
 import platform
+import re
 from datetime import UTC, datetime
 
 from .. import __version__, policy, structure
 from ..anchors import Anchor
 from ..config import Config
 from ..model import CellValue, Document, Engine, Line, Page, Source
+
+_PICTURE_WORDS = (
+    "picture|pic|image|img|photo|photograph|graphic|figure|fig|illustration|drawing|screenshot|"
+    "screen shot|untitled"
+)
+# A word that only says a picture is here, with the number a program adds ("Picture 3", "Image1").
+_PICTURE_NAME = re.compile(rf"(?:{_PICTURE_WORDS})[\s_.#-]*\d*", re.IGNORECASE)
+# A file name or path ("IMG_2041.JPG", "media/image3.emf", "C:\Users\...\scan.jpeg").
+_FILE_NAME = re.compile(
+    r"[\w\s\-.()\[\]~/\\:%+,&@'#]*\.(?:png|jpe?g|jpe|gif|bmp|dib|tiff?|webp|svg|emf|wmf|ico|heic|heif|avif|jp2)",
+    re.IGNORECASE,
+)
+
+
+def alt_text(*candidates: str | None) -> str:
+    """The first alt text that describes its picture, or "". An alt text is not a description when
+    it only says a picture is here ("Picture", "Image 3", "Figure 2"), is a file name or path
+    ("chart.png"), or has no letter or digit: openpyxl writes "Picture" on every image, and
+    python-pptx the picture's file name. A picture without one is read by OCR instead."""
+    for candidate in candidates:
+        text = " ".join((candidate or "").split())
+        if not any(ch.isalnum() for ch in text):
+            continue
+        if _PICTURE_NAME.fullmatch(text) or _FILE_NAME.fullmatch(text):
+            continue
+        return candidate
+    return ""
 
 
 def start(data: bytes, name: str, fmt: str, config: Config, components: dict[str, str]) -> Document:

@@ -52,9 +52,10 @@ def _flag(page: Page, rule: str, message: str) -> None:
 
 
 def _alt(anchor) -> str:
-    """A picture's alt text (`xdr:cNvPr` @descr, else @title), as openpyxl keeps it on the anchor."""
+    """A picture's alt text (`xdr:cNvPr` @descr, else @title), as openpyxl keeps it on the anchor;
+    "" when it does not describe the picture (`_build.alt_text`)."""
     props = getattr(getattr(getattr(anchor, "pic", None), "nvPicPr", None), "cNvPr", None)
-    return ((props.descr or props.title) if props is not None else None) or ""
+    return _build.alt_text(props.descr, props.title) if props is not None else ""
 
 
 _MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"

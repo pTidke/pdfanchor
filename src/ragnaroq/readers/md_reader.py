@@ -182,7 +182,7 @@ class _Reader:
         if self.full():
             return
         loaded = self.loader.load(src)
-        alt = collapse(alt)
+        alt = _build.alt_text(collapse(alt))
         flags = [loaded.flag] if loaded.flag else []
         if hidden or self.tags.hidden:
             flags.append(Flag(rule="html.hidden", severity="review", message=HIDDEN_MESSAGE))

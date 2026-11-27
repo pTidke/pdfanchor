@@ -186,7 +186,7 @@ class _Reader:
         if blip is None:
             return  # a shape: its text, if any, is read from its text box
         props = drawing.find(f".//{_WP}docPr")
-        alt = ((props.get("descr") or props.get("title")) if props is not None else None) or ""
+        alt = _build.alt_text(props.get("descr"), props.get("title")) if props is not None else ""
         extent = drawing.find(f".//{_WP}extent")
         width = int(extent.get("cx", 0)) // _EMU_PER_PIXEL if extent is not None else 0
         height = int(extent.get("cy", 0)) // _EMU_PER_PIXEL if extent is not None else 0
@@ -195,7 +195,7 @@ class _Reader:
     def vml(self, data, anchor, caption):
         """A VML picture: `v:imagedata` names the image; the shape around it has the alt text."""
         shape = data.getparent()
-        alt = shape.get("alt") or shape.get(_O + "title") or data.get(_O + "title") or ""
+        alt = _build.alt_text(shape.get("alt"), shape.get(_O + "title"), data.get(_O + "title"))
         embed = data.get(_R + "id") or data.get(_O + "relid")
         self.figure(anchor, caption, alt, embed, None, _vml_size(shape.get("style")))
 

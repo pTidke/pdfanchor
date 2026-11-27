@@ -194,7 +194,7 @@ class _Reader:
     def picture(self, element):
         anchor = PptxAnchor(slide=self.number, shape=_name(element))
         props, _ = _props(element)
-        alt = ((props.get("descr") or props.get("title")) if props is not None else None) or ""
+        alt = _build.alt_text(props.get("descr"), props.get("title")) if props is not None else ""
         blip = element.find(f"{_P}blipFill/{_A}blip")
         embed = blip.get(_R + "embed") if blip is not None else None
         link = blip.get(_R + "link") if blip is not None else None
