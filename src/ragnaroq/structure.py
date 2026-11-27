@@ -36,11 +36,7 @@ def apply(document: Document, config: Config) -> None:
         paragraph, previous = 0, None
         for line in page.lines:
             line.scripts = scripts_of(line.text)
-            if (
-                line.scripts
-                and config.exclude_scripts
-                and set(line.scripts) <= set(config.exclude_scripts)
-            ):
+            if line.scripts and config.exclude_scripts and set(line.scripts) <= set(config.exclude_scripts):
                 line.excluded = "script:" + "+".join(line.scripts)
             text = line.text.strip()
             if line.role == "body" and text and len(text) <= 120:
@@ -65,3 +61,19 @@ def title(document: Document) -> str | None:
     """The first heading's text. Call it again after a decision that can change a line's
     text (a third reading can), since `apply` runs before the decision."""
     return next((line.text.strip() for line in document.lines() if line.role == "heading"), None)
+
+
+def levels(document: Document) -> None:
+    """Give every heading line without a level one. A PDF heading's level is the rank of its font
+    size among the document's heading sizes, largest first, capped at 6; a heading with no font size,
+    and a heading of any other format, is level 1. A level a reader already set is kept."""
+    ranked = {}
+    if document.source.format == "pdf":
+        sizes = sorted(
+            {line.font_size for line in document.lines() if line.role == "heading" and line.font_size},
+            reverse=True,
+        )
+        ranked = {size: min(rank, 6) for rank, size in enumerate(sizes, 1)}
+    for line in document.lines():
+        if line.role == "heading" and line.level == 0:
+            line.level = ranked.get(line.font_size, 1)

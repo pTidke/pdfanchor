@@ -126,7 +126,7 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
         while stack:
             value, parts, key = stack.pop()
             if isinstance(value, dict | list) and key is not None:
-                add(str(key), parts, "heading")
+                add(str(key), parts, "heading", level=min(len(parts), 6))
             if isinstance(value, dict):
                 children = [(v, (*parts, k), k) for k, v in value.items()]
             elif isinstance(value, list):

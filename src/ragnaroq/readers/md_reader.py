@@ -168,10 +168,12 @@ class _Reader:
         )
         return True
 
-    def line(self, text, lines, role="body", table_id=None, flags=(), hidden=False) -> bool:
+    def line(self, text, lines, role="body", table_id=None, flags=(), hidden=False, level=0) -> bool:
         if not text.strip() or self.full():
             return False
-        line = _build.add_line(self.page, text, "md", MdAnchor(lines=lines), role=role, table_id=table_id)
+        line = _build.add_line(
+            self.page, text, "md", MdAnchor(lines=lines), role=role, table_id=table_id, level=level
+        )
         for flag in flags:
             line.flags.append(flag.model_copy())
         if hidden:
@@ -202,7 +204,7 @@ class _Reader:
 
     # -- inline content ----------------------------------------------------------------------
 
-    def inline(self, token, lines, role="body", table_id=None) -> str:
+    def inline(self, token, lines, role="body", table_id=None, level=0) -> str:
         """The block's text from its inline children, and its images and hidden words; makes
         the line, then the figures. Returns the text."""
         out: list[str] = []
@@ -259,7 +261,7 @@ class _Reader:
             elif kind in ("softbreak", "hardbreak"):
                 add(" ")
         text = "".join(out).strip()
-        self.line(text, lines, role, table_id, flags=[_RAW_HTML] if raw else (), hidden=hidden)
+        self.line(text, lines, role, table_id, flags=[_RAW_HTML] if raw else (), hidden=hidden, level=level)
         for src, alt, hid in images:
             self.figure(src, alt, lines, hid)
         return text
@@ -321,18 +323,18 @@ class _Reader:
             source = "\n".join([""] * taken + rows[taken:])
         tokens = markdown.parse(source)
         table = None
-        role, row_lines, block_lines = "body", None, None
+        role, level, row_lines, block_lines = "body", 0, None, None
         for token in tokens:
             if self.stopped:
                 break
             kind = token.type
             lines = (token.map[0] + 1, token.map[1]) if token.map else None
             if kind == "heading_open":
-                role, block_lines = "heading", lines
+                role, level, block_lines = "heading", int(token.tag[1]), lines
             elif kind == "paragraph_open":
                 block_lines = lines
             elif kind in ("heading_close", "paragraph_close"):
-                role = "body"
+                role, level = "body", 0
             elif kind == "table_open":
                 self.tables += 1
                 table = _Table(self.tables)
@@ -356,7 +358,7 @@ class _Reader:
                         )
                     table.columns = max(table.columns, table.column)
                 else:
-                    self.inline(token, block_lines, role)
+                    self.inline(token, block_lines, role, level=level)
             elif kind == "table_close" and table:
                 if table.cells:
                     self.page.tables.append(

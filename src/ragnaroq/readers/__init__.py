@@ -68,6 +68,19 @@ def _versions() -> dict[str, str]:
 
 READER_VERSIONS: dict[str, str] = _versions()
 
+# What each reader writes, as a number raised when a release changes it (0.4: heading levels).
+READING_VERSIONS: dict[str, str] = {
+    "pdf": "1",
+    "xlsx": "1",
+    "csv": "1",
+    "docx": "2",
+    "html": "2",
+    "md": "2",
+    "pptx": "2",
+    "json": "2",
+    "xml": "2",
+}
+
 _MAIN_PARTS = {"docx": "word/document.xml", "xlsx": "xl/workbook.xml", "pptx": "ppt/presentation.xml"}
 _BOMS = {b"\xef\xbb\xbf": "utf-8", b"\xff\xfe": "utf-16", b"\xfe\xff": "utf-16"}
 
@@ -180,6 +193,7 @@ def refused_document(name: str, data: bytes, error: ReaderRefused) -> Document:
 
 __all__ = [
     "READER_VERSIONS",
+    "READING_VERSIONS",
     "Page",
     "ReadResult",
     "ReaderRefused",

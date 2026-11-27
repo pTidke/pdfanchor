@@ -680,6 +680,12 @@
           "title": "Role",
           "type": "string"
         },
+        "level": {
+          "default": 0,
+          "description": "Heading level, 1 the highest; 0 when the line is not a heading.",
+          "title": "Level",
+          "type": "integer"
+        },
         "paragraph": {
           "default": 0,
           "title": "Paragraph",
@@ -1193,12 +1199,13 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "default": "0.3.0",
-      "description": "The contract version. A stored \"0.1.0\" or \"0.2.0\" document loads, and is restamped \"0.3.0\".",
+      "default": "0.4.0",
+      "description": "The contract version. A stored \"0.1.0\" to \"0.3.0\" document loads, and is restamped \"0.4.0\".",
       "enum": [
         "0.1.0",
         "0.2.0",
-        "0.3.0"
+        "0.3.0",
+        "0.4.0"
       ],
       "title": "Schema Version",
       "type": "string"

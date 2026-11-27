@@ -31,10 +31,10 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
     document = _build.start(data, name, "xml", config, {"reader:xml": READER_VERSIONS["xml"]})
     page = document.pages[0]
 
-    def add(text, path, role="body"):
+    def add(text, path, role="body", level=0):
         if len(page.lines) >= config.max_cells:
             raise _Full
-        _build.add_line(page, text, "xml", XmlAnchor(path=path), role=role)
+        _build.add_line(page, text, "xml", XmlAnchor(path=path), role=role, level=level)
 
     try:
         _walk(root, config, name, add)
@@ -62,7 +62,7 @@ def _walk(root, config: Config, name: str, add) -> None:
         children = [c for c in element if _local(c.tag)]
         text = (element.text or "").strip()
         if children:
-            add(_local(element.tag), path, "heading")
+            add(_local(element.tag), path, "heading", min(depth, 6))
         for attribute, value in element.attrib.items():
             label = _local(attribute)
             add(f"{label}: {value}", f"{path}/@{label}")

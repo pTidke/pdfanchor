@@ -135,6 +135,12 @@ def _style_names(document) -> dict[str, str]:
     return names
 
 
+def _heading_level(style: str) -> int:
+    """1 for a title or a heading style with no number; else its number, from 1 to 6."""
+    found = re.search(r"\d+", style)
+    return min(max(int(found.group()), 1), 6) if found and style.lower() != "title" else 1
+
+
 def _is_heading(style: str) -> bool:
     lowered = style.lower()
     return lowered == "title" or lowered.startswith("heading")
@@ -255,9 +261,9 @@ class _Reader:
             figure.flags.append(Flag(rule="image.linked-not-fetched", severity="review", message=message))
         self.page.figures.append(figure)
 
-    def line(self, text, anchor, role="body", table_id=None, equation=False):
+    def line(self, text, anchor, role="body", table_id=None, equation=False, level=0):
         if text and not self.full():
-            line = _build.add_line(self.page, text, "docx", anchor, role=role, table_id=table_id)
+            line = _build.add_line(self.page, text, "docx", anchor, role=role, table_id=table_id, level=level)
             if equation:
                 line.flags.append(
                     Flag(
@@ -270,11 +276,11 @@ class _Reader:
                     )
                 )
 
-    def paragraph(self, element, anchor, role="body", table_id=None, caption=None, own_line=True):
+    def paragraph(self, element, anchor, role="body", table_id=None, caption=None, own_line=True, level=0):
         """The paragraph's pictures and text, then each text box's paragraphs as lines of their own."""
         self.pictures(element, anchor, caption)
         if own_line:
-            self.line(_text(element), anchor, role, table_id, equation=bool(_math(element)))
+            self.line(_text(element), anchor, role, table_id, equation=bool(_math(element)), level=level)
         for box in _boxes(element):
             self.blocks(_blocks(box), anchor, "table" if table_id else "body", table_id)
 
@@ -336,8 +342,10 @@ class _Reader:
             if following is not None and following.tag == _W + "p":
                 if self.style_of(following).lower().startswith("caption"):
                     caption = _text(following) or None
-            role = "heading" if _is_heading(self.style_of(item)) else "body"
-            self.paragraph(item, DocxAnchor(paragraph=paragraph_number), role, caption=caption)
+            style = self.style_of(item)
+            role = "heading" if _is_heading(style) else "body"
+            level = _heading_level(style) if role == "heading" else 0
+            self.paragraph(item, DocxAnchor(paragraph=paragraph_number), role, caption=caption, level=level)
 
     def notes(self, kind: str):
         """Footnotes or endnotes, numbered from 1 by where the body refers to them."""

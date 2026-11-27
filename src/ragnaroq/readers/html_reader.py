@@ -265,6 +265,7 @@ class Reader:
             HtmlAnchor(path=path),
             role=role,
             table_id=cell.table.id if cell else None,
+            level=int(element.tag[1]) if role == "heading" else 0,
         )
         if hidden:
             line.flags.append(Flag(rule="html.hidden", severity="review", message=HIDDEN_MESSAGE))

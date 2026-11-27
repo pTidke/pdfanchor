@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .anchors import Anchor, PdfAnchor
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 
 Status = Literal["accepted", "flagged", "blocked"]
 
@@ -82,6 +82,9 @@ class Line(Model):
     bold: bool = False
     scripts: list[str] = Field(default_factory=list)
     role: Literal["heading", "body", "table"] = "body"
+    level: int = Field(
+        default=0, description="Heading level, 1 the highest; 0 when the line is not a heading."
+    )
     paragraph: int = 0
     table_id: str | None = None
     status: Status = "flagged"
@@ -170,10 +173,10 @@ class Engine(Model):
 
 
 class Document(Model):
-    schema_version: Literal["0.1.0", "0.2.0", "0.3.0"] = Field(
+    schema_version: Literal["0.1.0", "0.2.0", "0.3.0", "0.4.0"] = Field(
         default=SCHEMA_VERSION,
         description=(
-            'The contract version. A stored "0.1.0" or "0.2.0" document loads, and is restamped "0.3.0".'
+            'The contract version. A stored "0.1.0" to "0.3.0" document loads, and is restamped "0.4.0".'
         ),
     )
     source: Source
@@ -187,7 +190,7 @@ class Document(Model):
     @field_validator("schema_version")
     @classmethod
     def _restamp(cls, value: str) -> str:
-        # 0.2.0 and 0.3.0 only added fields with defaults (and Line fills its PDF anchor).
+        # 0.2.0 to 0.4.0 only added fields with defaults (and Line fills its PDF anchor).
         return SCHEMA_VERSION
 
     def lines(self):

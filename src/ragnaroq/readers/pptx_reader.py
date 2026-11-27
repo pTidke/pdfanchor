@@ -114,10 +114,10 @@ class _Reader:
             )
         return True
 
-    def line(self, text, anchor, role="body", table_id=None, equation=False):
+    def line(self, text, anchor, role="body", table_id=None, equation=False, level=0):
         if text and not self.full():
             self.count += 1
-            line = _build.add_line(self.page, text, "pptx", anchor, role=role, table_id=table_id)
+            line = _build.add_line(self.page, text, "pptx", anchor, role=role, table_id=table_id, level=level)
             if equation:
                 line.flags.append(
                     Flag(
@@ -187,6 +187,7 @@ class _Reader:
                 PptxAnchor(slide=self.number, shape=name, paragraph=index),
                 "heading" if title else "body",
                 equation=text.equation,
+                level=1 if title else 0,
             )
         if title and self.title is None and any(paragraphs):
             self.title = " ".join(text for text in paragraphs if text)

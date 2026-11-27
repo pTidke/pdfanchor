@@ -84,6 +84,7 @@ def add_line(
     table_id: str | None = None,
     value: CellValue | None = None,
     paragraph: int | None = None,
+    level: int = 0,
 ) -> Line:
     """Append a line with id `p{page}-l{n}`. Without `paragraph` it starts a paragraph of its own."""
     n = len(page.lines) + 1
@@ -99,6 +100,7 @@ def add_line(
         text=text,
         source=source,
         role=role,
+        level=level,
         paragraph=paragraph,
         table_id=table_id,
     )
