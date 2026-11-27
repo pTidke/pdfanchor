@@ -144,7 +144,9 @@ def test_a_visible_gap_separates_words_even_without_a_space(tmp_path):
     page = canvas.Canvas(str(path), pagesize=A4)
     page.setFont("Times-Roman", 10)
     page.drawString(72, 760, "2.")
-    page.drawString(72 + page.stringWidth("2.", "Times-Roman", 10) + 2.5, 760, "Violation of any of the conditions")
+    page.drawString(
+        72 + page.stringWidth("2.", "Times-Roman", 10) + 2.5, 760, "Violation of any of the conditions"
+    )
     page.save()
     _, truth = reference.make(path, "clean", tmp_path / "out")
     texts = [w.text for w in reference.load(truth).pages[0].words]
@@ -459,9 +461,7 @@ def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_ref
 
     def run(answer, cache):
         engines = _readers(truth, [LINES[0], misread, LINES[2]], LINES)
-        return evaluate.run(
-            folder, engines=engines, cache=cache, third_reader=FakeLineReader([answer])
-        )
+        return evaluate.run(folder, engines=engines, cache=cache, third_reader=FakeLineReader([answer]))
 
     cache = tmp_path / "cache"
     report = run(LINES[1], cache)

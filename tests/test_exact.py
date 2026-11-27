@@ -22,8 +22,16 @@ KINDS = {"docx": "body", "xlsx": "sheet", "pptx": "slide", "csv": "body"}
 def exact_document(source, texts, kind=None, name=None, figures=(), table=False):
     kind = kind or KINDS.get(source, "body")
     lines = [
-        Line(id=f"l{i}", page=1, order=i, raw=t, text=t, source=source,
-             table_id="t1" if table else None, role="table" if table else "body")
+        Line(
+            id=f"l{i}",
+            page=1,
+            order=i,
+            raw=t,
+            text=t,
+            source=source,
+            table_id="t1" if table else None,
+            role="table" if table else "body",
+        )
         for i, t in enumerate(texts)
     ]
     tables = []
@@ -34,7 +42,8 @@ def exact_document(source, texts, kind=None, name=None, figures=(), table=False)
     return Document(
         source=Source(sha256="0", bytes=1, filename=f"f.{source}", pages=1, format=source),
         engine=Engine(name="t", version="0", policy_version="0.6", config_sha256="0", components={}),
-        created_at="2026-01-01T00:00:00Z", pages=[page],
+        created_at="2026-01-01T00:00:00Z",
+        pages=[page],
     )
 
 
@@ -105,15 +114,22 @@ def test_a_caption_is_accepted():
 def ocr_line(text, other=None, order=0):
     readings = [Reading(source="ocr:b", text=other)] if other else []
     box = Box(x0=0, top=order * 10, x1=50, bottom=order * 10 + 9)
-    return Line(id=f"o{order}", page=1, order=order, box=box,
-                raw=text, text=text, source="ocr:a", readings=readings)
+    return Line(
+        id=f"o{order}", page=1, order=order, box=box, raw=text, text=text, source="ocr:a", readings=readings
+    )
 
 
 def test_an_ocr_description_follows_the_ocr_lines():
-    bad = figure(description="Total 1,200", description_source="ocr",
-                 ocr_lines=[ocr_line("Total 1,200", "Total 7,200"), ocr_line("Net 5", "Net 5", 1)])
-    good = figure(description="Total 1,200", description_source="ocr",
-                  ocr_lines=[ocr_line("Total 1,200", "Total 1,200"), ocr_line("Net 5", "Net 5", 1)])
+    bad = figure(
+        description="Total 1,200",
+        description_source="ocr",
+        ocr_lines=[ocr_line("Total 1,200", "Total 7,200"), ocr_line("Net 5", "Net 5", 1)],
+    )
+    good = figure(
+        description="Total 1,200",
+        description_source="ocr",
+        ocr_lines=[ocr_line("Total 1,200", "Total 1,200"), ocr_line("Net 5", "Net 5", 1)],
+    )
     decided(exact_document("pptx", ["x"], figures=[bad, good]))
     assert bad.status == "flagged" and bad.flags
     assert good.status == "accepted" and good.flags == []
@@ -148,8 +164,9 @@ def test_markdown_marks_parts_and_places_figures():
     xlsx = decided(exact_document("xlsx", ["5%"], name="Rates"))
     xlsx.pages[0].lines[0].anchor = XlsxAnchor(sheet="Rates", cell="C7")
     assert "<!-- sheet Rates -->" in to_markdown(xlsx)
-    fig = figure(path="images/slide-4-picture-2.png", description="Bar chart",
-                 description_source="alt", order=1)
+    fig = figure(
+        path="images/slide-4-picture-2.png", description="Bar chart", description_source="alt", order=1
+    )
     fig.anchor = PptxAnchor(slide=4, shape="Picture 2")
     pptx = decided(exact_document("pptx", ["Title"], figures=[fig]))
     md = to_markdown(pptx)
@@ -234,16 +251,31 @@ def _with_flag(source, rule, where="document", severity="review"):
 def _pdf_document(page_flags=(), table=False):
     from ragnaroq.model import Flag
 
-    line = Line(id="p1-l1", page=1, order=0, raw="Clean text", text="Clean text", source="native",
-                box=Box(x0=0, top=0, x1=10, bottom=10))
+    line = Line(
+        id="p1-l1",
+        page=1,
+        order=0,
+        raw="Clean text",
+        text="Clean text",
+        source="native",
+        box=Box(x0=0, top=0, x1=10, bottom=10),
+    )
     line.readings = [Reading(source="ocr:echo", text="Clean text")]
     tables = [Table(id="p1-t1", page=1, rows=1, columns=1, cells=[Cell(row=0, column=0, text="x")])]
-    page = Page(number=1, kind="native", width=100, height=100, lines=[line], tables=tables if table else [],
-                flags=[Flag(rule=r, severity=s, message="m") for r, s in page_flags])
+    page = Page(
+        number=1,
+        kind="native",
+        width=100,
+        height=100,
+        lines=[line],
+        tables=tables if table else [],
+        flags=[Flag(rule=r, severity=s, message="m") for r, s in page_flags],
+    )
     doc = Document(
         source=Source(sha256="0", bytes=1, filename="f.pdf", pages=1),
         engine=Engine(name="t", version="0", policy_version="0.6", config_sha256="0", components={}),
-        created_at="2026-01-01T00:00:00Z", pages=[page],
+        created_at="2026-01-01T00:00:00Z",
+        pages=[page],
     )
     return decided(doc)
 
@@ -258,8 +290,10 @@ def test_needs_review_truth_table():
     cases = {
         # Exact tables whose every cell is accepted need no person.
         "clean csv": (_read("r.csv", b"Section,Amount\n80C,150000\n80D,25000\n"), False),
-        "json records": (_read("d.json", b'[{"section":"80C","limit":150000},{"section":"80D","limit":1}]'),
-                         False),
+        "json records": (
+            _read("d.json", b'[{"section":"80C","limit":150000},{"section":"80D","limit":1}]'),
+            False,
+        ),
         "html table": (_read("p.html", b"<table><tr><th>A</th></tr><tr><td>1</td></tr></table>"), False),
         "md table": (_read("m.md", b"| A | B |\n|---|---|\n| 1 | 2 |\n"), False),
         "plain md": (_read("plain.md", b"# Title\n\nHello world.\n"), False),
@@ -298,8 +332,17 @@ def test_ten_thousand_one_cell_tables_decide_and_export_in_seconds():
 
     n = 10_000
     lines = [
-        Line(id=f"p1-l{i}", page=1, order=i, raw=f"cell {i}", text=f"cell {i}", source="html",
-             table_id=f"p1-t{i}", role="table", anchor=DocxAnchor(table=i + 1, cell=(1, 1)))
+        Line(
+            id=f"p1-l{i}",
+            page=1,
+            order=i,
+            raw=f"cell {i}",
+            text=f"cell {i}",
+            source="html",
+            table_id=f"p1-t{i}",
+            role="table",
+            anchor=DocxAnchor(table=i + 1, cell=(1, 1)),
+        )
         for i in range(n)
     ]
     tables = [

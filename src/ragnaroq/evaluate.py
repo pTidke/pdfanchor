@@ -195,7 +195,8 @@ def _line_score(line: Line, words: list[Word]) -> LineScore:
         critical_ok=critical(line.text) == critical(expected),
         errors=distance(read_c, expected_c),
         length=len(expected_c),
-        eligible=bool(others) and not any(
+        eligible=bool(others)
+        and not any(
             flag.rule != "crosscheck.disagreement" and not flag.rule.startswith(policy.THIRD)
             for flag in line.flags
         ),
@@ -329,8 +330,14 @@ def run(
     read_exact = functools.partial(readers.read_bytes, base=Path(folder))
     exact = run_exact(folder, read_exact) if next(Path(folder).glob("*.expected.jsonl"), None) else None
     if exact is not None and next(Path(folder).glob("*.truth.json"), None) is None:
-        return Report(engines={}, min_similarity=config.policy.min_similarity, files=[], total=Tally(),
-                      sweep=[], exact=exact)
+        return Report(
+            engines={},
+            min_similarity=config.policy.min_similarity,
+            files=[],
+            total=Tally(),
+            sweep=[],
+            exact=exact,
+        )
     engines = available(config.languages) if engines is None else list(engines)
     readers = "+".join(f"{engine.name}={engine.version()}" for engine in engines)
     files: list[FileScore] = []
@@ -436,8 +443,7 @@ def to_markdown(report: Report, examples: int = 20) -> str:
         return "# RAGnaroq evaluation\n\n" + exact_markdown(report.exact)
     t, r = report.total, report.total.rates()
     engines = (
-        ", ".join(f"{name.split(':', 1)[-1]} {version}" for name, version in report.engines.items())
-        or "none"
+        ", ".join(f"{name.split(':', 1)[-1]} {version}" for name, version in report.engines.items()) or "none"
     )
     out = [
         "# RAGnaroq evaluation",

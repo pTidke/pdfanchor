@@ -1259,8 +1259,20 @@ def test_index_passes_convert_options_and_max_cells_to_the_run(tmp_path, monkeyp
         raise folder.FolderError("stop here")
 
     monkeypatch.setattr(folder, "index", fake_index)
-    options = ["--chunk-chars", "300", "--trust-native", "--same-letters", "--page-timeout", "30",
-               "--page-memory-mb", "4096", "--max-cells", "5000", "--file-timeout", "9"]
+    options = [
+        "--chunk-chars",
+        "300",
+        "--trust-native",
+        "--same-letters",
+        "--page-timeout",
+        "30",
+        "--page-memory-mb",
+        "4096",
+        "--max-cells",
+        "5000",
+        "--file-timeout",
+        "9",
+    ]
     assert main(["index", str(tmp_path), "--ocr", "none", *options]) == 1
     config = seen["config"]
     assert (config.chunk_chars, config.page_timeout_seconds, config.page_memory_mb) == (300, 30, 4096)

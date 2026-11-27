@@ -227,7 +227,7 @@ def test_a_wide_file_reads_in_linear_time():
     csv_data = ("a,b\n" + "1,2\n" * 20_000).encode()
     assert _timed(xml, "w.xml") < 3
     assert _timed(csv_data, "w.csv") < 3
-    records = ('[' + ",".join('{"k": 1}' for _ in range(20_000)) + "]").encode()
+    records = ("[" + ",".join('{"k": 1}' for _ in range(20_000)) + "]").encode()
     assert _timed(records, "w.json") < 3
     flat = ('{"k": [' + ",".join(["1"] * 20_000) + "]}").encode()
     assert _timed(flat, "f.json") < 3
@@ -279,13 +279,16 @@ def test_a_missing_format_library_says_how_to_install_it(monkeypatch):
 def test_format_reader_limits_do_not_change_the_pdf_reading_key():
     from dataclasses import replace
 
-    assert Config().reading_sha256() == replace(
-        Config(), max_cells=5, max_depth=3, max_unzipped_bytes=1, max_zip_entries=1
-    ).reading_sha256()
+    assert (
+        Config().reading_sha256()
+        == replace(
+            Config(), max_cells=5, max_depth=3, max_unzipped_bytes=1, max_zip_entries=1
+        ).reading_sha256()
+    )
 
 
 def test_json_depth_scan_handles_escapes_and_brackets_in_strings():
-    data = br'{"a": "x\\", "b": "[[[\"[", "c": [1]}'
+    data = rb'{"a": "x\\", "b": "[[[\"[", "c": [1]}'
     doc = read_bytes(data, "esc.json", Config(max_depth=2)).document
     assert [line.text for line in doc.lines()] == ["a: x\\", 'b: [[["[', "c", "1"]
 

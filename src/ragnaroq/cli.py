@@ -228,19 +228,25 @@ def main(argv: list[str] | None = None) -> int:
         printed = {"total": rates, "files": {k: str(v) for k, v in files.items()}}
         failed = [f.name for f in report.exact.files if not f.ok] if report.exact else []
         if report.exact:
-            printed["exact"] = {"files": len(report.exact.files), "ok": len(report.exact.files) - len(failed),
-                                "failed": failed}
+            printed["exact"] = {
+                "files": len(report.exact.files),
+                "ok": len(report.exact.files) - len(failed),
+                "failed": failed,
+            }
         print(json.dumps(printed))
         limit = args.max_critical_false_accepts
         too_high = limit is not None and (rates["critical_false_accept_rate"] or 0) > limit
         return 3 if too_high else 1 if failed else 0
     if args.command == "index":
         return _index(args, with_budget, engines_here, third_reader, describer)
-    config = _output_options(args, Config(
-        dpi=args.dpi,
-        languages=tuple(args.lang.split("+")),
-        exclude_scripts=tuple(args.exclude_script),
-    ))
+    config = _output_options(
+        args,
+        Config(
+            dpi=args.dpi,
+            languages=tuple(args.lang.split("+")),
+            exclude_scripts=tuple(args.exclude_script),
+        ),
+    )
     if args.no_isolation:
         config = replace(config, isolate_pages=False)
     config = with_budget(config)

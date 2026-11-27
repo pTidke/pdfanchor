@@ -58,8 +58,10 @@ def _is_table(value) -> bool:
     if not isinstance(value, list) or not value or not all(isinstance(r, dict) for r in value):
         return False
     keys = set(value[0])
-    return bool(keys) and all(set(r) == keys for r in value) and not any(
-        isinstance(v, dict | list) for r in value for v in r.values()
+    return (
+        bool(keys)
+        and all(set(r) == keys for r in value)
+        and not any(isinstance(v, dict | list) for r in value for v in r.values())
     )
 
 

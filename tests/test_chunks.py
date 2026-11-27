@@ -27,8 +27,16 @@ def hand_built(fmt, filename, pages, sha="0"):
 
 
 def docx_line(i, text, paragraph, page=1):
-    return Line(id=f"l{i}", page=page, order=i, raw=text, text=text, source="docx", paragraph=i,
-                anchor=DocxAnchor(paragraph=paragraph))
+    return Line(
+        id=f"l{i}",
+        page=page,
+        order=i,
+        raw=text,
+        text=text,
+        source="docx",
+        paragraph=i,
+        anchor=DocxAnchor(paragraph=paragraph),
+    )
 
 
 def assert_flat(chunk):
@@ -99,13 +107,27 @@ def test_a_pdf_chunk_cites_its_pages(native_pdf):
 def test_an_xlsx_table_chunk_cites_its_cell_range():
     refs = [f"{col}{row}" for row in range(1, 13) for col in "ABCD"]
     lines = [
-        Line(id=f"c{i}", page=1, order=i, raw=r, text=r, source="xlsx", table_id="t1", role="table",
-             anchor=XlsxAnchor(sheet="Rates", cell=r))
+        Line(
+            id=f"c{i}",
+            page=1,
+            order=i,
+            raw=r,
+            text=r,
+            source="xlsx",
+            table_id="t1",
+            role="table",
+            anchor=XlsxAnchor(sheet="Rates", cell=r),
+        )
         for i, r in enumerate(refs)
     ]
     cells = [Cell(row=i // 4, column=i % 4, text=r) for i, r in enumerate(refs)]
-    page = Page(number=1, kind="sheet", name="Rates", lines=lines,
-                tables=[Table(id="t1", page=1, rows=12, columns=4, cells=cells)])
+    page = Page(
+        number=1,
+        kind="sheet",
+        name="Rates",
+        lines=lines,
+        tables=[Table(id="t1", page=1, rows=12, columns=4, cells=cells)],
+    )
     document = hand_built("xlsx", "rates.xlsx", [page])
     decide(document, Policy())
     (chunk,) = to_chunks(document, Config())
@@ -128,8 +150,12 @@ def test_other_chunks_cite_their_first_and_last_anchor():
 
 def test_to_chunks_works_on_an_exact_document_without_boxes():
     pages = [
-        Page(number=n, kind="body", name=f"Part {n}",
-             lines=[docx_line(n * 10 + i, f"Text {n}.{i}", i + 1, page=n) for i in range(2)])
+        Page(
+            number=n,
+            kind="body",
+            name=f"Part {n}",
+            lines=[docx_line(n * 10 + i, f"Text {n}.{i}", i + 1, page=n) for i in range(2)],
+        )
         for n in (1, 2)
     ]
     document = hand_built("docx", "guide.docx", pages)
@@ -148,9 +174,15 @@ def test_to_chunks_works_on_an_exact_document_without_boxes():
 
 def test_a_figure_is_its_own_image_chunk():
     anchor = PdfAnchor(page=3, box=(10, 20, 200, 300))
-    fig = Figure(id="f1", page=3, anchor=anchor, path="images/p-3.png",
-                 description="Bar chart of collections",
-                 model_description="Collections rose each year.", status="accepted")
+    fig = Figure(
+        id="f1",
+        page=3,
+        anchor=anchor,
+        path="images/p-3.png",
+        description="Bar chart of collections",
+        model_description="Collections rose each year.",
+        status="accepted",
+    )
     document = hand_built("pdf", "report.pdf", [Page(number=3, kind="native", lines=[], figures=[fig])])
     (chunk,) = to_chunks(document, Config())
     assert_flat(chunk)
@@ -166,9 +198,22 @@ def test_a_figure_is_its_own_image_chunk():
 
 def test_anchors_json_is_cut_with_a_flag_when_too_long():
     pages = [
-        Page(number=n, kind="native", lines=[Line(
-            id=f"l{n}", page=n, order=0, raw="x", text="x", source="native", status="accepted",
-            box={"x0": 1, "top": 1, "x1": 50, "bottom": 9})])
+        Page(
+            number=n,
+            kind="native",
+            lines=[
+                Line(
+                    id=f"l{n}",
+                    page=n,
+                    order=0,
+                    raw="x",
+                    text="x",
+                    source="native",
+                    status="accepted",
+                    box={"x0": 1, "top": 1, "x1": 50, "bottom": 9},
+                )
+            ],
+        )
         for n in range(1, 10_001)
     ]
     document = hand_built("pdf", "big.pdf", pages)
@@ -182,9 +227,23 @@ def test_anchors_json_is_cut_with_a_flag_when_too_long():
 
 def test_anchors_json_is_cut_at_20000_bytes_not_characters():
     pages = [
-        Page(number=n, kind="sheet", name="दरें", lines=[Line(
-            id=f"l{n}", page=n, order=0, raw="x", text="x", source="xlsx", status="accepted",
-            anchor=XlsxAnchor(sheet="दरें", cell="A1"))])
+        Page(
+            number=n,
+            kind="sheet",
+            name="दरें",
+            lines=[
+                Line(
+                    id=f"l{n}",
+                    page=n,
+                    order=0,
+                    raw="x",
+                    text="x",
+                    source="xlsx",
+                    status="accepted",
+                    anchor=XlsxAnchor(sheet="दरें", cell="A1"),
+                )
+            ],
+        )
         for n in range(1, 1001)
     ]
     document = hand_built("xlsx", "rates.xlsx", pages)

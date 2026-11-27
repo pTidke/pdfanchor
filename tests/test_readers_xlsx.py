@@ -267,23 +267,32 @@ TEXT_BOX = (
 
 
 def test_picture_alt_text_is_the_figure_description():
-    data = _patched(workbook_bytes(_with_picture), "xl/drawings/drawing1.xml",
-                    lambda xml: xml.replace(b'descr="Picture"', b'descr="Logo of the department"'))
+    data = _patched(
+        workbook_bytes(_with_picture),
+        "xl/drawings/drawing1.xml",
+        lambda xml: xml.replace(b'descr="Picture"', b'descr="Logo of the department"'),
+    )
     (figure,) = read_xlsx(data).document.pages[0].figures
     assert (figure.description, figure.description_source) == ("Logo of the department", "alt")
     assert figure.status == "accepted"
 
 
 def test_a_picture_title_is_its_description_when_it_has_no_alt_text():
-    data = _patched(workbook_bytes(_with_picture), "xl/drawings/drawing1.xml",
-                    lambda xml: xml.replace(b'descr="Picture"', b'title="Department logo"'))
+    data = _patched(
+        workbook_bytes(_with_picture),
+        "xl/drawings/drawing1.xml",
+        lambda xml: xml.replace(b'descr="Picture"', b'title="Department logo"'),
+    )
     (figure,) = read_xlsx(data).document.pages[0].figures
     assert (figure.description, figure.description_source) == ("Department logo", "alt")
 
 
 def test_shapes_and_text_boxes_on_a_sheet_are_flagged():
-    data = _patched(workbook_bytes(_with_picture), "xl/drawings/drawing1.xml",
-                    lambda xml: xml.replace(b"</wsDr>", TEXT_BOX + b"</wsDr>"))
+    data = _patched(
+        workbook_bytes(_with_picture),
+        "xl/drawings/drawing1.xml",
+        lambda xml: xml.replace(b"</wsDr>", TEXT_BOX + b"</wsDr>"),
+    )
     openpyxl.load_workbook(io.BytesIO(data))  # still a workbook Excel and openpyxl open
     page = read_xlsx(data).document.pages[0]
     assert [f.rule for f in page.flags] == ["xlsx.shapes-not-read"]

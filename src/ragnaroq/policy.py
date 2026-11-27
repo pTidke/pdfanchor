@@ -290,7 +290,5 @@ def needs_review(document: Document) -> bool:
         or any(table.status != "accepted" for page in document.pages for table in page.tables)
         or document.summary.get("figures_flagged")
         or document.summary.get("figures_blocked")
-        or any(
-            flag.severity == "blocking" if pdf else flag.rule not in INFORMATIONAL for flag in flags
-        )
+        or any(flag.severity == "blocking" if pdf else flag.rule not in INFORMATIONAL for flag in flags)
     )
