@@ -26,7 +26,8 @@ NS = (
     'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
     'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
     'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
-    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"'
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+    'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
 )
 REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 STYLES = (
@@ -59,6 +60,7 @@ def docx_bytes(
     header: str | None = None,
     comments: bool = False,
     media: bool = False,
+    link: bool = False,
 ):
     rels = [f'<Relationship Id="rId1" Type="{REL}/styles" Target="styles.xml"/>']
     parts = {
@@ -110,6 +112,11 @@ def docx_bytes(
         )
     if media:
         rels.append(f'<Relationship Id="rId9" Type="{REL}/image" Target="media/image1.png"/>')
+    if link:
+        rels.append(
+            f'<Relationship Id="rId8" Type="{REL}/image" Target="https://example.org/x.png" '
+            'TargetMode="External"/>'
+        )
     parts["word/_rels/document.xml.rels"] = (
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         + "".join(rels)
@@ -494,3 +501,96 @@ def test_a_cell_holding_only_a_nested_table_gets_a_cell():
     (cell,) = [c for c in table.cells if (c.row, c.column) == (1, 1)]
     assert cell.anchor == DocxAnchor(table=1, cell=(2, 2))
     assert all(line.anchor == cell.anchor for line in result.document.lines() if "1,50,000" in line.text)
+
+
+# --- final review C4: every Word picture is a figure, or flagged ------------------------------------
+
+
+def vml(rid="rId9", alt="VML chart of refunds"):
+    return (
+        f'<w:p><w:r><w:pict><v:shape id="s1" style="width:90pt;height:60pt" alt="{alt}">'
+        f'<v:imagedata r:id="{rid}" o:title="refunds"/></v:shape></w:pict></w:r></w:p>'
+    )
+
+
+def ole(rid="rId9"):
+    return (
+        '<w:p><w:r><w:object><v:shape id="s2" style="width:90pt;height:60pt">'
+        f'<v:imagedata r:id="{rid}" o:title=""/></v:shape>'
+        f'<o:OLEObject Type="Embed" ProgID="Excel.Sheet.12" ShapeID="s2" r:id="{rid}"/>'
+        "</w:object></w:r></w:p>"
+    )
+
+
+def linked_picture(attribute='r:link="rId8"', alt="A linked chart"):
+    return picture(alt=alt).replace('r:embed="rId9"', attribute)
+
+
+def figure_flags(figure):
+    return {flag.rule for flag in figure.flags}
+
+
+def test_a_vml_picture_is_a_figure():
+    result = read_docx(docx_bytes(p("Before") + vml() + p("After"), media=True))
+    (figure,) = result.document.pages[0].figures
+    assert figure.anchor == DocxAnchor(paragraph=2)
+    assert (figure.description, figure.description_source) == ("VML chart of refunds", "alt")
+    assert result.images[figure.id] == png()
+    assert (figure.width, figure.height) == (120, 80)
+
+
+def test_an_embedded_object_keeps_its_preview_as_a_figure_and_is_flagged():
+    result = read_docx(docx_bytes(p("Before") + ole(), media=True))
+    page = result.document.pages[0]
+    (figure,) = page.figures
+    assert result.images[figure.id] == png() and figure.anchor == DocxAnchor(paragraph=2)
+    assert [f.rule for f in page.flags] == ["docx.object-not-read"]
+
+
+def test_a_linked_or_missing_picture_is_a_figure_without_bytes_flagged_not_fetched():
+    for body in (linked_picture(), linked_picture('r:embed="rId77"'), vml("rId77")):
+        result = read_docx(docx_bytes(p("x") + body, media=True, link=True))
+        (figure,) = result.document.pages[0].figures
+        assert figure.id not in result.images and figure.path == ""
+        assert figure_flags(figure) == {"image.linked-not-fetched"}
+        assert figure.status == "flagged"  # its alt text does not make up for the missing image
+
+
+def test_four_pictures_in_four_figures_out():
+    body = p("Before") + picture(alt="DrawingML") + vml() + ole() + linked_picture() + p("After")
+    result = read_docx(docx_bytes(body, media=True, link=True))
+    page = result.document.pages[0]
+    assert [f.anchor.paragraph for f in page.figures] == [2, 3, 4, 5]
+    assert [figure_flags(f) for f in page.figures][3] == {"image.linked-not-fetched"}
+    assert [f.rule for f in page.flags] == ["docx.object-not-read"]
+
+
+def test_a_vml_copy_in_a_fallback_is_not_a_second_figure():
+    choice = picture(alt="Choice").removeprefix("<w:p><w:r>").removesuffix("</w:r></w:p>")
+    fallback = vml().removeprefix("<w:p><w:r>").removesuffix("</w:r></w:p>")
+    body = (
+        "<w:p><w:r><mc:AlternateContent>"
+        f'<mc:Choice Requires="wps">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback>'
+        "</mc:AlternateContent></w:r></w:p>"
+    )
+    result = read_docx(docx_bytes(body, media=True))
+    (figure,) = result.document.pages[0].figures
+    assert figure.description == "Choice"
+
+
+def test_a_picture_in_a_footnote_is_read_from_the_notes_part():
+    rels = (
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rId9" Type="{REL}/image" Target="media/image1.png"/></Relationships>'
+    )
+    note = f'<w:footnote w:id="1">{p("See the picture.")}{picture(alt="Note")}</w:footnote>'
+    data = docx_bytes(p("Body"), footnotes=note)  # rId9 names the picture in the notes part only
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(buffer, "w") as target:
+        for item in source.infolist():
+            target.writestr(item, source.read(item.filename))
+        target.writestr("word/_rels/footnotes.xml.rels", rels)
+        target.writestr("word/media/image1.png", png())
+    result = read_docx(buffer.getvalue())
+    (figure,) = result.document.pages[0].figures
+    assert figure.anchor == DocxAnchor(note="footnote 1") and result.images[figure.id] == png()

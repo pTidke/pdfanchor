@@ -199,16 +199,7 @@ class _Reader:
         embed = blip.get(_R + "embed") if blip is not None else None
         link = blip.get(_R + "link") if blip is not None else None
         relationship = self.slide_part.rels.get(embed) if embed else None
-        if relationship is not None and not relationship.is_external:
-            blob = relationship.target_part.blob
-        else:
-            blob = None
-            if link and not embed:
-                self.flag(
-                    "pptx.linked-image", f"The picture at {cite(anchor)} is linked, not stored in the file."
-                )
-            else:
-                self.flag("pptx.image-missing", f"The picture at {cite(anchor)} has no image in the file.")
+        stored = relationship is not None and not relationship.is_external
         if self.limited:
             return
         extent = element.find(f"{_P}spPr/{_A}xfrm/{_A}ext")
@@ -222,8 +213,13 @@ class _Reader:
             description=alt,
             description_source="alt" if alt else "none",
         )
-        if blob is not None:
-            self.images[figure.id] = blob
+        if stored:
+            self.images[figure.id] = relationship.target_part.blob
+        else:  # as in Word: a linked picture, or an id that names no image, is a figure with no image
+            linked = link is not None or relationship is not None
+            why = "is linked, not stored in the file; it was not fetched"
+            message = f"The picture at {cite(anchor)} {why if linked else 'has no image stored in the file'}."
+            figure.flags.append(Flag(rule="image.linked-not-fetched", severity="review", message=message))
         self.page.figures.append(figure)
 
     def graphic_frame(self, element):

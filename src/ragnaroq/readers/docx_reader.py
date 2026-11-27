@@ -3,6 +3,7 @@ paragraphs holding only a picture included, so a number never moves when text is
 Tracked changes are read as accepted, comments, headers and footers are left out, and each is flagged."""
 
 import io
+import re
 
 from ..anchors import DocxAnchor, cite
 from ..config import Config
@@ -16,11 +17,30 @@ _C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 _M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+_V = "{urn:schemas-microsoft-com:vml}"
+_O = "{urn:schemas-microsoft-com:office:office}"
 _RUN_PARTS = (_W + "t", _W + "tab", _W + "br", _W + "cr")
 # Text under these is not the paragraph's own: deleted or moved away, a text box, or a fallback copy.
 _NOT_OWN = (_W + "del", _W + "moveFrom", _W + "txbxContent", _MC + "Fallback")
 _CHANGES = (_W + "ins", _W + "del", _W + "moveFrom", _W + "moveTo")
 _EMU_PER_PIXEL = 9525
+# Pictures: DrawingML, VML, and an embedded object (whose own picture is its preview).
+_PICTURES = (_W + "drawing", _W + "pict", _W + "object")
+# Pictures under these are read elsewhere: with a text box's paragraphs, never as a fallback copy.
+_ELSEWHERE = (_W + "txbxContent", _MC + "Fallback")
+_LENGTH = re.compile(r"(width|height)\s*:\s*([\d.]+)\s*(pt|px|in|cm|mm)?", re.I)
+_PIXELS = {"pt": 96 / 72, "px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4}
+
+
+def _vml_size(style: str) -> tuple[int, int]:
+    """A VML shape's width and height in pixels, from its style; 0 when not given."""
+    size = {"width": 0, "height": 0}
+    for name, number, unit in _LENGTH.findall(style or ""):
+        try:
+            size[name.lower()] = int(float(number) * _PIXELS[(unit or "px").lower()])
+        except ValueError:
+            pass
+    return size["width"], size["height"]
 
 
 def _inside(node, root, tags) -> bool:
@@ -108,6 +128,7 @@ class _Reader:
         self.names = _style_names(document)
         self.images: dict[str, bytes] = {}
         self.limited = False
+        self.part = document.part  # whose relationships name the pictures being read
         self.roots = [document.element.body]  # where tracked changes can be
 
     def style_of(self, paragraph) -> str:
@@ -128,39 +149,79 @@ class _Reader:
             )
         return True
 
+    def flag(self, rule: str, message: str) -> None:
+        self.page.flags.append(Flag(rule=rule, severity="review", message=message))
+
     def pictures(self, paragraph, anchor, caption: str | None):
-        """One figure per picture in the paragraph; charts are flagged and not read."""
-        for drawing in paragraph.iter(_W + "drawing"):
-            if _inside(drawing, paragraph, (_W + "txbxContent", _MC + "Fallback")):
-                continue
-            if drawing.find(f".//{_A}graphicData/{_C}chart") is not None:
-                self.page.flags.append(
-                    Flag(
-                        rule="chart.not-read",
-                        severity="review",
-                        message=f"A chart at {cite(anchor)} is not read; its numbers are not in the text.",
-                    )
+        """One figure per picture in the paragraph, in order: DrawingML, VML, and the preview of
+        an embedded object, which is also flagged. Charts are flagged and not read."""
+        for node in paragraph.iter(*_PICTURES):
+            if _inside(node, paragraph, (*_ELSEWHERE, _W + "object")):
+                continue  # a text box's pictures come with its paragraphs, an object's with it
+            if node.tag == _W + "object":
+                self.flag(
+                    "docx.object-not-read",
+                    f"An embedded object at {cite(anchor)} is not read; only its preview picture is kept.",
                 )
-                continue
-            blip = drawing.find(f".//{_A}blip")
-            embed = blip.get(_R + "embed") if blip is not None else None
-            if embed is None or embed not in self.document.part.related_parts:
-                continue
-            props = drawing.find(f".//{_WP}docPr")
-            alt = ((props.get("descr") or props.get("title")) if props is not None else None) or ""
-            extent = drawing.find(f".//{_WP}extent")
-            figure = Figure(
-                id=f"p1-f{len(self.page.figures) + 1}",
-                page=1,
-                order=len(self.page.lines),
-                anchor=anchor,
-                width=int(extent.get("cx", 0)) // _EMU_PER_PIXEL if extent is not None else 0,
-                height=int(extent.get("cy", 0)) // _EMU_PER_PIXEL if extent is not None else 0,
-                description=caption or alt,
-                description_source="caption" if caption else ("alt" if alt else "none"),
-            )
-            self.images[figure.id] = self.document.part.related_parts[embed].blob
-            self.page.figures.append(figure)
+                for inner in node.iter(_W + "drawing", _V + "imagedata"):
+                    if _inside(inner, node, _ELSEWHERE):
+                        continue
+                    if inner.tag == _W + "drawing":
+                        self.drawing(inner, anchor, caption)
+                    else:
+                        self.vml(inner, anchor, caption)
+            elif node.tag == _W + "drawing":
+                self.drawing(node, anchor, caption)
+            else:
+                for data in node.iter(_V + "imagedata"):
+                    if not _inside(data, node, _ELSEWHERE):
+                        self.vml(data, anchor, caption)
+
+    def drawing(self, drawing, anchor, caption):
+        if drawing.find(f".//{_A}graphicData/{_C}chart") is not None:
+            where = cite(anchor)
+            self.flag("chart.not-read", f"A chart at {where} is not read; its numbers are not in the text.")
+            return
+        blip = drawing.find(f".//{_A}blip")
+        if blip is None:
+            return  # a shape: its text, if any, is read from its text box
+        props = drawing.find(f".//{_WP}docPr")
+        alt = ((props.get("descr") or props.get("title")) if props is not None else None) or ""
+        extent = drawing.find(f".//{_WP}extent")
+        width = int(extent.get("cx", 0)) // _EMU_PER_PIXEL if extent is not None else 0
+        height = int(extent.get("cy", 0)) // _EMU_PER_PIXEL if extent is not None else 0
+        self.figure(anchor, caption, alt, blip.get(_R + "embed"), blip.get(_R + "link"), (width, height))
+
+    def vml(self, data, anchor, caption):
+        """A VML picture: `v:imagedata` names the image; the shape around it has the alt text."""
+        shape = data.getparent()
+        alt = shape.get("alt") or shape.get(_O + "title") or data.get(_O + "title") or ""
+        embed = data.get(_R + "id") or data.get(_O + "relid")
+        self.figure(anchor, caption, alt, embed, None, _vml_size(shape.get("style")))
+
+    def figure(self, anchor, caption, alt, embed, link, size):
+        """A figure, with its image when the file holds it; a linked picture, or one whose id names
+        no image in the file, is a figure with no image, flagged."""
+        relationship = self.part.rels.get(embed) if embed else None
+        stored = relationship is not None and not relationship.is_external
+        figure = Figure(
+            id=f"p1-f{len(self.page.figures) + 1}",
+            page=1,
+            order=len(self.page.lines),
+            anchor=anchor,
+            width=size[0],
+            height=size[1],
+            description=caption or alt,
+            description_source="caption" if caption else ("alt" if alt else "none"),
+        )
+        if stored:
+            self.images[figure.id] = relationship.target_part.blob
+        else:
+            linked = link is not None or relationship is not None
+            why = "is linked, not stored in the file; it was not fetched"
+            message = f"The picture at {cite(anchor)} {why if linked else 'has no image stored in the file'}."
+            figure.flags.append(Flag(rule="image.linked-not-fetched", severity="review", message=message))
+        self.page.figures.append(figure)
 
     def line(self, text, anchor, role="body", table_id=None, equation=False):
         if text and not self.full():
@@ -262,6 +323,7 @@ class _Reader:
 
         root = etree.fromstring(part.blob)
         self.roots.append(root)
+        self.part = part  # a note's pictures are named by the notes part
         notes = {
             note.get(_W + "id"): note
             for note in root.findall(_W + kind)

@@ -207,7 +207,7 @@ A hostile file must not hang or crash a run, or run anything.
 
 ### Images
 
-Every image in a Word, PowerPoint, Excel, HTML or Markdown file is saved to `files/<file-id>/images/`, in its own format when a browser can show it (PNG, JPEG, GIF, WebP) and as PNG otherwise. Images smaller than 32 by 32 pixels (bullets, spacers) are not saved; a flag counts them. Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM files, so Ghostscript never runs.
+Every image in a Word, PowerPoint, Excel, HTML or Markdown file is saved to `files/<file-id>/images/`, in its own format when a browser can show it (PNG, JPEG, GIF, WebP) and as PNG otherwise. Images smaller than 32 by 32 pixels (bullets, spacers) are not saved; a flag counts them. Word pictures are read whether the file stores them as DrawingML or as older VML, and an embedded object (an OLE object such as a sheet in a document) keeps its preview picture as a figure while the object itself is flagged `docx.object-not-read`. A linked picture in Word or PowerPoint, or one whose image is not in the file, is kept as a figure with no file, flagged `image.linked-not-fetched`; nothing is fetched. Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM files, so Ghostscript never runs.
 
 Each image has a description, from the file's caption or alt text when there is one, otherwise from the text OCR finds in it. Text read from an image goes through the same two-reader rules as a scanned page, so with one reader the text is flagged (`ocr.single-reading`), not accepted. An image with neither is kept and flagged `image.no-description`. In `document.md` it appears where it sits, and it is its own chunk (`kind` `image`), so a search for "bar chart of collections" can find it.
 

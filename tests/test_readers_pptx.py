@@ -322,9 +322,11 @@ def test_b_a_linked_picture_is_not_fetched_and_is_flagged():
     link = slide.part.relate_to("https://example.com/x.png", RT.IMAGE, is_external=True)
     add(slide, pic("Linked", f'<a:blip r:link="{link}"/>', alt="A remote chart"))
     result = read_pptx(save(deck))
-    assert "pptx.linked-image" in page_flags(result)
+    assert page_flags(result) == set()
     (figure,) = result.document.pages[0].figures
     assert (figure.description, figure.description_source) == ("A remote chart", "alt")
+    assert {f.rule for f in figure.flags} == {"image.linked-not-fetched"}
+    assert figure.status == "flagged" and figure.path == ""
     assert result.images == {}
 
 
@@ -332,7 +334,11 @@ def test_b_a_picture_whose_image_part_is_missing_is_flagged():
     deck = new_deck("Slide")
     add(deck.slides[0], pic("Broken", '<a:blip r:embed="rId99"/>', alt="Lost"))
     result = read_pptx(save(deck))
-    assert "pptx.image-missing" in page_flags(result)
+    assert page_flags(result) == set()
+    (figure,) = result.document.pages[0].figures
+    assert {f.rule for f in figure.flags} == {"image.linked-not-fetched"}
+    assert "no image stored in the file" in figure.flags[0].message
+    assert figure.status == "flagged"
     assert result.images == {}
 
 
