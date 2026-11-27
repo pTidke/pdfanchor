@@ -520,7 +520,9 @@ def _identity(thing) -> list[str]:
         return [getattr(thing, "name", "?"), "unknown"]
 
 
-def _settings(config: Config, engines: Sequence[OcrEngine], third_reader: LineReader | None) -> dict:
+def _settings(
+    config: Config, engines: Sequence[OcrEngine], third_reader: LineReader | None, describer=None
+) -> dict:
     limits = (
         "max_depth",
         "max_cells",
@@ -537,10 +539,13 @@ def _settings(config: Config, engines: Sequence[OcrEngine], third_reader: LineRe
         "limits": {name: getattr(config, name) for name in limits},
         "ocr": [_identity(engine) for engine in engines],
         "third": _identity(third_reader) if third_reader is not None else None,
+        "describe": _identity(describer) if describer is not None else None,
     }
 
 
 def _hash(settings: dict, fmt: str) -> str:
+    if fmt == "pdf":  # a PDF has no figures to describe: the describer is not part of its reading
+        settings = {key: value for key, value in settings.items() if key != "describe"}
     body = json.dumps({**settings, "reader": _reader_name(fmt), "format": fmt}, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
 
@@ -552,6 +557,7 @@ class _Context:
     third_reader: LineReader | None
     worker: FileReader
     held: _State = field(default=None)
+    describer: object = None  # writes a sentence for each image; None leaves images as they are
 
 
 def _make(context: _Context, found: Found, read: Read, out: Path) -> tuple:
@@ -571,7 +577,7 @@ def _make(context: _Context, found: Found, read: Read, out: Path) -> tuple:
         else:
             result = isolation.read_file(read.data, found.path, config, base=read.base, reader=context.worker)
             deadline = started + config.file_timeout_seconds
-            figures.describe(result, context.engines, config, deadline=deadline)
+            figures.describe(result, context.engines, config, deadline=deadline, describer=context.describer)
             figures.save(result, out, config, deadline=deadline)
             document = result.document
         write(document, out, config)
@@ -771,11 +777,13 @@ def index(
     *,
     engines: Sequence[OcrEngine] | None = None,
     third_reader: LineReader | None = None,
+    describer=None,
     fresh: bool = False,
     progress: Callable[[str, str], None] | None = None,
 ) -> IndexReport:
     """Index the folder `root` (see the module's docstring). `engines=None` uses the OCR
-    engines installed here; `[]` reads text layers only. `fresh` reads every file again."""
+    engines installed here; `[]` reads text layers only. `describer` (off by default) writes a
+    sentence for each image, kept as a label. `fresh` reads every file again."""
     if os.name != "posix" or not hasattr(os, "fwalk"):
         raise FolderError("ragnaroq index works on Linux and macOS only in this version.")
     root = Path(root)
@@ -794,10 +802,10 @@ def index(
         tmp = _open_dir("tmp", state)
         stack.callback(os.close, tmp)
         held = _State(root_fd, state, files, tmp)
-        return _run(held, os.path.realpath(root), config, engines, third_reader, fresh, progress)
+        return _run(held, os.path.realpath(root), config, engines, third_reader, describer, fresh, progress)
 
 
-def _run(held: _State, real_root, config, engines, third_reader, fresh, progress) -> IndexReport:
+def _run(held: _State, real_root, config, engines, third_reader, describer, fresh, progress) -> IndexReport:
     notes: list[str] = []
     if engines is None:
         engines = available(config.languages)
@@ -805,7 +813,7 @@ def _run(held: _State, real_root, config, engines, third_reader, fresh, progress
     old = _load_manifest(held, notes)
     leftover = set() if old else _leftover_ids(held)
     before = {entry.file_id: entry for entry in old.files} if old else {}
-    settings = _settings(config, engines, third_reader)
+    settings = _settings(config, engines, third_reader, describer)
     entries: list[FileEntry] = []
 
     def done(entry: FileEntry) -> None:
@@ -817,7 +825,7 @@ def _run(held: _State, real_root, config, engines, third_reader, fresh, progress
                 pass
 
     with FileReader(config) as worker:
-        context = _Context(config, engines, third_reader, worker, held)
+        context = _Context(config, engines, third_reader, worker, held, describer)
 
         def process(found: Found, read: Read, hashed: str, previous: FileEntry | None) -> FileEntry:
             private = tempfile.mkdtemp(prefix="ragnaroq-")  # private, and never inside the folder

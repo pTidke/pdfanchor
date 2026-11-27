@@ -32,7 +32,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--dpi", type=int, default=200)
     run.add_argument("--exclude-script", action="append", default=[], help="For example Deva")
     run.add_argument("--chunk-chars", type=int, default=1200)
-    run.add_argument("--trust-native", action="store_true", help="Accept clean text-layer lines with no OCR cross-check")
+    run.add_argument(
+        "--trust-native", action="store_true", help="Accept clean text-layer lines with no OCR cross-check"
+    )
     run.add_argument("--page-timeout", type=float, help="Seconds a page may take to read (default 60)")
     run.add_argument("--page-memory-mb", type=int, help="Memory the page reader may use (default 2048)")
     run.add_argument(
@@ -77,7 +79,9 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--lang", default="eng")
     check.add_argument("--dpi", type=int, default=200)
     check.add_argument("--exclude-script", action="append", default=[])
-    check.add_argument("--min-similarity", type=float, help="Agreement threshold to evaluate (default: the policy's)")
+    check.add_argument(
+        "--min-similarity", type=float, help="Agreement threshold to evaluate (default: the policy's)"
+    )
     check.add_argument("--same-letters", action="store_true", help="Evaluate the strict agreement rule")
     check.add_argument(
         "--fresh", action="store_true", help="Read every reference again instead of reusing <out>/cache"
@@ -103,10 +107,21 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument(
             "--third-reader-budget", type=float, help="Seconds the third reader may spend on each document"
         )
-    for command in (run, listing, check, idx):
+    for command in (run, idx):
         command.add_argument(
-            "--easyocr-models", help="Folder with EasyOCR's model files (the second reader)"
+            "--describe-images",
+            action="store_true",
+            help="Let a small model write one sentence for each image, kept as a label (model)",
         )
+        command.add_argument("--describe-models", help="Folder with the image describer's model files")
+        command.add_argument(
+            "--describe-download",
+            action="store_true",
+            help="Fetch missing model files into --describe-models, or the Hugging Face cache when "
+            "that is not given",
+        )
+    for command in (run, listing, check, idx):
+        command.add_argument("--easyocr-models", help="Folder with EasyOCR's model files (the second reader)")
         command.add_argument(
             "--easyocr-download",
             action="store_true",
@@ -150,6 +165,20 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(error)}), file=sys.stderr)
             return 1
 
+    describer = None
+    if args.command == "index" and args.describe_images:
+        from .ocr.describe import SmolVlm
+
+        describer = SmolVlm(model_dir=args.describe_models, download=args.describe_download)
+        try:
+            describer.prepare()
+        except (EngineUnavailable, OSError) as error:
+            print(json.dumps({"error": str(error)}), file=sys.stderr)
+            return 1
+    elif args.command == "convert" and args.describe_images:
+        # A PDF has no figures in this version, so there is nothing to describe, and no model to load.
+        print("--describe-images has no effect on a PDF: its pages have no figures yet.", file=sys.stderr)
+
     def with_budget(config):
         if args.third_reader_budget is None:
             return config
@@ -170,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.folder,
                 config=config,
                 engines=engines_here(config.languages),
-                progress=lambda done, total, name: print(f"[{done}/{total}] {name}", file=sys.stderr, flush=True),
+                progress=lambda done, total, name: print(
+                    f"[{done}/{total}] {name}", file=sys.stderr, flush=True
+                ),
                 cache=None if args.fresh else Path(args.out) / "cache",
                 third_reader=third_reader,
             )
@@ -184,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         too_high = limit is not None and (rates["critical_false_accept_rate"] or 0) > limit
         return 3 if too_high else 0
     if args.command == "index":
-        return _index(args, with_budget, engines_here, third_reader)
+        return _index(args, with_budget, engines_here, third_reader, describer)
     config = Config(
         dpi=args.dpi,
         languages=tuple(args.lang.split("+")),
@@ -218,7 +249,7 @@ def _plain(text: str) -> str:
     return re.sub(r"[\x00-\x1f\x7f-\x9f]", lambda found: f"\\x{ord(found.group()):02x}", text)
 
 
-def _index(args, with_budget, engines_here, third_reader) -> int:
+def _index(args, with_budget, engines_here, third_reader, describer=None) -> int:
     config = Config(
         dpi=args.dpi, languages=tuple(args.lang.split("+")), exclude_scripts=tuple(args.exclude_script)
     )
@@ -232,6 +263,7 @@ def _index(args, with_budget, engines_here, third_reader) -> int:
             config,
             engines=engines,
             third_reader=third_reader,
+            describer=describer,
             fresh=args.fresh,
             progress=lambda path, status: print(f"{status:8} {_plain(path)}", file=sys.stderr, flush=True),
         )

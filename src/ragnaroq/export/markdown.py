@@ -49,10 +49,13 @@ def _figure(figure: Figure) -> str:
     place = f"*({_one_line(cite(figure.anchor))})*"
     description = _one_line(figure.description)
     path = figure.path
+    label = f" — model: {_one_line(figure.model_description)}" if figure.model_description else ""
     if path and not _REMOTE.match(path):
-        return f"![{description}]({path if _SAFE_PATH.fullmatch(path) else _destination(path)}) {place}"
+        return (
+            f"![{description}]({path if _SAFE_PATH.fullmatch(path) else _destination(path)}){label} {place}"
+        )
     link = f"({_destination(path)})" if path and _REMOTE.match(path) else ""
-    return f"[image: {description}]{link} {place}"
+    return f"[image: {description}]{link}{label} {place}"
 
 
 def _text(unit) -> str:

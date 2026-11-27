@@ -153,12 +153,13 @@ def _limited(anchors: list[dict]) -> tuple[str, bool]:
     return _json(anchors[:kept]), True
 
 
-def _figure_text(unit: Unit) -> str:
-    figure = unit.figure
-    parts = [figure.description.strip()]
-    if figure.model_description:
-        parts.append(f"(model) {figure.model_description.strip()}")
-    return "\n".join(part for part in parts if part)
+def _model_label(figure) -> str:
+    return f"(model) {figure.model_description.strip()}" if figure.model_description else ""
+
+
+def _figure_embedding(figure) -> str:
+    """The description, then the model's sentence marked "(model)": only the embedding sees it."""
+    return "\n".join(part for part in (figure.description.strip(), _model_label(figure)) if part)
 
 
 def _part(document: Document, number: int) -> str:
@@ -171,7 +172,7 @@ def _part(document: Document, number: int) -> str:
 def _chunk(document: Document, path: str, heading: str | None, members: list[Unit]) -> dict:
     figure = members[0].figure
     lines = [line for unit in members for line in unit.lines]
-    text = _figure_text(members[0]) if figure else "\n\n".join(unit.text for unit in members if unit.text)
+    text = figure.description.strip() if figure else "\n\n".join(unit.text for unit in members if unit.text)
     context = [part for part in (document.title, heading) if part]
     if len(context) == 2 and context[0] == context[1]:
         context.pop()
@@ -190,6 +191,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
     anchors_json, cut = _limited(anchors)
     if cut:
         rules = sorted({*rules, TRUNCATED})
+    body = _figure_embedding(figure) if figure else text
     pdf = document.source.format == "pdf"
     sources = {line.source for line in lines} | set(figure.ocr_sources if figure else [])
     kind = "image" if figure else "table" if members[0].kind == "table" else "text"
@@ -220,7 +222,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
     return {
         "id": str(uuid.uuid5(NAMESPACE, f"{file_id}|{document.source.sha256}|{what}")),
         "text": text,
-        "embedding_text": "\n".join([" > ".join(context), text]) if context else text,
+        "embedding_text": "\n".join([" > ".join(context), body]) if context else body,
         "metadata": metadata,
         "anchors": anchors,
     }
@@ -248,7 +250,7 @@ def to_chunks(
         if unit.status not in include:
             continue
         if unit.figure:
-            if _figure_text(unit):
+            if _figure_embedding(unit.figure):
                 flush()
                 chunks.append(_chunk(document, path, heading, [unit]))
             continue

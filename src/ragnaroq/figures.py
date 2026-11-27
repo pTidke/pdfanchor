@@ -316,14 +316,59 @@ def _cut(text: str) -> str:
     return (kept or text[:MAX_DESCRIPTION]) + "…"
 
 
+def _label(
+    result: "ReadResult",
+    index: _Index,
+    reads: dict[str, _Read],
+    engines: Sequence[OcrEngine],
+    config: Config,
+    describer,
+    deadline: float | None,
+) -> None:
+    """Let `describer` write one sentence for each distinct image, and keep it as
+    `Figure.model_description` only if `describe.accept` finds its numbers in the image's own OCR
+    text. A sentence never touches a status or a flag. An image not reached by `deadline`, or one
+    the describer fails on, gets none; a label from an earlier run is replaced."""
+    from .ocr.describe import SECONDS, accept
+
+    labels: dict[str, str | None] = {}
+    for figure in _figures(result):
+        figure.model_description = None
+        got = index.of(figure, deadline)
+        if got is None or got[2] is None:
+            continue
+        sha, data, info = got
+        if info.kind in ("svg", "opaque") or info.too_large or info.tiny or info.broken:
+            continue
+        if sha not in labels:
+            labels[sha] = None
+            if deadline is not None and time.monotonic() >= deadline:
+                continue
+            try:
+                if sha not in reads and engines:
+                    reads[sha] = _read(data, engines, config)
+                ocr = " ".join(line.text for line in reads[sha].lines) if sha in reads else ""
+                labels[sha] = accept(describer.describe(_for_ocr(data, config), SECONDS), ocr)
+            except Exception:  # a picture the model cannot describe is left as it is
+                continue
+        figure.model_description = labels[sha]
+
+
 def describe(
-    result: "ReadResult", engines: Sequence[OcrEngine], config: Config, deadline: float | None = None
+    result: "ReadResult",
+    engines: Sequence[OcrEngine],
+    config: Config,
+    deadline: float | None = None,
+    describer=None,
 ) -> None:
     """Give each figure with no description from its file the text OCR reads in it, then
     decide the document again. A distinct image is read once, however many figures show it;
     each figure gets its own copy of the lines, until `max_figure_ocr_lines` is used up: past
     it a figure keeps its description and has no lines. An image not reached by `deadline`
-    (a `time.monotonic()` value) is not read, and says so."""
+    (a `time.monotonic()` value) is not read, and says so.
+
+    With a `describer` (off by default), each image is also given a model-written sentence, kept
+    as a label beside the description; see `_label`."""
     index = _index(result, config)
     reads: dict[str, _Read] = {}
     used = sum(len(figure.ocr_lines) for figure in _figures(result))
@@ -368,6 +413,8 @@ def describe(
             copy = line.model_copy(deep=True)
             copy.id, copy.page, copy.anchor = f"{figure.id}-l{k}", figure.page, figure.anchor.model_copy()
             figure.ocr_lines.append(copy)
+    if describer is not None:
+        _label(result, index, reads, engines, config, describer, deadline)
     policy.decide(result.document, config.policy)
 
 

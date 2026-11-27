@@ -157,8 +157,8 @@ def test_a_figure_is_its_own_image_chunk():
     meta = chunk["metadata"]
     assert meta["kind"] == "image" and meta["image_path"] == "images/p-3.png"
     assert meta["cite"] == "report.pdf, p. 3" and meta["page_first"] == meta["page_last"] == 3
-    assert chunk["text"] == "Bar chart of collections\n(model) Collections rose each year."
-    assert chunk["embedding_text"].endswith("(model) Collections rose each year.")
+    assert chunk["text"] == "Bar chart of collections"  # the label is for the embedding only
+    assert chunk["embedding_text"].endswith("Bar chart of collections\n(model) Collections rose each year.")
     plain = fig.model_copy(update={"id": "f2", "model_description": None})
     document.pages[0].figures = [plain]
     assert to_chunks(document, Config())[0]["embedding_text"].endswith("Bar chart of collections")
