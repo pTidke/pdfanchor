@@ -571,7 +571,7 @@ import json  # noqa: E402
 
 from ragnaroq.anchors import PdfAnchor  # noqa: E402
 from ragnaroq.model import Document, Engine, Line, Page, Source  # noqa: E402
-from ragnaroq.readers import ReaderRefused, ReaderUnavailable, read_bytes  # noqa: E402
+from ragnaroq.readers import ReaderRefused, read_bytes  # noqa: E402
 from ragnaroq.readers._build import start as empty_start  # noqa: E402
 from ragnaroq.semantic.describe import describe as describe_document  # noqa: E402
 from ragnaroq.semantic.describe import mentions  # noqa: E402
@@ -641,27 +641,77 @@ def squash(text):
     return " ".join(text.split())
 
 
+FLOORS = {"dates": 7, "periods": 1, "amounts": 6, "references": 5, "definitions": 6}
+
+
+def check_grounding(document, value):
+    """The cited lines are kept lines, hold the value's text, and each one contributes to it."""
+    by_id = {line.id: line for line in document.lines()}
+    cited = [by_id[i] for i in value.line_ids]
+    assert cited and not any(line.excluded for line in cited), value
+    held = squash(" ".join(line.text for line in cited))
+    assert squash(value.text) in held, (value, held)
+    for k in range(len(cited)):
+        rest = squash(" ".join(line.text for j, line in enumerate(cited) if j != k))
+        assert squash(value.text) not in rest, ("a cited line adds nothing", value, cited[k].id)
+    assert value.cite
+    assert value.status == min((line.status for line in cited), key=("blocked", "flagged", "accepted").index)
+
+
 def test_every_value_names_lines_whose_text_holds_it():
-    checked = 0
+    found = dict.fromkeys(FLOORS, 0)
     for base, name in every_file():
         try:
             document = read_file(base, name)
-        except (ReaderRefused, ReaderUnavailable):
+        except ReaderRefused:
+            assert name == "bomb.xml", name  # the one file a reader must refuse
             continue
         meta = describe_document(document)
-        by_id = {line.id: line for line in document.lines()}
         if not meta.title.line_ids:
             assert meta.title.text == document.source.filename
-        for value in [meta.title, *grounded_values(meta), *mentions(document)]:
-            if not value.line_ids:
-                continue
-            held = squash(" ".join(by_id[i].text for i in value.line_ids))
-            assert squash(value.text) in held, (name, value, held)
-            assert value.cite and value.status in ("accepted", "flagged", "blocked")
-            checked += 1
-        for value in grounded_values(meta):
-            assert value.line_ids, (name, value)
-    assert checked > 40
+        else:
+            check_grounding(document, meta.title)
+        for field in FLOORS:
+            values = meta.structure.definitions if field == "definitions" else getattr(meta, field)
+            for value in values:
+                check_grounding(document, value)
+            found[field] += len(values)
+        for value in mentions(document):
+            check_grounding(document, value)
+    assert all(found[field] >= floor for field, floor in FLOORS.items()), found
+
+
+def lines_document(texts, statuses=None):
+    """One PDF paragraph (one `paragraph` number) over several lines."""
+    document = md_document("\n\n".join(texts))
+    for i, line in enumerate(document.pages[0].lines):
+        line.paragraph = 1
+        line.status = (statuses or ["accepted"] * len(texts))[i]
+    return document
+
+
+def test_a_value_split_across_two_lines_cites_exactly_those_lines():
+    document = lines_document(["The board met on 5 January", "2026 and agreed.", "Nothing else here."])
+    meta = describe_document(document)
+    assert [(d.value, d.line_ids) for d in meta.dates] == [("2026-01-05", ["l0", "l1"])]
+    check_grounding(document, meta.dates[0])
+
+
+def test_a_value_split_across_lines_takes_the_lowest_status_of_them():
+    document = lines_document(["The board met on 5 January", "2026 and agreed."], ["accepted", "flagged"])
+    (date,) = describe_document(document).dates
+    assert (date.line_ids, date.status) == (["l0", "l1"], "flagged")
+    document = lines_document(
+        ["A line.", "Met on 5 January 2026 here.", "More."], ["flagged", "accepted", "blocked"]
+    )
+    (date,) = describe_document(document).dates
+    assert (date.line_ids, date.status) == (["l1"], "accepted")
+
+
+def test_a_value_on_an_excluded_line_is_not_taken():
+    document = lines_document(["Kept line.", "Met on 5 January 2026."])
+    document.pages[0].lines[1].excluded = "script:Deva"
+    assert describe_document(document).dates == []
 
 
 def test_a_date_on_a_flagged_line_is_flagged():
@@ -723,15 +773,20 @@ def test_a_table_definition_is_grounded_to_its_row():
     ]
 
 
-def test_scripts_and_exclusion():
-    document = md_document("Hello world.\n\nनमस्ते दुनिया")
-    document.pages[0].lines[0].scripts = ["Latn"]
-    document.pages[0].lines[1].scripts = ["Deva"]
-    document.pages[0].lines[1].excluded = "script:Deva"
+def test_scripts_use_each_lines_own_list_over_one_denominator():
+    document = md_document("Hello world.\n\nनमस्ते दुनिया\n\nabc")
+    lines = document.pages[0].lines
+    lines[0].scripts = ["Latn"]
+    lines[1].scripts = ["Deva"]
+    lines[1].excluded = "script:Deva"
+    lines[2].scripts = ["Grek"]  # the text alone would say Latin: only the line's list counts
     meta = describe_document(document)
-    assert {s.script: s.excluded for s in meta.scripts} == {"Latn": False, "Deva": True}
-    assert next(s for s in meta.scripts if s.script == "Latn").share == 1.0
-    assert meta.length.chars == len("Hello world.")
+    assert {s.script: s.excluded for s in meta.scripts} == {"Latn": False, "Deva": True, "Grek": False}
+    assert "Latn" in {s.script for s in meta.scripts}
+    shares = {s.script: s.share for s in meta.scripts}
+    assert round(sum(shares.values()), 3) == 1.0
+    assert shares["Grek"] == 0.0 and shares["Latn"] > 0 and shares["Deva"] > 0
+    assert meta.length.chars == len("Hello world.") + len("abc")
 
 
 def test_kinds_of_the_generated_documents():

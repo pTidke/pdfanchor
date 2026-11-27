@@ -60,8 +60,8 @@ class Length(Model):
 class ScriptShare(Model):
     script: str
     share: float = Field(
-        description="Share of the letters in lines that are kept; for an excluded script, its share of "
-        "the letters in all lines."
+        description="Share of the characters that carry a script, over all non-empty lines, excluded or "
+        "not, so the shares sum to 1."
     )
     excluded: bool = Field(description="Every line carrying the script is excluded.")
 

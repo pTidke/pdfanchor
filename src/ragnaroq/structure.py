@@ -13,13 +13,16 @@ HEADING_WORD = re.compile(r"^(CHAPTER|PART|SCHEDULE|ANNEXURE|APPENDIX|SECTION)\b
 SCRIPTS = {"LATIN": "Latn", "DEVANAGARI": "Deva"}
 
 
+def script_of(ch: str) -> str | None:
+    """The script of one character, named as `Line.scripts` names it; None for a character that has none."""
+    if ch.isalpha() or unicodedata.category(ch).startswith("M"):
+        name = unicodedata.name(ch, "").split(" ")[0]
+        return SCRIPTS.get(name, name.title()[:4] or "Zzzz")
+    return None
+
+
 def scripts_of(text: str) -> list[str]:
-    found = set()
-    for ch in text:
-        if ch.isalpha() or unicodedata.category(ch).startswith("M"):
-            name = unicodedata.name(ch, "").split(" ")[0]
-            found.add(SCRIPTS.get(name, name.title()[:4] or "Zzzz"))
-    return sorted(found)
+    return sorted({script for ch in text if (script := script_of(ch))})
 
 
 def apply(document: Document, config: Config) -> None:

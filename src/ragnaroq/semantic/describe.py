@@ -2,13 +2,12 @@
 mentions, the structure counts, length, scripts and trust. Values come from lines that are not
 excluded; each names the lines it came from."""
 
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..export.chunks import citation
 from ..model import Document, Flag, Line, Status
-from ..structure import SCRIPTS
+from ..structure import script_of
 from . import find
 from .model import (
     DocumentMetadata,
@@ -125,29 +124,27 @@ def _title(document: Document, paras: list[Para]) -> Grounded:
     return Grounded(text=document.source.filename, line_ids=[], cite="", status="accepted")
 
 
-def _letters(lines: list[Line]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for line in lines:
-        for ch in line.text:
-            if ch.isalpha():
-                name = unicodedata.name(ch, "").split(" ")[0]
-                script = SCRIPTS.get(name, name.title()[:4] or "Zzzz")
-                counts[script] = counts.get(script, 0) + 1
-    return counts
-
-
 def _scripts(document: Document) -> list[ScriptShare]:
-    lines = list(document.lines())
-    kept = _letters([line for line in lines if not line.excluded])
-    every = _letters(lines)
-    total_kept, total = sum(kept.values()), sum(every.values())
-    shares = [ScriptShare(script=s, share=round(n / total_kept, 4), excluded=False) for s, n in kept.items()]
-    shares += [
-        ScriptShare(script=s, share=round(n / total, 4), excluded=True)
-        for s, n in every.items()
-        if s not in kept
+    """Each script's share of the characters that carry a script, over all non-empty lines (excluded or
+    not), counting a line only toward the scripts its `scripts` lists. A script is excluded when every
+    line that carries it is excluded."""
+    counts: dict[str, int] = {}
+    kept: set[str] = set()
+    for line in document.lines():
+        if not line.text.strip():
+            continue
+        for script in line.scripts:
+            counts.setdefault(script, 0)
+            if not line.excluded:
+                kept.add(script)
+        for ch in line.text:
+            if (script := script_of(ch)) in line.scripts:
+                counts[script] += 1
+    total = sum(counts.values())
+    return [
+        ScriptShare(script=s, share=round(counts[s] / total, 4) if total else 0.0, excluded=s not in kept)
+        for s in sorted(counts)
     ]
-    return sorted(shares, key=lambda share: share.script)
 
 
 def _trust(document: Document) -> Trust:
