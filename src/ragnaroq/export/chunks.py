@@ -44,6 +44,7 @@ METADATA_KEYS = (
 ANCHORS_JSON_LIMIT = 20_000  # UTF-8 bytes
 TRUNCATED = "chunk.anchors-truncated"
 CELL = re.compile(r"([A-Z]+)(\d+)")
+REMOTE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.\-]*:|//)")  # a URL a figure keeps, never fetched
 
 
 def _dump(anchor: Anchor) -> dict:
@@ -217,7 +218,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
         "title": document.title or "",
         "chars": len(text),
         "anchors_json": anchors_json,
-        "image_path": figure.path if figure else "",
+        "image_path": figure.path if figure and not REMOTE.match(figure.path) else "",  # a saved file only
     }
     assert tuple(metadata) == METADATA_KEYS
     return {

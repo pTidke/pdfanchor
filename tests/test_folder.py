@@ -242,19 +242,24 @@ def test_combined_chunks_hold_every_file_and_pass_the_vector_database_rules(demo
             assert {c["metadata"]["file_id"] for c in chunks if c["metadata"]["path"] == entry.path} == {
                 entry.file_id
             }
-    # Loading twice replaces; checked on real stores when they are installed.
-    if (qdrant := pytest.importorskip("qdrant_client", reason="no qdrant")) is not None:
-        from qdrant_client.models import Distance, PointStruct, VectorParams
 
-        client = qdrant.QdrantClient(":memory:")
-        client.create_collection("c", vectors_config=VectorParams(size=3, distance=Distance.COSINE))
-        points = [
-            PointStruct(id=c["id"], vector=[1.0, 0.0, 1.0], payload={"text": c["text"], **c["metadata"]})
-            for c in chunks
-        ]
-        client.upsert("c", points)
-        client.upsert("c", points)
-        assert client.count("c").count == len(chunks)
+
+def test_the_combined_chunks_load_into_qdrant_twice_without_duplicates(demo):
+    """Loading twice replaces; checked on a real store when it is installed (skipped alone without it)."""
+    qdrant = pytest.importorskip("qdrant_client", reason="no qdrant")
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+
+    run(demo)
+    chunks = chunks_of(demo)
+    client = qdrant.QdrantClient(":memory:")
+    client.create_collection("c", vectors_config=VectorParams(size=3, distance=Distance.COSINE))
+    points = [
+        PointStruct(id=c["id"], vector=[1.0, 0.0, 1.0], payload={"text": c["text"], **c["metadata"]})
+        for c in chunks
+    ]
+    client.upsert("c", points)
+    client.upsert("c", points)
+    assert client.count("c").count == len(chunks)
 
 
 def test_the_vector_database_follows_changes_json_exactly(demo):

@@ -106,7 +106,7 @@ A folder with `*.expected.jsonl` files is scored in this mode. Each expected lin
 | Flags missing | A flag the answer key requires that is not there |
 | Extra | Lines at anchors the key does not list. Reported, but they do not fail the file |
 
-A file is `ok` when nothing is wrong, missing or unflagged. The bar for 0.3.0 is `ok` on every exact-format file in the demo folder, and it holds. The PDF scoring above is unchanged: a folder with `*.truth.json` files is scored as before.
+A file is `ok` when nothing is wrong, missing or unflagged. The command prints the counts (`"exact": {"files": 10, "ok": 10, "failed": []}`) and exits with code `1` when any file is not `ok`, so a CI job can fail on it. The bar for 0.3.0 is `ok` on every exact-format file in the demo folder, and it holds. The PDF scoring above is unchanged: a folder with `*.truth.json` files is scored as before.
 
 ## Limits of synthetic references
 

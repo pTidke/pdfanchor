@@ -6,7 +6,7 @@
 {"id": "6f1c…", "text": "…", "embedding_text": "…", "metadata": {…}, "anchors": […]}
 ```
 
-- `id` is a UUID, stable for the same file content and the same lines. Upsert by it.
+- `id` is a UUID made from the file's path (its `file_id`), the file's content hash and the chunk's line ids, so it is stable for the same path, content and lines. Upsert by it. Two identical files at two paths have different ids; a renamed or edited file gets new ids.
 - `embedding_text` is what to embed. `text` is what to show. `text` is the file's own text, raw: escape it before you render it as Markdown or HTML.
 - `metadata` is flat: every value is a string, integer, float or boolean, never null, and every chunk has the same keys. It loads into stores that reject nested or null metadata.
 - `anchors` is the full list of places the chunk came from. `metadata["anchors_json"]` holds the same list as a string. It is cut to 20,000 bytes if needed, by dropping whole anchors from the end, so it is always valid JSON; a cut chunk carries the rule `chunk.anchors-truncated` in `metadata["rules"]`.
@@ -43,12 +43,12 @@ A second `ragnaroq index` writes `changes.json`, which says what differs from th
 }
 ```
 
-- **Upsert** `chunks_added` and `chunks_changed`. A changed chunk keeps its id: its file's content or verdict changed.
+- **Upsert** `chunks_added` and `chunks_changed`. A changed chunk keeps its id because its path, its file's content and its lines are the same; the file was read again (other settings, another reader version) and the chunk's text, status, rules or other metadata may differ. A file whose content changed gets new ids: its old ones are in `chunks_removed` and its new ones in `chunks_added`.
 - **Delete** `chunks_removed`.
 - **On `reset`, drop every chunk whose id is not in `chunks.jsonl`.** `reset` is `true` when there was no usable last run to compare with (the first run, or a manifest that is missing or cannot be read), so `changes.json` cannot list what to delete.
 - Every chunk also carries `file_id`, so a store can delete a file's chunks by filter.
 
-Ids are stable: the same file content and lines give the same ids, so loading the same run twice does not duplicate anything. The snippets below upsert every chunk, which is always safe; to send only what changed, filter `chunks` on `chunks_added` and `chunks_changed`.
+Ids are stable: the same path, file content and lines give the same ids, so loading the same run twice does not duplicate anything. The snippets below upsert every chunk, which is always safe; to send only what changed, filter `chunks` on `chunks_added` and `chunks_changed`.
 
 To embed, use any model. The snippets below use `embed(texts)` for yours, and read a folder index at `.ragnaroq/`.
 

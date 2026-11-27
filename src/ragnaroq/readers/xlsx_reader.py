@@ -202,7 +202,7 @@ def _read_sheet(sheet, values, number: int, page: Page, config: Config, images: 
         figure = Figure(
             id=f"p{number}-f{k}",
             page=number,
-            order=k - 1,
+            order=len(page.lines),  # after the sheet's cells: a picture has no place among them
             width=int(picture.width),
             height=int(picture.height),
             anchor=XlsxAnchor(sheet=sheet.title, cell=_corner(picture.anchor, utils.get_column_letter)),

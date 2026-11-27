@@ -313,3 +313,22 @@ def test_each_group_of_rows_is_decided_alone_and_shows_its_header_status():
     assert len(after) == len(before) - 1
     assert [c["id"] for c in after] == [c["id"] for c in before if "| 80C-250 |" not in c["text"]]
     assert {c["metadata"]["status"] for c in after} == {"flagged"}  # each shows the flagged header
+
+
+def test_a_remote_figure_chunk_has_no_image_path():
+    """Final review m1: `image_path` names a saved file, never a URL nothing fetched."""
+    from ragnaroq.anchors import HtmlAnchor
+
+    remote = Figure(
+        id="f1",
+        page=1,
+        anchor=HtmlAnchor(path="/html/body/img"),
+        path="https://example.org/x.png",
+        description="Collections by year",
+        description_source="alt",
+        status="accepted",
+    )
+    saved = remote.model_copy(update={"id": "f2", "path": "images/html-body-img.png"})
+    page = Page(number=1, kind="body", lines=[], figures=[remote, saved])
+    chunks = to_chunks(hand_built("html", "notice.html", [page]), Config())
+    assert [c["metadata"]["image_path"] for c in chunks] == ["", "images/html-body-img.png"]

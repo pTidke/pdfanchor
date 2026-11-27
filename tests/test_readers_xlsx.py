@@ -344,3 +344,18 @@ def test_a_plain_workbook_has_none_of_these_flags():
 )
 def test_times_round_to_the_second_or_the_shown_fraction_as_excel_does(value, fmt, shown):
     assert numformat.render(value, fmt) == shown
+
+
+def test_a_sheet_figure_comes_after_the_sheet_lines():
+    """Final review m9: a picture is placed after the sheet's table, not before its first cell."""
+    from ragnaroq.export import units
+
+    def build(wb):
+        _with_picture(wb)
+        wb.active.append(["80C", 150000])
+
+    document = read_xlsx(workbook_bytes(build)).document
+    page = document.pages[0]
+    (figure,) = page.figures
+    assert figure.order == len(page.lines) == 3
+    assert [unit.kind for unit in units(document)] == ["table", "image"]

@@ -36,7 +36,7 @@
 **Ids and chunks**
 - UUID namespace: `NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/pTidke/ragnaroq")`.
 - A file id is `str(uuid5(NAMESPACE, <path relative to the folder, POSIX>))`.
-- A chunk id is `str(uuid5(NAMESPACE, <file sha256> + "|" + ",".join(<line ids>)))`.
+- A chunk id is `str(uuid5(NAMESPACE, <file id> + "|" + <file sha256> + "|" + ",".join(<line ids>)))`; an image chunk uses its figure id in place of the line ids (Ruling R5: with the file id, identical files at two paths no longer share ids).
 - Chunk metadata uses one fixed set of keys on every chunk. Values are `str`, `int`, `float` or `bool` only: no `None`, no lists, no dicts. A missing value is `""` or `0`.
 
 **Exact text and images**

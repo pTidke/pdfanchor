@@ -208,7 +208,7 @@ A hostile file must not hang or crash a run, or run anything.
 
 ### Images
 
-Every image in a Word, PowerPoint, Excel, HTML or Markdown file is saved to `files/<file-id>/images/`, in its own format when a browser can show it (PNG, JPEG, GIF, WebP) and as PNG otherwise. Images smaller than 32 by 32 pixels (bullets, spacers) are not saved; a flag counts them. Word pictures are read whether the file stores them as DrawingML or as older VML, and an embedded object (an OLE object such as a sheet in a document) keeps its preview picture as a figure while the object itself is flagged `docx.object-not-read`. A linked picture in Word or PowerPoint, or one whose image is not in the file, is kept as a figure with no file, flagged `image.linked-not-fetched`; nothing is fetched. Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM files, so Ghostscript never runs.
+Every image in a Word, PowerPoint, Excel, HTML or Markdown file is saved to `files/<file-id>/images/`: in its own format when a browser can show it (PNG, JPEG, GIF, WebP, SVG), as PNG when Pillow can open it and a browser cannot (BMP, TIFF, ICO, PPM), and otherwise as it came, with its own extension (`.emf`, `.wmf`, `.eps`, `.pdf`, else `.bin`) and the flag `image.not-viewable`. An SVG is never OCR-read. Images smaller than 32 by 32 pixels (bullets, spacers) are not saved; a flag counts them. Word pictures are read whether the file stores them as DrawingML or as older VML, and an embedded object (an OLE object such as a sheet in a document) keeps its preview picture as a figure while the object itself is flagged `docx.object-not-read`. A linked picture in Word or PowerPoint, or one whose image is not in the file, is kept as a figure with no file, flagged `image.linked-not-fetched`; nothing is fetched. Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM files, so Ghostscript never runs.
 
 Each image has a description, from the file's caption or alt text when there is one, otherwise from the text OCR finds in it. Text read from an image goes through the same two-reader rules as a scanned page, so with one reader the text is flagged (`ocr.single-reading`), not accepted. An image with neither is kept and flagged `image.no-description`. In `document.md` it appears where it sits, and it is its own chunk (`kind` `image`), so a search for "bar chart of collections" can find it.
 
@@ -251,7 +251,7 @@ A chunk's `text` is the file's own text, raw, not escaped. Escape it before you 
 
 | Field | Use |
 | --- | --- |
-| `id` | A UUID, stable for the same file content and lines. Upsert by it |
+| `id` | A UUID made from the file's path, its content hash and the chunk's line ids: stable for the same path, content and lines. Upsert by it |
 | `embedding_text` | What to embed: the title and heading, then the text |
 | `text` | What to show |
 | `anchors` | Where it came from: for a PDF a page, bounding box and line ids per page; for a spreadsheet table its cell range; otherwise `from` and `to` anchors per part. `metadata.anchors_json` holds the same as a string, capped at 20,000 bytes |

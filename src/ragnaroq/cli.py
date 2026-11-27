@@ -1,7 +1,8 @@
 """Command line: `ragnaroq convert file.pdf --out dir`, and `reference make` / `evaluate` to measure it.
 
 Exit codes: 0 everything accepted by rule; 2 files were written but something needs a
-person; 1 the file (for `index`, any file) could not be processed.
+person; 1 the file (for `index`, any file) could not be processed, or, for `evaluate`, a file
+with an answer key did not score ok; 3 `evaluate` let more critical errors through than allowed.
 """
 
 import argparse
@@ -224,10 +225,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         files = evaluate.write(report, args.out)
         rates = report.total.rates()
-        print(json.dumps({"total": rates, "files": {k: str(v) for k, v in files.items()}}))
+        printed = {"total": rates, "files": {k: str(v) for k, v in files.items()}}
+        failed = [f.name for f in report.exact.files if not f.ok] if report.exact else []
+        if report.exact:
+            printed["exact"] = {"files": len(report.exact.files), "ok": len(report.exact.files) - len(failed),
+                                "failed": failed}
+        print(json.dumps(printed))
         limit = args.max_critical_false_accepts
         too_high = limit is not None and (rates["critical_false_accept_rate"] or 0) > limit
-        return 3 if too_high else 0
+        return 3 if too_high else 1 if failed else 0
     if args.command == "index":
         return _index(args, with_budget, engines_here, third_reader, describer)
     config = _output_options(args, Config(

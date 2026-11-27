@@ -485,3 +485,22 @@ def test_the_threshold_sweep_compares_a_corrected_line_by_its_first_reading(clea
     # The sweep is the two-reader rule: the first reader's 2028 still disagrees.
     assert due.min_similarity < 1.0 and not due.critical_agree
     assert all(row["accepted"] == 0 for row in evaluate.sweep([due]))
+
+
+def test_evaluate_on_answer_keys_exits_non_zero_when_a_file_fails_and_prints_the_counts(tmp_path, capsys):
+    """Final review m2."""
+    import shutil
+    from pathlib import Path
+
+    demo = Path(__file__).parent.parent / "references" / "demo"
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    for name in ("notice.xml", "notice.xml.expected.jsonl", "rates.csv", "rates.csv.expected.jsonl"):
+        shutil.copy(demo / name, keys)
+    assert main(["evaluate", str(keys), "--out", str(tmp_path / "out")]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["exact"] == {"files": 2, "ok": 2, "failed": []}
+    (keys / "rates.csv").write_bytes(b"name;rate\nTea;99%\n")  # no longer what its key says
+    assert main(["evaluate", str(keys), "--out", str(tmp_path / "out")]) == 1
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["exact"] == {"files": 2, "ok": 1, "failed": ["rates.csv"]}

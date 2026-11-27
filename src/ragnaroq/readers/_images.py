@@ -58,24 +58,6 @@ def _not_found() -> Loaded:
     return _refused("image.not-found", "The image file was not found beside the file.")
 
 
-def _data_uri(src: str, config: Config) -> Loaded:
-    header, comma, payload = src[5:].partition(",")
-    if not comma:
-        return _unreadable()
-    # The limit is on the encoded length, so nothing large is ever decoded.
-    if len(payload) > config.max_image_bytes:
-        return _too_large(config)
-    try:
-        if header.rstrip().lower().endswith(";base64"):
-            text = "".join(unquote(payload).split())
-            data = base64.b64decode(text + "=" * (-len(text) % 4), validate=True)
-        else:
-            data = unquote_to_bytes(payload)
-    except (binascii.Error, ValueError):
-        return _unreadable()
-    return Loaded(data=data) if data else _unreadable()
-
-
 _C0 = "".join(chr(code) for code in range(0x21))  # controls and the space, trimmed from a src
 _LONG = 4096
 
