@@ -185,7 +185,7 @@ my-folder/
     files/<file-id>/  document.json, document.md, chunks.jsonl, entry.json, images/
 ```
 
-A file's id is a UUID made from its path, so an edited file keeps its place. The status of a file is `ok`, `review` (something is flagged), `failed` or `skipped`. Skipped files are listed with the reason: hidden files and folders, symbolic links that lead outside the folder, empty files, files over 100 MiB, and files of a type it does not read (`unsupported`). A symbolic link to a file inside the folder is read.
+A file's id is a UUID made from its path, so an edited file keeps its place. The status of a file is `ok`, `review`, `failed` or `skipped`. A file needs `review` when a line, table or image is not accepted, or when a flag on the file or one of its parts says something was not read or not read with certainty (`chart.not-read`, `md.too-deep`, `json.duplicate-key`, `encoding.guessed`, a line limit and the rest). Three flags only inform and do not count: `image.tiny-skipped`, `docx.headers-footers` and `pptx.footers`. A PDF counts as before: any table, and only blocking flags on the file or a page. Skipped files are listed with the reason: hidden files and folders, symbolic links that lead outside the folder, empty files, files over 100 MiB, and files of a type it does not read (`unsupported`). A symbolic link to a file inside the folder is read.
 
 The exit code is `1` when any file failed, else `2` when anything needs a person, else `0`. One file's failure never stops a run.
 

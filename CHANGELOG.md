@@ -7,6 +7,7 @@ Folders and formats. `ragnaroq index ./folder` reads a folder of mixed files and
 ### Added
 
 - **`ragnaroq index`.** It reads every supported file and writes `.ragnaroq/` inside the folder: `manifest.json`, `changes.json`, `chunks.jsonl` for the whole folder, and for each file `document.json`, `document.md`, `chunks.jsonl` and `images/`. The originals are never changed. A second run reads only files whose content, reader or settings changed, and deletes the output of removed files. Exit code `1` when any file failed, `2` when anything needs a person, else `0`. One file's failure never stops a run.
+  - **Status per file:** `ok`, `review`, `failed` or `skipped`. A file is `review` when a line, table or image is not accepted, or a flag on the file or a part says something was not read or not read with certainty; `image.tiny-skipped`, `docx.headers-footers` and `pptx.footers` only inform. A table whose cells are all accepted needs no person. PDFs count as before.
   - **POSIX only in 0.3** (Linux and macOS). On Windows it exits `1`.
   - **Skipped, and listed with the reason:** hidden files and folders, symbolic links that lead outside the folder, empty files, files over 100 MiB, and files of a type it does not read.
   - **Private:** `.ragnaroq/` folders are `0700` and files `0600`. A run that is killed may leave one private `ragnaroq-*` folder in `TMPDIR`.

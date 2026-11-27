@@ -184,3 +184,106 @@ def test_an_alt_text_figure_does_not_need_review():
     doc = decided(exact_document("pptx", ["All fine"], figures=[fig]))
     assert needs_review(doc) is False
     assert doc.summary["figures"] == 1 and doc.summary["figures_flagged"] == 0
+
+
+# --- needs_review (final review C1) -------------------------------------------------------------
+
+
+def _read(name, data, config=None):
+    from ragnaroq import Config, read_bytes
+
+    return read_bytes(data, name, config or Config()).document
+
+
+def _chart_docx() -> bytes:
+    import io
+
+    import pytest
+
+    docx = pytest.importorskip("docx")
+    from lxml import etree
+
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    c = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    made = docx.Document()
+    made.add_paragraph("Collections rose this year, as the chart shows.")
+    chart = (
+        f'<w:p xmlns:w="{w}" xmlns:wp="{wp}" xmlns:a="{a}" xmlns:c="{c}" xmlns:r="{r}"><w:r><w:drawing>'
+        '<wp:inline><wp:extent cx="100" cy="100"/><wp:docPr id="9" name="Chart 1"/><a:graphic>'
+        f'<a:graphicData uri="{c}"><c:chart r:id="rId99"/></a:graphicData></a:graphic></wp:inline>'
+        "</w:drawing></w:r></w:p>"
+    )
+    made.element.body[-1].addprevious(etree.fromstring(chart))
+    buffer = io.BytesIO()
+    made.save(buffer)
+    return buffer.getvalue()
+
+
+def _with_flag(source, rule, where="document", severity="review"):
+    from ragnaroq.model import Flag
+
+    doc = decided(exact_document(source, ["All fine"]))
+    flag = Flag(rule=rule, severity=severity, message="m")
+    (doc.flags if where == "document" else doc.pages[0].flags).append(flag)
+    return doc
+
+
+def _pdf_document(page_flags=(), table=False):
+    from ragnaroq.model import Flag
+
+    line = Line(id="p1-l1", page=1, order=0, raw="Clean text", text="Clean text", source="native",
+                box=Box(x0=0, top=0, x1=10, bottom=10))
+    line.readings = [Reading(source="ocr:echo", text="Clean text")]
+    tables = [Table(id="p1-t1", page=1, rows=1, columns=1, cells=[Cell(row=0, column=0, text="x")])]
+    page = Page(number=1, kind="native", width=100, height=100, lines=[line], tables=tables if table else [],
+                flags=[Flag(rule=r, severity=s, message="m") for r, s in page_flags])
+    doc = Document(
+        source=Source(sha256="0", bytes=1, filename="f.pdf", pages=1),
+        engine=Engine(name="t", version="0", policy_version="0.6", config_sha256="0", components={}),
+        created_at="2026-01-01T00:00:00Z", pages=[page],
+    )
+    return decided(doc)
+
+
+def test_needs_review_truth_table():
+    from dataclasses import replace
+
+    from ragnaroq import Config
+
+    small = replace(Config(), max_cells=10)
+    deep = b"> " * 150 + b"deep quote\n\nafter the deep part, is this read?\n"
+    cases = {
+        # Exact tables whose every cell is accepted need no person.
+        "clean csv": (_read("r.csv", b"Section,Amount\n80C,150000\n80D,25000\n"), False),
+        "json records": (_read("d.json", b'[{"section":"80C","limit":150000},{"section":"80D","limit":1}]'),
+                         False),
+        "html table": (_read("p.html", b"<table><tr><th>A</th></tr><tr><td>1</td></tr></table>"), False),
+        "md table": (_read("m.md", b"| A | B |\n|---|---|\n| 1 | 2 |\n"), False),
+        "plain md": (_read("plain.md", b"# Title\n\nHello world.\n"), False),
+        # A review flag that says something was not read, or read with doubt, needs a person.
+        "duplicate key": (_read("dup.json", b'{"a": 1, "a": 2, "b": "x"}'), True),
+        "md too deep": (_read("deep.md", b"# Title\n\nIntro.\n\n" + deep), True),
+        "html line limit": (_read("lim.html", ("<p>p</p>" * 50).encode(), small), True),
+        "md line limit": (_read("lim.md", "\n\n".join(f"p {i}" for i in range(50)).encode(), small), True),
+        "docx chart": (_read("chart.docx", _chart_docx()), True),
+        "tracked changes": (_with_flag("docx", "docx.tracked-changes"), True),
+        "encoding": (_with_flag("csv", "encoding.guessed"), True),
+        "pptx smartart": (_with_flag("pptx", "pptx.smartart", "page"), True),
+        "xlsx cell limit": (_with_flag("xlsx", "xlsx.cell-limit", "page"), True),
+        # Flags that only inform need no person.
+        "tiny images": (_with_flag("docx", "image.tiny-skipped"), False),
+        "headers": (_with_flag("docx", "docx.headers-footers"), False),
+        "footers": (_with_flag("pptx", "pptx.footers"), False),
+        # A table that is not accepted still needs a person.
+        "flagged table": (decided(exact_document("docx", ["Item", "31* March, 2025"], table=True)), True),
+        # PDF: as before, any table, and only blocking page or document flags.
+        "pdf clean": (_pdf_document(), False),
+        "pdf review page flag": (_pdf_document([("native.image-backed", "review")]), False),
+        "pdf blocking page flag": (_pdf_document([("page.failed", "blocking")]), True),
+        "pdf table": (_pdf_document(table=True), True),
+    }
+    got = {name: needs_review(doc) for name, (doc, _) in cases.items()}
+    assert got == {name: want for name, (_, want) in cases.items()}

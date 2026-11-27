@@ -268,13 +268,26 @@ def decide(document: Document, policy: Policy) -> None:
     }
 
 
+# Document and page flags of a file that is not a PDF that only inform: nothing was misread or
+# left unread that a reader of the text would miss (spacers, repeated headers and footers).
+INFORMATIONAL = {"image.tiny-skipped", "docx.headers-footers", "pptx.footers"}
+
+
 def needs_review(document: Document) -> bool:
+    """Whether a person must look at the document: a line, table or figure that is not accepted,
+    or a flag that says something was not read, or not read with certainty.
+
+    For a PDF only blocking document and page flags count, as before. For any other file every
+    document and page flag counts except the INFORMATIONAL ones."""
+    pdf = document.source.format == "pdf"
+    flags = [*document.flags, *(flag for page in document.pages for flag in page.flags)]
     return bool(
         document.summary.get("flagged")
         or document.summary.get("blocked")
-        or document.summary.get("tables")
+        or any(table.status != "accepted" for page in document.pages for table in page.tables)
         or document.summary.get("figures_flagged")
         or document.summary.get("figures_blocked")
-        or any(flag.severity == "blocking" for flag in document.flags)
-        or any(flag.severity == "blocking" for page in document.pages for flag in page.flags)
+        or any(
+            flag.severity == "blocking" if pdf else flag.rule not in INFORMATIONAL for flag in flags
+        )
     )
