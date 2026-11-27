@@ -227,7 +227,8 @@ The sentence is a label, marked "(model)" in the chunk's `embedding_text` and in
 
 ### Known limits
 
-- Charts in Word, Excel and PowerPoint are not read. Each is flagged `chart.not-read`.
+- Charts in Word, Excel and PowerPoint, and Excel chart sheets, are not read. Each is flagged `chart.not-read`.
+- Excel cell comments are left out, flagged `xlsx.comments`, and shapes and text boxes on a sheet are flagged `xlsx.shapes-not-read`, not read.
 - `.doc`, `.xls` and `.ppt` are not read, and neither are OpenDocument files.
 - Remote images are not fetched.
 - Word headers and footers, and PowerPoint footer, date and slide-number placeholders, are left out, with a flag on the document.

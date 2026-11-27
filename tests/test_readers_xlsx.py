@@ -223,3 +223,99 @@ def test_decide_keeps_a_csv_readers_flag():
     line.flags.append(Flag(rule="csv.something", severity="review", message="x"))
     policy.decide(document, Config().policy)
     assert "csv.something" in {f.rule for f in line.flags}
+
+
+# --- final review I2: what the Excel reader left out without a word -------------------------------
+
+
+def _png():
+    from PIL import Image as PilImage
+
+    png = io.BytesIO()
+    PilImage.new("RGB", (200, 100), "blue").save(png, "PNG")
+    png.seek(0)
+    return png
+
+
+def _patched(data: bytes, name: str, change) -> bytes:
+    """The workbook with one archive member rewritten."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w") as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            target.writestr(item, change(content) if item.filename == name else content)
+    return out.getvalue()
+
+
+def _with_picture(wb):
+    from openpyxl.drawing.image import Image
+
+    ws = wb.active
+    ws["A1"] = "Rates"
+    ws.add_image(Image(_png()), "C3")
+
+
+A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+TEXT_BOX = (
+    "<twoCellAnchor><from><col>5</col><colOff>0</colOff><row>1</row><rowOff>0</rowOff></from>"
+    "<to><col>8</col><colOff>0</colOff><row>4</row><rowOff>0</rowOff></to>"
+    '<sp macro="" textlink=""><nvSpPr><cNvPr id="3" name="TextBox 2"/><cNvSpPr txBox="1"/></nvSpPr>'
+    f'<spPr><a:prstGeom xmlns:a="{A}" prst="rect"/></spPr>'
+    f'<txBody><a:bodyPr xmlns:a="{A}"/><a:p xmlns:a="{A}"><a:r><a:t>Note: provisional.</a:t></a:r></a:p>'
+    "</txBody></sp><clientData/></twoCellAnchor>"
+).encode()
+
+
+def test_picture_alt_text_is_the_figure_description():
+    data = _patched(workbook_bytes(_with_picture), "xl/drawings/drawing1.xml",
+                    lambda xml: xml.replace(b'descr="Picture"', b'descr="Logo of the department"'))
+    (figure,) = read_xlsx(data).document.pages[0].figures
+    assert (figure.description, figure.description_source) == ("Logo of the department", "alt")
+    assert figure.status == "accepted"
+
+
+def test_a_picture_title_is_its_description_when_it_has_no_alt_text():
+    data = _patched(workbook_bytes(_with_picture), "xl/drawings/drawing1.xml",
+                    lambda xml: xml.replace(b'descr="Picture"', b'title="Department logo"'))
+    (figure,) = read_xlsx(data).document.pages[0].figures
+    assert (figure.description, figure.description_source) == ("Department logo", "alt")
+
+
+def test_shapes_and_text_boxes_on_a_sheet_are_flagged():
+    data = _patched(workbook_bytes(_with_picture), "xl/drawings/drawing1.xml",
+                    lambda xml: xml.replace(b"</wsDr>", TEXT_BOX + b"</wsDr>"))
+    openpyxl.load_workbook(io.BytesIO(data))  # still a workbook Excel and openpyxl open
+    page = read_xlsx(data).document.pages[0]
+    assert [f.rule for f in page.flags] == ["xlsx.shapes-not-read"]
+    assert "Sheet" in page.flags[0].message
+    assert len(page.figures) == 1  # the picture beside the shape is still read
+
+
+def test_a_chartsheet_is_flagged_and_cell_comments_are_left_out_and_flagged():
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.comments import Comment
+
+    def build(wb):
+        ws = wb.active
+        ws.title = "Data"
+        for r in range(1, 5):
+            ws.append([f"Q{r}", r * 100])
+        ws["A1"].comment = Comment("Figures are provisional until audited.", "auditor")
+        sheet = wb.create_chartsheet("Collections chart")
+        chart = BarChart()
+        chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=4))
+        sheet.add_chart(chart)
+
+    document = read_xlsx(workbook_bytes(build)).document
+    rules = {f.rule: f.message for f in document.flags}
+    assert "Collections chart" in rules["chart.not-read"]
+    assert rules["xlsx.comments"] == "The file has comments; they are not read."
+    assert not any("provisional" in line.text for line in document.lines())
+    from ragnaroq.policy import needs_review
+
+    assert needs_review(document)
+
+
+def test_a_plain_workbook_has_none_of_these_flags():
+    document = read_xlsx(workbook_bytes(_with_picture)).document
+    assert document.flags == [] and document.pages[0].flags == []

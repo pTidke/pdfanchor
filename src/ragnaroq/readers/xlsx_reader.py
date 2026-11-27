@@ -4,8 +4,13 @@ the number format are kept in `line.value`. A merged range is one line anchored 
 
 import contextlib
 import io
+import posixpath
 import threading
+import zipfile
 from datetime import date, datetime, time
+
+from defusedxml import DefusedXmlException
+from defusedxml import ElementTree as SafeET
 
 from ..anchors import XlsxAnchor
 from ..config import Config
@@ -44,6 +49,87 @@ def _corner(anchor, get_column_letter) -> str:
 
 def _flag(page: Page, rule: str, message: str) -> None:
     page.flags.append(Flag(rule=rule, severity="review", message=message))
+
+
+def _alt(anchor) -> str:
+    """A picture's alt text (`xdr:cNvPr` @descr, else @title), as openpyxl keeps it on the anchor."""
+    props = getattr(getattr(getattr(anchor, "pic", None), "nvPicPr", None), "cNvPr", None)
+    return ((props.descr or props.title) if props is not None else None) or ""
+
+
+_MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+_PACKAGE = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_XDR = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
+_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_ANCHORS = {_XDR + "twoCellAnchor", _XDR + "oneCellAnchor", _XDR + "absoluteAnchor"}
+_PLACING = {_XDR + "from", _XDR + "to", _XDR + "pos", _XDR + "ext", _XDR + "clientData"}
+_BROKEN = (KeyError, ValueError, zipfile.BadZipFile, SafeET.ParseError, DefusedXmlException)
+
+
+def _related(archive, part: str) -> dict[str, tuple[str, str]]:
+    """A part's relationships inside the package: id -> (type, the target's name in the archive)."""
+    folder, name = posixpath.split(part)
+    try:
+        root = SafeET.fromstring(archive.read(f"{folder}/_rels/{name}.rels"))
+    except KeyError:
+        return {}
+    found = {}
+    for relationship in root.iter(_PACKAGE + "Relationship"):
+        target = relationship.get("Target") or ""
+        if relationship.get("TargetMode") == "External" or not target:
+            continue
+        where = target[1:] if target.startswith("/") else posixpath.normpath(posixpath.join(folder, target))
+        found[relationship.get("Id")] = (relationship.get("Type") or "", where)
+    return found
+
+
+def _unread(drawing) -> int:
+    """Objects in a sheet's drawing that openpyxl drops: shapes, text boxes, groups, connectors,
+    and frames that are not charts. Pictures and charts are read."""
+    count = 0
+    for anchor in drawing:
+        if anchor.tag not in _ANCHORS:
+            continue
+        for child in anchor:
+            if child.tag in _PLACING or child.tag == _XDR + "pic":
+                continue
+            data = child.find(f"{_A}graphic/{_A}graphicData") if child.tag == _XDR + "graphicFrame" else None
+            if data is not None and (data.get("uri") or "").endswith("/chart"):
+                continue
+            count += 1
+    return count
+
+
+def _package(data: bytes) -> tuple[dict[str, int], bool]:
+    """From the archive itself, what openpyxl does not keep: for each sheet name, how many drawn
+    objects are not read (a drawing that cannot be parsed counts as one), and whether the
+    workbook has cell comments."""
+    unread: dict[str, int] = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = archive.namelist()
+        comments = any(name.startswith(("xl/comments", "xl/threadedComments/")) for name in names)
+        try:
+            book = SafeET.fromstring(archive.read("xl/workbook.xml"))
+            sheets = _related(archive, "xl/workbook.xml")
+        except _BROKEN:
+            return unread, comments
+        for sheet in book.iter(_MAIN + "sheet"):
+            _, path = sheets.get(sheet.get(_REL + "id"), ("", ""))
+            try:
+                parts = _related(archive, path).values()
+                drawings = [where for kind, where in parts if kind.endswith("/drawing")]
+            except _BROKEN:
+                drawings = []
+            for where in drawings:
+                try:
+                    count = _unread(SafeET.fromstring(archive.read(where)))
+                except _BROKEN:
+                    count = 1
+                if count:
+                    name = sheet.get("name") or ""
+                    unread[name] = unread.get(name, 0) + count
+    return unread, comments
 
 
 def _read_sheet(sheet, values, number: int, page: Page, config: Config, images: dict, utils) -> list[str]:
@@ -112,6 +198,7 @@ def _read_sheet(sheet, values, number: int, page: Page, config: Config, images: 
             )
         )
     for k, picture in enumerate(getattr(sheet, "_images", []), 1):
+        alt = _alt(picture.anchor)
         figure = Figure(
             id=f"p{number}-f{k}",
             page=number,
@@ -119,6 +206,8 @@ def _read_sheet(sheet, values, number: int, page: Page, config: Config, images: 
             width=int(picture.width),
             height=int(picture.height),
             anchor=XlsxAnchor(sheet=sheet.title, cell=_corner(picture.anchor, utils.get_column_letter)),
+            description=alt,
+            description_source="alt" if alt else "none",
         )
         images[figure.id] = picture.data
         page.figures.append(figure)
@@ -188,6 +277,7 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
     except Exception as error:  # openpyxl raises many kinds for a broken file
         raise ReaderRefused("xlsx.invalid", f"{name} could not be opened as a workbook: {error}") from error
     document = _build.start(data, name, "xlsx", config, {"reader:xlsx": READER_VERSIONS["xlsx"]})
+    unread, comments = _package(data)
     pages, images, hidden = [], {}, []
     for sheet in formulas.worksheets:
         if sheet.sheet_state != "visible":
@@ -195,7 +285,29 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
             continue
         page = Page(number=len(pages) + 1, kind="sheet", name=sheet.title)
         hidden += _read_sheet(sheet, cached[sheet.title], page.number, page, config, images, utils)
+        if unread.get(sheet.title):
+            _flag(
+                page,
+                "xlsx.shapes-not-read",
+                f"{unread[sheet.title]} shape(s), text box(es) or other drawn object(s) on {sheet.title} "
+                "are not read; any text in them is not in the text.",
+            )
         pages.append(page)
+    for chartsheet in formulas.chartsheets:
+        if chartsheet.sheet_state != "visible":
+            hidden.append(f"chart sheet {chartsheet.title}")
+            continue
+        document.flags.append(
+            Flag(
+                rule="chart.not-read",
+                severity="review",
+                message=f"The chart sheet {chartsheet.title} is not read; its numbers are not in the text.",
+            )
+        )
+    if comments:
+        document.flags.append(
+            Flag(rule="xlsx.comments", severity="review", message="The file has comments; they are not read.")
+        )
     if pages:
         document.pages = pages
         document.source.pages = len(pages)
