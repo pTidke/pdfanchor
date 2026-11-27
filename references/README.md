@@ -158,7 +158,7 @@ The two remaining errors are both misses the two readers share, before the third
 | CBDT, two readers | 64.6% | 2.0% | 1 | 134 | same |
 | CBDT, with the third reader | 80.5% | 1.6% | 1 | 74 | same |
 
-The IRS and code-table readings are the stored ones, with the low-resolution scans read at 300 dpi. The held-out and CBDT readings of the third reader are the stored ones: no crop was read again. Each reading is stored under a key that holds the schema version, so the stored files were copied under their 0.3.0 keys; their contents are as they were made.
+The IRS and code-table readings are the stored ones, with the low-resolution scans read at 300 dpi. The held-out and CBDT readings of the third reader are the stored ones: no crop was read again. The stored readings are used as they were made: a reading's key holds the reading format (`0.2.0`), not the schema version, so 0.2 readings keep their keys under 0.3.0. As a check, the CBDT set was scored with `ragnaroq evaluate` from an unmodified copy of its 0.2.2 cache, with OCR made to fail if called: all 8 readings were found, none was read again, and the result is the 0.2.2 row (64.6%, 2.0%, 1, 134).
 
 ## The demo folder (0.3.0)
 

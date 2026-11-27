@@ -21,11 +21,15 @@ from pathlib import Path
 from . import expected, policy, reference, structure
 from .config import Config
 from .crosscheck import LEADERS, TYPOGRAPHY, canonical, compare, critical_tokens
-from .model import SCHEMA_VERSION, Document, Line
+from .model import Document, Line
 from .readers import ReaderRefused, refused_document
 from .reference import Truth, Word
 
 MARGIN = 3.0  # points around a line's box that still count as inside
+# The form of a stored reading, in the cache key. It changes only when a stored reading can no
+# longer be decided again like a fresh one; a new schema that still loads it is not such a change
+# (0.3.0 loads 0.2 readings), so stored PDF readings, hours of OCR, keep their keys.
+READING_FORMAT = "0.2.0"
 THRESHOLDS = (0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00)
 
 
@@ -312,7 +316,7 @@ def run(
 
     `progress`, if given, is called as progress(done, total, name) after each reference.
     `cache`, if given, is a folder where each reading is kept, keyed by the PDF's
-    bytes, the reading settings and the readers' versions. A stored reading is decided
+    bytes, the reading settings, the readers' versions and READING_FORMAT. A stored reading is decided
     again under the current rules and policy, so a change to the rules, the threshold
     or the scoring takes seconds, not a new reading."""
     from . import readers
@@ -385,7 +389,7 @@ def _converted(pdf_path: Path, config: Config, engines, readers: str, cache, con
                 pdf_path.read_bytes(),
                 config.reading_sha256().encode(),
                 readers.encode(),
-                SCHEMA_VERSION.encode(),
+                READING_FORMAT.encode(),
             ]
         )
     ).hexdigest()[:24]

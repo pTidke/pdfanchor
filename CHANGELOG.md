@@ -36,7 +36,7 @@ Folders and formats. `ragnaroq index ./folder` reads a folder of mixed files and
 
 ### Measured
 
-The PDF numbers did not move. The four sets were scored again from their stored readings under the 0.3.0 code, with nothing read again, and match the 0.2.2 table: IRS 0 wrong on a number, date or negation and 1,255 lines to a person; code table 0 and 322; held-out IRS with the third reader 1 and 686 (1,126 with two readers); CBDT with the third reader 1 and 74 (134 with two readers). See [references/](references/README.md#checked-again-for-030). On the demo folder, every exact-format file scores `ok`.
+The PDF numbers did not move. The four sets were scored again from their stored readings under the 0.3.0 code, with nothing read again, and match the 0.2.2 table: IRS 0 wrong on a number, date or negation and 1,255 lines to a person; code table 0 and 322; held-out IRS with the third reader 1 and 686 (1,126 with two readers); CBDT with the third reader 1 and 74 (134 with two readers). See [references/](references/README.md#checked-again-for-030). `evaluate`'s cache keys hold the reading format (`0.2.0`), not the schema version, so readings stored by 0.2 are still found. On the demo folder, every exact-format file scores `ok`.
 
 ### Known limits
 

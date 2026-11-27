@@ -41,7 +41,7 @@ Two cases need care:
 
 The report goes to `evaluation.md` and `evaluation.json`. The JSON lists every accepted line that was wrong, those wrong on a critical token first.
 
-Reading is the slow part, so each reading is kept in `<out>/cache`, keyed by the PDF's bytes, the reading settings and the readers' versions. A stored reading is decided again under the current rules and policy on every run, so changing a rule, the threshold or the scoring takes seconds. `--fresh` reads everything again.
+Reading is the slow part, so each reading is kept in `<out>/cache`, keyed by the PDF's bytes, the reading settings, the readers' versions and the reading format (`evaluate.READING_FORMAT`, `0.2.0`). The reading format changes only when a stored reading can no longer be decided again like a fresh one, not with each schema version, so readings stored by 0.2 are still used by 0.3. A stored reading is decided again under the current rules and policy on every run, so changing a rule, the threshold or the scoring takes seconds. `--fresh` reads everything again.
 
 | Measure | What it means |
 | --- | --- |

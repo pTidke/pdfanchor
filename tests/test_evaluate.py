@@ -420,13 +420,34 @@ def test_strict_mode_sends_a_one_letter_disagreement_to_a_person(clean_reference
     assert rows[0.90]["accepted"] == 2
 
 
-def test_a_cache_from_another_schema_version_is_read_again(clean_reference, tmp_path, monkeypatch):
+def test_a_cache_from_another_reading_format_is_read_again(clean_reference, tmp_path, monkeypatch):
     folder, _, truth_path = clean_reference
     engines = _readers(reference.load(truth_path), LINES, LINES)
     evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
-    monkeypatch.setattr(evaluate, "SCHEMA_VERSION", "0.1.0")
+    monkeypatch.setattr(evaluate, "READING_FORMAT", "0.1.0")
     evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
     assert len(list((tmp_path / "cache").glob("*.json"))) == 2
+
+
+def test_a_stored_0_2_reading_keeps_its_key_after_the_schema_changed(clean_reference, tmp_path, monkeypatch):
+    """The key holds the reading format, not the schema version: 0.2 readings still hit in 0.3."""
+    import hashlib
+
+    folder, pdf, truth_path = clean_reference
+    engines = _readers(reference.load(truth_path), LINES, LINES)
+    assert evaluate.READING_FORMAT == "0.2.0"
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
+    readers = "+".join(f"{e.name}={e.version()}" for e in engines)
+    parts = [pdf.read_bytes(), Config().reading_sha256().encode(), readers.encode(), b"0.2.0"]
+    key = hashlib.sha256(b"|".join(parts)).hexdigest()[:24]
+    assert [p.name for p in (tmp_path / "cache").glob("*.json")] == [f"{pdf.stem}.{key}.json"]
+    monkeypatch.setattr("ragnaroq.model.SCHEMA_VERSION", "9.9.9")
+
+    def no_reading(*args, **kwargs):
+        raise AssertionError("read again")
+
+    monkeypatch.setattr("ragnaroq.pipeline.convert", no_reading)
+    evaluate.run(folder, engines=engines, cache=tmp_path / "cache")
 
 
 def test_the_report_counts_what_the_third_reader_settled_and_held_back(clean_reference, tmp_path):
