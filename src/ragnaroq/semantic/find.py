@@ -43,13 +43,16 @@ _MONTH_NUMBER = {
     )
 }
 _ORDINAL = r"(?:st|nd|rd|th)?"
+# A separator is one whitespace run, then an optional comma and its own run: never two
+# adjacent quantifiers that can both take the same whitespace.
+_SEP = r"\s*(?:,\s*)?"
 _DAY_MONTH_YEAR = re.compile(
-    rf"(?<![\w/.-])(?P<day>\d{{1,2}}){_ORDINAL}\s*,?\s+(?:day\s+of\s+)?(?P<month>{MONTHS})\b\.?"
-    r"\s*,?\s*(?P<year>\d{4})(?!\d)",
+    rf"(?<![\w/.-])(?P<day>\d{{1,2}}){_ORDINAL}(?:,\s*|\s+(?:,\s*)?)(?:day\s+of\s+)?(?P<month>{MONTHS})\b\.?"
+    rf"{_SEP}(?P<year>\d{{4}})(?!\d)",
     re.IGNORECASE,
 )
 _MONTH_DAY_YEAR = re.compile(
-    rf"(?<!\w)(?P<month>{MONTHS})\b\.?\s+(?P<day>\d{{1,2}}){_ORDINAL}\s*,?\s*(?P<year>\d{{4}})(?!\d)",
+    rf"(?<!\w)(?P<month>{MONTHS})\b\.?\s+(?P<day>\d{{1,2}}){_ORDINAL}{_SEP}(?P<year>\d{{4}})(?!\d)",
     re.IGNORECASE,
 )
 _ISO = re.compile(r"(?<![\d/.-])(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})(?![\d-])")

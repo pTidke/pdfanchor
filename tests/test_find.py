@@ -167,3 +167,24 @@ def test_finders_are_linear_on_hostile_text():
     for finder in (dates, periods, amounts, references, file_mentions):
         finder("1" * 200_000 + "/" + "a." * 100_000)
     assert time.perf_counter() - started < 2
+
+
+_SEPARATOR_HOSTILE = {
+    "digit-spaces": "1" + " " * 20_000 + "x",
+    "jan-5-spaces": "jan 5" + " " * 20_000 + "x",
+    "5-jan-spaces": "5 jan" + " " * 20_000 + "x",
+    "fy-spaces": "FY" + " " * 20_000 + "x",
+    "section-repeated": "section " * 20_000,
+    "rs-commas": "Rs. " + "1," * 50_000,
+    "slashes": "1/" * 50_000,
+    "year-dashes": "2026-" * 20_000,
+}
+
+
+@pytest.mark.parametrize("name", list(_SEPARATOR_HOSTILE))
+def test_finders_are_linear_on_separator_runs(name):
+    text = _SEPARATOR_HOSTILE[name]
+    started = time.perf_counter()
+    for finder in (dates, periods, amounts, references, file_mentions):
+        finder(text)
+    assert time.perf_counter() - started < 2
