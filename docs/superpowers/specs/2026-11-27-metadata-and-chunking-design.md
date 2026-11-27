@@ -1,6 +1,6 @@
 # 0.4: Metadata and chunking strategies, by rule
 
-Status: draft for the owner's approval, 2026-11-27. Approach B. Builder check done; the chunk filter keys are lists of strings (owner's choice).
+Status: approved by the owner on 2026-11-27. Approach B. The chunk filter keys are lists of strings (owner's choice).
 
 ## Why
 
