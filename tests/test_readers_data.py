@@ -288,3 +288,60 @@ def test_json_depth_scan_handles_escapes_and_brackets_in_strings():
     data = br'{"a": "x\\", "b": "[[[\"[", "c": [1]}'
     doc = read_bytes(data, "esc.json", Config(max_depth=2)).document
     assert [line.text for line in doc.lines()] == ["a: x\\", 'b: [[["[', "c", "1"]
+
+
+# --- final review I5: JSON, XML and CSV cut at max_cells and say so, as the other readers do ---------
+
+
+def _cut(doc, rule):
+    flags = [f for f in doc.pages[0].flags if f.rule == rule]
+    assert len(flags) == 1 and flags[0].severity == "review", doc.pages[0].flags
+    return flags[0]
+
+
+def test_a_json_file_over_the_cell_limit_is_cut_and_flagged():
+    records = b",".join(b'{"a": %d, "b": %d}' % (i, i) for i in range(50))
+    data = b'{"title": "Rates", "rows": [' + records + b"]}"
+    doc = read_bytes(data, "big.json", Config(max_cells=20)).document
+    assert len(list(doc.lines())) == 20
+    assert "20" in _cut(doc, "json.line-limit").message
+    (table,) = doc.pages[0].tables
+    assert {c.text for c in table.cells} == {line.text for line in doc.lines() if line.table_id}
+    assert table.rows == 1 + max(c.row for c in table.cells)
+
+
+def test_a_json_file_at_the_cell_limit_is_not_flagged():
+    doc = read_bytes(b'{"a": 1, "b": 2, "c": []}', "x.json", Config(max_cells=3)).document
+    assert len(list(doc.lines())) == 3 and doc.pages[0].flags == []
+
+
+def test_an_xml_file_over_the_cell_limit_is_cut_and_flagged():
+    data = b"<rates>" + b"".join(b"<rate>%d</rate>" % i for i in range(50)) + b"</rates>"
+    doc = read_bytes(data, "big.xml", Config(max_cells=10)).document
+    assert len(list(doc.lines())) == 10
+    _cut(doc, "xml.line-limit")
+
+
+def test_a_csv_file_over_the_cell_limit_is_cut_at_a_row_and_flagged():
+    rows = ["Section,Amount,Note"] + [f"80C-{i},{i},note {i}" for i in range(70_000)]
+    doc = read_bytes("\n".join(rows).encode(), "big.csv", Config()).document
+    (table,) = doc.pages[0].tables
+    assert table.rows * table.columns <= Config().max_cells and table.rows == Config().max_cells // 3
+    assert len(list(doc.lines())) == table.rows * 3
+    _cut(doc, "csv.line-limit")
+    from ragnaroq.policy import needs_review
+
+    assert needs_review(doc)
+
+
+def test_a_csv_row_wider_than_the_cell_limit_is_cut_too():
+    doc = read_bytes(("," * 50 + "\nx\n").encode(), "wide.csv", Config(max_cells=10)).document
+    (table,) = doc.pages[0].tables
+    assert table.rows * table.columns <= 10
+    _cut(doc, "csv.line-limit")
+
+
+def test_json_too_deep_is_still_a_refusal():
+    with pytest.raises(ReaderRefused) as refused:
+        read_bytes(b"[" * 300 + b"]" * 300, "deep.json", Config())
+    assert refused.value.rule == "json.too-deep"

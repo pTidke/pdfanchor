@@ -13,6 +13,10 @@ from . import READER_VERSIONS, ReaderRefused, ReadResult, _build
 _MARKS = re.compile(r'[\[\]{}"\\]')
 
 
+class _Full(Exception):
+    """The file holds more values than the cell limit: reading stops here."""
+
+
 def _pointer(parts: tuple) -> str:
     return "".join("/" + str(p).replace("~", "~0").replace("/", "~1") for p in parts)
 
@@ -86,7 +90,7 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
 
     def add(text, parts, role="body", **kw):
         if len(page.lines) >= config.max_cells:
-            raise ReaderRefused("json.too-large", f"{name} has more than {config.max_cells} values.")
+            raise _Full
         return _build.add_line(page, text, "json", JsonAnchor(pointer=_pointer(parts)), role=role, **kw)
 
     def table(rows, parts):
@@ -96,37 +100,50 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
         columns = list(rows[0])
         cells = []
         paragraph = _build.next_paragraph(page) - 1
-        for c, column in enumerate(columns):  # a header has no pointer of its own: it takes its first value's
-            add(column, (*parts, 0, column), "table", table_id=table_id, paragraph=paragraph + 1)
-            anchor = JsonAnchor(pointer=_pointer((*parts, 0, column)))
-            cells.append(Cell(row=0, column=c, text=column, anchor=anchor))
-        for r, record in enumerate(rows):
+        try:  # a table cut by the limit keeps the cells read
+            # A header has no pointer of its own: it takes its first value's.
             for c, column in enumerate(columns):
-                cell = (*parts, r, column)
-                add(_shown(record[column]), cell, "table", table_id=table_id, paragraph=paragraph + 2 + r)
-                cells.append(Cell(row=r + 1, column=c, text=_shown(record[column]),
-                                  anchor=JsonAnchor(pointer=_pointer(cell))))
-        page.tables.append(
-            Table(id=table_id, page=1, rows=len(rows) + 1, columns=len(columns), cells=cells)
-        )
+                add(column, (*parts, 0, column), "table", table_id=table_id, paragraph=paragraph + 1)
+                anchor = JsonAnchor(pointer=_pointer((*parts, 0, column)))
+                cells.append(Cell(row=0, column=c, text=column, anchor=anchor))
+            for r, record in enumerate(rows):
+                for c, column in enumerate(columns):
+                    cell = (*parts, r, column)
+                    add(_shown(record[column]), cell, "table", table_id=table_id, paragraph=paragraph + 2 + r)
+                    anchor = JsonAnchor(pointer=_pointer(cell))
+                    cells.append(Cell(row=r + 1, column=c, text=_shown(record[column]), anchor=anchor))
+        finally:
+            if cells:
+                rows_read = cells[-1].row + 1
+                made = Table(id=table_id, page=1, rows=rows_read, columns=len(columns), cells=cells)
+                page.tables.append(made)
 
     # An explicit stack keeps deep, valid JSON from exhausting Python's call stack.
     stack = [(root, (), None)]
-    while stack:
-        value, parts, key = stack.pop()
-        if isinstance(value, dict | list) and key is not None:
-            add(str(key), parts, "heading")
-        if isinstance(value, dict):
-            children = [(v, (*parts, k), k) for k, v in value.items()]
-        elif isinstance(value, list):
-            if _is_table(value):
-                table(value, parts)
+    try:
+        while stack:
+            value, parts, key = stack.pop()
+            if isinstance(value, dict | list) and key is not None:
+                add(str(key), parts, "heading")
+            if isinstance(value, dict):
+                children = [(v, (*parts, k), k) for k, v in value.items()]
+            elif isinstance(value, list):
+                if _is_table(value):
+                    table(value, parts)
+                    continue
+                children = [(v, (*parts, i), None) for i, v in enumerate(value)]
+            else:
+                add(_shown(value) if key is None else f"{key}: {_shown(value)}", parts)
                 continue
-            children = [(v, (*parts, i), None) for i, v in enumerate(value)]
-        else:
-            add(_shown(value) if key is None else f"{key}: {_shown(value)}", parts)
-            continue
-        stack.extend(reversed(children))
+            stack.extend(reversed(children))
+    except _Full:
+        page.flags.append(
+            Flag(
+                rule="json.line-limit",
+                severity="review",
+                message=f"{name} has more than {config.max_cells} values; the rest is not read.",
+            )
+        )
     if duplicates:
         shown = ", ".join(sorted(set(duplicates))[:5])
         document.flags.append(

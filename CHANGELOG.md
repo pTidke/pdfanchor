@@ -24,6 +24,7 @@ Folders and formats. `ragnaroq index ./folder` reads a folder of mixed files and
   - Each file is read in an isolated worker, with a time limit (`--file-timeout`, 120 seconds by default) and a memory limit (`--page-memory-mb`, 2,048 MB). A failed file is read again when its limit is raised.
   - Zip-based files are checked for unpacked size and entry count before anything opens them.
   - XML is read with defusedxml, so a file with entities or a DTD is refused (`xml.entities`).
+  - A file over the cell limit (`--max-cells`, 200,000) is read up to it and flagged (`csv.line-limit`, `json.line-limit`, `xml.line-limit`, `xlsx.cell-limit`, …). JSON or XML nested more than 200 levels deep is refused.
   - Image paths cannot leave the file's folder, and Pillow opens only PNG, JPEG, GIF, WebP, BMP, TIFF, ICO and PPM, so Ghostscript never runs.
   - Nothing reaches the network. A remote image is kept with its URL and flagged `image.remote-not-fetched`.
 

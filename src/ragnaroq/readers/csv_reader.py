@@ -19,21 +19,41 @@ def _delimiter(text: str) -> str:
         return ","
 
 
+def _rows(text: str, delimiter: str, name: str, limit: int) -> tuple[list[list[str]], int, bool]:
+    """The rows, the table's width, and whether the file was cut: whole rows are read while rows
+    times width stays within `limit` (a first row wider than it is cut to `limit` cells)."""
+    rows, width = [], 0
+    try:
+        for row in csv.reader(io.StringIO(text, newline=""), delimiter=delimiter):
+            wider = max(width, len(row))
+            if (len(rows) + 1) * wider > limit:
+                if not rows and limit > 0:
+                    rows, width = [row[:limit]], min(len(row), limit)
+                return rows, width, True
+            rows.append(row)
+            width = wider
+    except csv.Error as error:
+        raise ReaderRefused("csv.invalid", f"{name} is not valid CSV: {error}") from error
+    return rows, width, False
+
+
 def read(data: bytes, name: str, config: Config) -> ReadResult:
     try:
         text, guessed = _build.decode(data)
     except UnicodeDecodeError as error:
         raise ReaderRefused("csv.invalid", f"{name} is not valid UTF-16 text: {error}") from error
     delimiter = _delimiter(text)
-    try:
-        rows = list(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter))
-    except csv.Error as error:
-        raise ReaderRefused("csv.invalid", f"{name} is not valid CSV: {error}") from error
-    width = max((len(r) for r in rows), default=0)
-    if len(rows) * width > config.max_cells:
-        raise ReaderRefused("csv.too-large", f"{name} has more than {config.max_cells} cells.")
+    rows, width, cut = _rows(text, delimiter, name, config.max_cells)
     document = _build.start(data, name, "csv", config, {"reader:csv": READER_VERSIONS["csv"]})
     page = document.pages[0]
+    if cut:
+        page.flags.append(
+            Flag(
+                rule="csv.line-limit",
+                severity="review",
+                message=f"{name} has more than {config.max_cells} cells; the rest is not read.",
+            )
+        )
     if guessed:
         document.flags.append(
             Flag(rule="encoding.guessed", severity="review", message="Not UTF-8; read as Windows-1252.")

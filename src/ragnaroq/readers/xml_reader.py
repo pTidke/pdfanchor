@@ -8,7 +8,12 @@ from defusedxml import ElementTree as SafeET
 
 from ..anchors import XmlAnchor
 from ..config import Config
+from ..model import Flag
 from . import READER_VERSIONS, ReaderRefused, ReadResult, _build
+
+
+class _Full(Exception):
+    """The file holds more lines than the cell limit: reading stops here."""
 
 
 def _local(tag) -> str | None:
@@ -28,9 +33,24 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
 
     def add(text, path, role="body"):
         if len(page.lines) >= config.max_cells:
-            raise ReaderRefused("xml.too-large", f"{name} has more than {config.max_cells} lines.")
+            raise _Full
         _build.add_line(page, text, "xml", XmlAnchor(path=path), role=role)
 
+    try:
+        _walk(root, config, name, add)
+    except _Full:
+        page.flags.append(
+            Flag(
+                rule="xml.line-limit",
+                severity="review",
+                message=f"{name} has more than {config.max_cells} lines; the rest is not read.",
+            )
+        )
+    return ReadResult(document)
+
+
+def _walk(root, config: Config, name: str, add) -> None:
+    """Every element, attribute and text in document order, each given to `add`."""
     stack = [(root, "/" + _local(root.tag), 1)]
     while stack:
         element, path, depth = stack.pop()
@@ -63,4 +83,3 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
             if tail:
                 planned.append((tail, f"{path}/text()", 0))
         stack.extend(reversed(planned))
-    return ReadResult(document)

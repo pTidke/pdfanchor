@@ -201,6 +201,7 @@ A hostile file must not hang or crash a run, or run anything.
 - A file that breaks a limit fails alone, flagged with the limit. It is read again when you raise that limit.
 - Word, Excel and PowerPoint files are zip files. Their size when unpacked (500 MiB) and entry count (10,000) are checked before any library opens them.
 - XML is read with defusedxml. A file that declares entities or a DTD is refused (`xml.entities`).
+- A file with more cells or lines than `--max-cells` (200,000) is read up to the limit and flagged (`xlsx.cell-limit`, `csv.line-limit`, `json.line-limit`, `xml.line-limit`, `docx.line-limit` and the rest), never refused for its size. JSON or XML nested deeper than 200 levels is refused (`json.too-deep`, `xml.too-deep`).
 - HTML scripts, styles and templates are not run or read. Nothing reaches the network: a remote image is kept with its URL and flagged `image.remote-not-fetched`.
 - Image paths cannot leave the file's folder.
 - `ragnaroq index` never writes into your folder outside `.ragnaroq/`. While it works it uses a private folder in `TMPDIR` for each file in turn, and removes it.
