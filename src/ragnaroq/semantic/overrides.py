@@ -29,12 +29,26 @@ class Override:
 
 
 def _line_of(text: str, key: str) -> int:
-    """The line of a key: the quoted key (or the bare key) at a line start; 1 when not found."""
-    quoted = [re.escape(json.dumps(key)), re.escape("'" + key + "'"), re.escape(key)]
+    """The line of a key inside `[chunking]`: the key quoted (single or double, as written), bare or
+    dotted, or a `[chunking."key"]` header. Never guesses 1: when the key cannot be found, the line
+    of the `[chunking]` header."""
+    forms = "|".join(
+        [re.escape(json.dumps(key, ensure_ascii=False)), re.escape("'" + key + "'"), re.escape(key)]
+    )
+    entry = re.compile(rf"\s*(?:{forms})\s*[=.]")
+    sub = re.compile(rf"\s*\[\s*chunking\s*\.\s*(?:{forms})\s*[\].]")
+    header = re.compile(r"\s*\[\s*chunking\s*\]")
+    found_header, inside = 1, False
     for number, line in enumerate(text.splitlines(), 1):
-        if any(re.match(r"\s*" + q + r"\s*=", line) for q in quoted):
+        if sub.match(line):
             return number
-    return 1
+        if header.match(line):
+            found_header, inside = number, True
+        elif line.lstrip().startswith("["):
+            inside = False
+        elif inside and entry.match(line):
+            return number
+    return found_header
 
 
 def _integer(value: object, name: str, low: int, high: int) -> int:
@@ -45,7 +59,7 @@ def _integer(value: object, name: str, low: int, high: int) -> int:
     return value
 
 
-def _one(pattern: str, value: object) -> Override:
+def _one(pattern: str, value: object, chunk_chars: int) -> Override:
     if isinstance(value, str):
         value = {"strategy": value}
     if not isinstance(value, dict):
@@ -62,14 +76,12 @@ def _one(pattern: str, value: object) -> Override:
     if "max_chars" in value:
         max_chars = _integer(value["max_chars"], "max_chars", *MAX_CHARS_LIMITS)
     if "min_chars" in value:
-        top = (max_chars if max_chars is not None else MAX_CHARS_LIMITS[1]) // 2
+        top = (max_chars if max_chars is not None else chunk_chars) // 2
         min_chars = _integer(value["min_chars"], "min_chars", 0, top)
-        if max_chars is not None and min_chars > max_chars // 2:
-            raise ValueError(f"min_chars = {min_chars} is over half of max_chars = {max_chars}")
     return Override(pattern, strategy, max_chars, min_chars)
 
 
-def load(text: str) -> list[Override]:
+def load(text: str, *, chunk_chars: int = 1200) -> list[Override]:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
@@ -82,16 +94,16 @@ def load(text: str) -> list[Override]:
     found_overrides = []
     for pattern, value in table.items():
         try:
-            found_overrides.append(_one(pattern, value))
+            found_overrides.append(_one(pattern, value, chunk_chars))
         except ValueError as error:
             raise OverrideError(f"line {_line_of(text, pattern)}: {error}") from error
     return found_overrides
 
 
-def load_file(path: Path) -> list[Override]:
+def load_file(path: Path, *, chunk_chars: int = 1200) -> list[Override]:
     if not path.is_file():
         return []
-    return load(path.read_text(encoding="utf-8"))
+    return load(path.read_text(encoding="utf-8"), chunk_chars=chunk_chars)
 
 
 def match(overrides: list[Override], path: str) -> Override | None:

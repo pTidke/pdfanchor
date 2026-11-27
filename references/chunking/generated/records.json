@@ -47,6 +47,102 @@
         "hours": 410,
         "notes": "Drum paddles welded and the motor belt replaced"
       }
+    },
+    "crane-02": {
+      "description": "Compact tower crane that lifts roof trusses to the second floor",
+      "location": {
+        "site": "Harbour Quarter",
+        "bay": 4
+      },
+      "service": {
+        "last": "2026-09-28",
+        "hours": 2210,
+        "notes": "Brake pads renewed and the slewing ring greased"
+      }
+    },
+    "pump-09": {
+      "description": "Submersible water pump kept ready for flooded foundation pits",
+      "location": {
+        "site": "Harbour Quarter",
+        "bay": 6
+      },
+      "service": {
+        "last": "2026-06-18",
+        "hours": 305,
+        "notes": "Impeller cleaned and a worn seal exchanged for a new one"
+      }
+    },
+    "roller-05": {
+      "description": "Twin drum roller used to compact the car park surface",
+      "location": {
+        "site": "Millbrook Road",
+        "bay": 7
+      },
+      "service": {
+        "last": "2026-05-09",
+        "hours": 960,
+        "notes": "Water spray nozzles unblocked and the scraper bars adjusted"
+      }
+    },
+    "hoist-11": {
+      "description": "Rack and pinion hoist that carries tools and plasterboard to upper floors",
+      "location": {
+        "site": "Church Lane",
+        "bay": 8
+      },
+      "service": {
+        "last": "2026-10-20",
+        "hours": 1475,
+        "notes": "Gate interlock tested and the guide rollers replaced"
+      }
+    },
+    "welder-04": {
+      "description": "Inverter welder set for steel brackets and temporary site fencing",
+      "location": {
+        "site": "Church Lane",
+        "bay": 9
+      },
+      "service": {
+        "last": "2026-04-12",
+        "hours": 150,
+        "notes": "Earth clamp replaced and the cooling fan cleaned of dust"
+      }
+    },
+    "lift-06": {
+      "description": "Scissor lift that reaches ceilings for lighting and sprinkler work",
+      "location": {
+        "site": "Harbour Quarter",
+        "bay": 10
+      },
+      "service": {
+        "last": "2026-09-03",
+        "hours": 720,
+        "notes": "Battery cells tested and the emergency lowering valve checked"
+      }
+    },
+    "saw-08": {
+      "description": "Bench saw with a guard and dust extraction for cutting timber on site",
+      "location": {
+        "site": "Millbrook Road",
+        "bay": 11
+      },
+      "service": {
+        "last": "2026-07-07",
+        "hours": 530,
+        "notes": "Blade changed, fence squared and the push stick rack refilled"
+      }
+    },
+    "skip-10": {
+      "description": "Large steel skip lorry for carrying away rubble and broken concrete",
+      "location": {
+        "site": "Harbour Quarter",
+        "bay": 12
+      },
+      "service": {
+        "last": "2026-03-25",
+        "hours": 0,
+        "notes": "Lifting chains inspected and the rear door hinges oiled"
+      }
     }
   },
   "operators": [
@@ -64,6 +160,22 @@
       "approved": [
         "generator-07",
         "scaffold-12"
+      ]
+    },
+    {
+      "name": "Hana Okafor",
+      "licence": "Class C",
+      "approved": [
+        "crane-02",
+        "hoist-11"
+      ]
+    },
+    {
+      "name": "Piotr Lindqvist",
+      "licence": "Class B",
+      "approved": [
+        "pump-09",
+        "roller-05"
       ]
     }
   ]

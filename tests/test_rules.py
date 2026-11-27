@@ -195,10 +195,10 @@ def test_each_generated_document_gets_its_strategy():
         "manual.md": "sections",
         "manual.html": "sections",
         "contract.docx": "numbered-paragraphs",
-        "deck.pptx": "single",  # 1,273 characters: rule 1 comes first
+        "deck.pptx": "slides",
         "rates.xlsx": "table-rows",
-        "records.json": "single",  # 940 characters
-        "table.json": "single",  # 895 characters
+        "records.json": "records",
+        "table.json": "table-rows",
         "essay.md": "sentences",
     }
 

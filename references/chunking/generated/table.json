@@ -62,5 +62,141 @@
     "last_bus": "00:50",
     "accessible": "yes",
     "note": "Luggage racks on every bus and a fifteen minute wait at peak times"
+  },
+  {
+    "stop": "Canal Basin",
+    "route": "9",
+    "first_bus": "06:20",
+    "last_bus": "22:50",
+    "accessible": "yes",
+    "note": "Bus waits here for five minutes so drivers can change shifts"
+  },
+  {
+    "stop": "Elm Avenue",
+    "route": "14",
+    "first_bus": "05:52",
+    "last_bus": "23:22",
+    "accessible": "no",
+    "note": "Narrow pavement where the ramp cannot be lowered safely"
+  },
+  {
+    "stop": "Library Corner",
+    "route": "21",
+    "first_bus": "06:44",
+    "last_bus": "20:04",
+    "accessible": "yes",
+    "note": "Timetable board is updated on the first day of every month"
+  },
+  {
+    "stop": "Football Ground",
+    "route": "33",
+    "first_bus": "09:00",
+    "last_bus": "22:30",
+    "accessible": "yes",
+    "note": "Extra buses run for an hour after every home match"
+  },
+  {
+    "stop": "Quarry Lane",
+    "route": "9",
+    "first_bus": "06:35",
+    "last_bus": "21:15",
+    "accessible": "no",
+    "note": "Request stop where passengers must signal the driver early"
+  },
+  {
+    "stop": "Garden Centre",
+    "route": "21",
+    "first_bus": "07:00",
+    "last_bus": "18:30",
+    "accessible": "yes",
+    "note": "Seasonal stop that is closed from November until the end of February"
+  },
+  {
+    "stop": "Town Hall",
+    "route": "14",
+    "first_bus": "05:58",
+    "last_bus": "23:28",
+    "accessible": "yes",
+    "note": "Main interchange with a staffed information desk and a lift to the platform"
+  },
+  {
+    "stop": "Retail Park",
+    "route": "33",
+    "first_bus": "07:10",
+    "last_bus": "21:45",
+    "accessible": "yes",
+    "note": "Free ten minute stay for bus passengers in the nearby car park"
+  },
+  {
+    "stop": "Bridge Street",
+    "route": "9",
+    "first_bus": "06:48",
+    "last_bus": "22:58",
+    "accessible": "yes",
+    "note": "Wide shelter and a map of the town centre on the back wall"
+  },
+  {
+    "stop": "Cemetery Gate",
+    "route": "14",
+    "first_bus": "06:02",
+    "last_bus": "23:32",
+    "accessible": "no",
+    "note": "Gravel verge where the bus cannot pull in close to the kerb"
+  },
+  {
+    "stop": "Fire Station",
+    "route": "21",
+    "first_bus": "06:50",
+    "last_bus": "20:10",
+    "accessible": "yes",
+    "note": "Bus stops here only when the station doors are closed"
+  },
+  {
+    "stop": "Dock Road",
+    "route": "33",
+    "first_bus": "05:25",
+    "last_bus": "00:30",
+    "accessible": "yes",
+    "note": "Lit at night with a help point linked to the control room"
+  },
+  {
+    "stop": "Grammar School",
+    "route": "21",
+    "first_bus": "07:20",
+    "last_bus": "16:40",
+    "accessible": "yes",
+    "note": "Extra morning buses run in term time before the first lesson"
+  },
+  {
+    "stop": "Healthy Living Centre",
+    "route": "14",
+    "first_bus": "06:08",
+    "last_bus": "23:38",
+    "accessible": "yes",
+    "note": "Appointments board inside and a seat for those who must wait"
+  },
+  {
+    "stop": "Industrial Estate",
+    "route": "33",
+    "first_bus": "05:30",
+    "last_bus": "22:00",
+    "accessible": "no",
+    "note": "Uneven surface and no pavement on the far side of the road"
+  },
+  {
+    "stop": "Lake View",
+    "route": "9",
+    "first_bus": "07:05",
+    "last_bus": "21:30",
+    "accessible": "yes",
+    "note": "Weekend walkers board here for the path around the lake"
+  },
+  {
+    "stop": "Post Office",
+    "route": "14",
+    "first_bus": "06:14",
+    "last_bus": "23:44",
+    "accessible": "yes",
+    "note": "Parcel lockers next to the stop open at six in the morning"
   }
 ]

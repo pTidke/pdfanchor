@@ -398,7 +398,7 @@ def test_the_table_file_is_a_table_not_records():
 
 
 def test_the_deck_counts_slides():
-    assert generated("deck.pptx").slides == 6
+    assert generated("deck.pptx").slides == 11
 
 
 def test_the_spreadsheet_is_mostly_table():

@@ -53,3 +53,9 @@
 {"question": "What happened in the district where neighbours water the trees?", "path": "essay.md", "answer": "Losses of young trees in that district fell by half in four years."}
 {"question": "How much water does a young tree need?", "path": "essay.md", "answer": "A young tree needs about twenty litres of water a week through its first two summers"}
 {"question": "Why mix tree species in one street?", "path": "essay.md", "answer": "Planners now try to mix species, so that a single disease cannot strip a whole street bare"}
+{"question": "What should an agent write down before ending a call?", "path": "deck.pptx", "answer": "Write down the caller's name, the date, the problem in one sentence and the promise you made, before you hang up."}
+{"question": "When should a call be passed to a senior colleague?", "path": "deck.pptx", "answer": "Pass a call to a senior colleague when the caller asks twice for one or when the refund is above fifty pounds."}
+{"question": "Which machine lifts roof trusses?", "path": "records.json", "answer": "Compact tower crane that lifts roof trusses to the second floor"}
+{"question": "What was done to the pump at its last service?", "path": "records.json", "answer": "Impeller cleaned and a worn seal exchanged for a new one"}
+{"question": "Why is Elm Avenue not accessible?", "path": "table.json", "answer": "Narrow pavement where the ramp cannot be lowered safely"}
+{"question": "When do extra buses run at the football ground?", "path": "table.json", "answer": "Extra buses run for an hour after every home match"}

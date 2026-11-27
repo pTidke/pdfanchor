@@ -64,3 +64,46 @@ def test_the_key_is_stable_json_of_the_fields():
         Override("a", "single", 800).key()
         == '{"max_chars": 800, "min_chars": null, "pattern": "a", "strategy": "single"}'
     )
+
+
+def test_min_chars_is_checked_against_the_overrides_own_max_chars():
+    ok = load('[chunking]\n"x" = { strategy = "single", max_chars = 800, min_chars = 400 }\n')
+    assert ok[0].min_chars == 400
+    with pytest.raises(OverrideError, match="line 2: min_chars"):
+        load('[chunking]\n"x" = { strategy = "single", max_chars = 800, min_chars = 401 }\n')
+
+
+def test_min_chars_without_max_chars_is_checked_against_chunk_chars():
+    assert load('[chunking]\n"x" = { strategy = "single", min_chars = 600 }\n')[0].min_chars == 600
+    with pytest.raises(OverrideError, match="line 2: min_chars"):
+        load('[chunking]\n"x" = { strategy = "single", min_chars = 601 }\n')
+    with pytest.raises(OverrideError, match="line 2: min_chars"):
+        load('[chunking]\n"x" = { strategy = "single", min_chars = 1500 }\n')
+    assert load('[chunking]\n"x" = { strategy = "single", min_chars = 1500 }\n', chunk_chars=3000)
+    with pytest.raises(OverrideError, match="line 2"):
+        load('[chunking]\n"x" = { strategy = "single", min_chars = 301 }\n', chunk_chars=600)
+
+
+def test_load_file_passes_chunk_chars(tmp_path):
+    (tmp_path / "ragnaroq.toml").write_text('[chunking]\n"a" = { strategy = "single", min_chars = 1500 }\n')
+    with pytest.raises(OverrideError, match="line 2"):
+        load_file(tmp_path / "ragnaroq.toml")
+    assert load_file(tmp_path / "ragnaroq.toml", chunk_chars=4000)
+
+
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        ('[chunking]\n"é/*.md" = "bad"\n', 2),
+        ("[chunking]\n'a/*.md' = \"single\"\n'é' = \"bad\"\n", 3),
+        ('# note\n\n[chunking]\n"a" = "single"\nnotes = "bad"\n', 5),
+        ('[chunking]\n"a" = "single"\na.b = "bad"\n', 3),
+        ('[chunking]\n"a" = "single"\n"é".b = "bad"\n', 3),
+        ('[other]\n"x" = 1\n[chunking]\n"a" = "single"\n[chunking."pat/*.md"]\nstrategy = "bad"\n', 5),
+        ('[chunking]\n"a" = "single"\n[chunking.bare]\nstrategy = "bad"\n', 3),
+        ('[other]\n"x" = "bad"\n[chunking]\n"x" = "bad"\n', 4),
+    ],
+)
+def test_the_line_of_a_bad_key_is_found_in_every_shape(text, line):
+    with pytest.raises(OverrideError, match=f"^line {line}:"):
+        load(text)
