@@ -191,6 +191,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
     if cut:
         rules = sorted({*rules, TRUNCATED})
     pdf = document.source.format == "pdf"
+    sources = {line.source for line in lines} | set(figure.ocr_sources if figure else [])
     kind = "image" if figure else "table" if members[0].kind == "table" else "text"
     file_id = str(uuid.uuid5(NAMESPACE, path))
     what = figure.id if figure else ",".join(line.id for line in lines)
@@ -203,7 +204,7 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
         "kind": kind,
         "status": "blocked" if "blocked" in states else "flagged" if "flagged" in states else "accepted",
         "rules": ",".join(rules),
-        "sources": ",".join(sorted({line.source for line in (figure.ocr_lines if figure else lines)})),
+        "sources": ",".join(sorted(sources)),
         "cite": f"{path}, {citation}" if citation else path,
         "part": _part(document, numbers[0]) if numbers else "",
         "part_index": numbers[0] if numbers else 0,

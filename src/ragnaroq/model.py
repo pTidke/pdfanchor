@@ -131,6 +131,10 @@ class Figure(Model):
     description_source: Literal["caption", "alt", "ocr", "none"] = "none"
     model_description: str | None = None
     ocr_lines: list[Line] = Field(default_factory=list)
+    ocr_sources: list[str] = Field(
+        default_factory=list,
+        description='The OCR reader the description came from, e.g. "ocr:tesseract".',
+    )
     status: Status = "flagged"
     flags: list[Flag] = Field(default_factory=list)
 

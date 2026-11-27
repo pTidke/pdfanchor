@@ -429,6 +429,14 @@
           "title": "Ocr Lines",
           "type": "array"
         },
+        "ocr_sources": {
+          "description": "The OCR reader the description came from, e.g. \"ocr:tesseract\".",
+          "items": {
+            "type": "string"
+          },
+          "title": "Ocr Sources",
+          "type": "array"
+        },
         "status": {
           "default": "flagged",
           "enum": [

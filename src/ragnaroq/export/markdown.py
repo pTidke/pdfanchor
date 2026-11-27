@@ -5,31 +5,62 @@ import re
 
 from ..anchors import cite
 from ..model import Document, Figure, Page
-from . import units
+from . import table_markdown, units
+
+_REMOTE = re.compile(r"^(?:https?:|//)", re.IGNORECASE)
+_SAFE_PATH = re.compile(r"images/[a-z0-9][a-z0-9-]*\.[a-z0-9]+")
+_MARKUP = str.maketrans({ch: "\\" + ch for ch in "\\[]<>"})
+_URL = str.maketrans({ch: f"%{ord(ch):02X}" for ch in " ()<>\\\r\n\t"})
+
+
+def escape(text: str) -> str:
+    """Words from a file, written so that no file can make markup: a backslash before each
+    character that opens a link, an image or a tag."""
+    return text.translate(_MARKUP)
+
+
+def _one_line(text: str) -> str:
+    return escape(" ".join(text.split()))
+
+
+def _comment(text: str) -> str:
+    """Text inside an HTML comment, which backslashes do not protect: nothing in it can end it."""
+    return " ".join(text.split()).replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _destination(url: str) -> str:
+    return "<" + url.translate(_URL) + ">"
 
 
 def marker(page: Page) -> str:
     match page.kind:
         case "sheet":
-            return f"<!-- sheet {page.name} -->"
+            return f"<!-- sheet {_comment(page.name or '')} -->"
         case "slide":
             return f"<!-- slide {page.number} -->"
         case "body":
-            return f"<!-- body {page.name} -->" if page.name else "<!-- body -->"
+            return f"<!-- body {_comment(page.name)} -->" if page.name else "<!-- body -->"
     return f"<!-- page {page.number} -->"
-
-
-_REMOTE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.\-]*:|//)")
 
 
 def _figure(figure: Figure) -> str:
     """A saved image is embedded. One with no file is text, and a remote one a plain link, so
-    no viewer fetches an address a file only named."""
-    place = f"*({cite(figure.anchor)})*"
-    if figure.path and not _REMOTE.match(figure.path):
-        return f"![{figure.description}]({figure.path}) {place}"
-    link = f"({figure.path})" if figure.path else ""
-    return f"[image: {figure.description}]{link} {place}"
+    no viewer fetches an address a file only named. Everything the file wrote is escaped."""
+    place = f"*({_one_line(cite(figure.anchor))})*"
+    description = _one_line(figure.description)
+    path = figure.path
+    if path and not _REMOTE.match(path):
+        return f"![{description}]({path if _SAFE_PATH.fullmatch(path) else _destination(path)}) {place}"
+    link = f"({_destination(path)})" if path and _REMOTE.match(path) else ""
+    return f"[image: {description}]{link} {place}"
+
+
+def _text(unit) -> str:
+    if unit.figure:
+        return _figure(unit.figure)
+    if unit.table:
+        return table_markdown(unit.table, escape)
+    return " ".join(escape(line.text.strip()) for line in unit.lines if line.text.strip())
 
 
 def to_markdown(document: Document, include: tuple[str, ...] = ("accepted", "flagged")) -> str:
@@ -43,8 +74,7 @@ def to_markdown(document: Document, include: tuple[str, ...] = ("accepted", "fla
         if unit.status not in include:
             out.append(f"<!-- omitted ({unit.status}): {', '.join(unit.rules)} -->")
             continue
-        figure = unit.figure
-        text = _figure(figure) if figure else unit.text
+        text = _text(unit)
         if not text:
             continue
         out.append(f"## {text}" if unit.kind == "heading" else text)

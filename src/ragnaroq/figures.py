@@ -44,6 +44,10 @@ _PROLOG = re.compile(
     rb"^<\?xml[^>]*\?>\s*(?:<!--.*?-->\s*|<!DOCTYPE[^>]*>\s*)*<svg", re.DOTALL | re.IGNORECASE
 )
 _TINY = "image.tiny-skipped"
+_SKIPPED = "Not read within the file's time limit."
+_LATE = "Not converted within the file's time limit."
+# What describe works out afresh each time it runs, so a later run replaces them.
+_OWN_FLAGS = {"image.ocr-skipped", "image.too-large", "image.not-viewable"}
 
 
 @dataclass(frozen=True)
@@ -207,15 +211,19 @@ class _Index:
         self._sha: dict[int, tuple[bytes, str]] = {}  # the bytes are held, so an id is never reused
         self._info: dict[str, Info] = {}
 
-    def of(self, figure: Figure) -> tuple[str, bytes, Info] | None:
+    def of(self, figure: Figure, deadline: float | None = None) -> tuple[str, bytes, Info | None] | None:
+        """The figure's hash, bytes and Info; None with no bytes. Info is None when the image
+        has not been looked at and `deadline` has passed: decoding is what costs."""
         data = self.result.images.get(figure.id)
         if not data:
             return None
         held = self._sha.get(id(data))
-        if held is None:
+        if held is None or held[0] is not data:  # an id is trusted only for the object it named
             held = self._sha[id(data)] = (data, hashlib.sha256(data).hexdigest())
         sha = held[1]
         if sha not in self._info:
+            if deadline is not None and time.monotonic() >= deadline:
+                return sha, data, None
             self._info[sha] = probe(data, self.config)
         return sha, data, self._info[sha]
 
@@ -319,10 +327,15 @@ def describe(
     reads: dict[str, _Read] = {}
     used = sum(len(figure.ocr_lines) for figure in _figures(result))
     for figure in _figures(result):
-        got = index.of(figure)
+        if figure.id in result.images:
+            figure.flags = [flag for flag in figure.flags if flag.rule not in _OWN_FLAGS]
+        got = index.of(figure, deadline)
         if got is None:  # remote, linked or missing: nothing to read, and the path stays
             continue
         sha, data, info = got
+        if info is None:
+            _add(figure, "image.ocr-skipped", _SKIPPED)
+            continue
         _note(figure, info)
         if figure.description_source != "none" or not engines:
             continue
@@ -330,7 +343,7 @@ def describe(
             continue
         if sha not in reads:
             if deadline is not None and time.monotonic() >= deadline:
-                _add(figure, "image.ocr-skipped", "Not read within the file's time limit.")
+                _add(figure, "image.ocr-skipped", _SKIPPED)
                 continue
             reads[sha] = _read(data, engines, config)
         shared = reads[sha]
@@ -340,6 +353,7 @@ def describe(
         if not text:
             continue
         figure.description, figure.description_source = _cut(text), "ocr"
+        figure.ocr_sources = sorted({line.source for line in shared.lines})
         if used + len(shared.lines) > config.max_figure_ocr_lines:
             _add(
                 figure,
@@ -377,9 +391,15 @@ def _unique(base: str, taken: dict[str, int]) -> str:
     return name
 
 
-def _payload(data: bytes, info: Info) -> tuple[bytes, str, list[Flag], tuple[int, int] | None]:
+def _payload(
+    data: bytes, info: Info | None, late: bool
+) -> tuple[bytes, str, list[Flag], tuple[int, int] | None]:
     """What is written for an image, its extension, what was lost making it, and the size of
-    what was written when that is not the size of the original."""
+    what was written when that is not the size of the original. Past the deadline (`late`)
+    nothing is decoded: the original bytes are kept."""
+    if info is None or (late and info.kind == "convert"):
+        ext = _sniff(data) if info is None else info.own_ext
+        return data, ext, [Flag(rule="image.not-viewable", severity="review", message=_LATE)], None
     if info.kind != "convert" or info.too_large:
         return data, info.ext if info.kind != "convert" else info.own_ext, [], None
     flags = []
@@ -401,12 +421,13 @@ def _payload(data: bytes, info: Info) -> tuple[bytes, str, list[Flag], tuple[int
     return payload, "png", flags, size
 
 
-def save(result: "ReadResult", out: str | Path, config: Config) -> None:
+def save(result: "ReadResult", out: str | Path, config: Config, deadline: float | None = None) -> None:
     """Write each distinct image once to `out/images/` and set `Figure.path` to
     `images/<name>.<ext>`, then decide the document again. Figures with no bytes keep the path
     their reader set. An image under 32x32 pixels is not saved: it is dropped, and counted in
     the document flag `image.tiny-skipped`, unless its description is the file's own, when it
-    stays without a file."""
+    stays without a file. An image not looked at or converted before `deadline` is written
+    as it came, with `image.not-viewable`."""
     out = Path(out)
     index = _index(result, config)
     placed: dict[str, tuple[str, list[Flag], tuple[int, int] | None]] = {}
@@ -415,13 +436,14 @@ def save(result: "ReadResult", out: str | Path, config: Config) -> None:
     for page in result.document.pages:
         kept = []
         for figure in page.figures:
-            got = index.of(figure)
+            got = index.of(figure, deadline)
             if got is None:
                 kept.append(figure)
                 continue
             sha, data, info = got
-            _note(figure, info)
-            if info.tiny:
+            if info is not None:
+                _note(figure, info)
+            if info is not None and info.tiny:
                 if figure.description_source in ("caption", "alt") and figure.description:
                     figure.width, figure.height = info.width, info.height
                     kept.append(figure)
@@ -429,17 +451,21 @@ def save(result: "ReadResult", out: str | Path, config: Config) -> None:
                     removed += 1
                 continue
             if sha not in placed:
-                payload, ext, flags, size = _payload(data, info)
+                late = deadline is not None and time.monotonic() >= deadline
+                payload, ext, flags, size = _payload(data, info, late)
                 path = f"images/{_unique(_base(figure), taken)}.{ext}"
                 (out / "images").mkdir(parents=True, exist_ok=True)
                 (out / path).write_bytes(payload)
                 placed[sha] = (path, flags, size)
             path, flags, size = placed[sha]
             figure.path = path
-            if size or info.measured:
+            if size or (info is not None and info.measured):
                 figure.width, figure.height = size or (info.width, info.height)
             for flag in flags:
                 _add(figure, flag.rule, flag.message)
+            if info is None or (flags and flags[0].message == _LATE):
+                if figure.description_source == "none":
+                    _add(figure, "image.ocr-skipped", _SKIPPED)
             kept.append(figure)
         page.figures = kept
     alive = {figure.id for figure in _figures(result)}

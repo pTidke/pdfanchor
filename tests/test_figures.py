@@ -659,7 +659,7 @@ def test_i3_figures_not_reached_by_the_deadline_are_not_read_and_say_so():
 def test_i3_a_deadline_that_passes_midway_keeps_what_was_read():
     import time
 
-    clock = iter([0.0])
+    clock = iter([0.0, 0.0])
     pairs = [(fig(f"f{i}", PptxAnchor(slide=i + 1, shape="s")), picture(colour=(i, 0, 0))) for i in range(3)]
     res = result(*pairs)
     engines = twice()
@@ -742,4 +742,170 @@ def test_m_markdown_links_a_saved_image_and_never_embeds_one_it_has_not(tmp_path
     md = to_markdown(res.document)
     assert "![₹12,000](images/slide-1-saved.png) *(slide 1, saved)*" in md
     assert "[image: Chart] *(slide 1, gone)*" in md and "![Chart]" not in md
-    assert "[image: Far](https://example.org/x.png) *(slide 1, far)*" in md and "![Far]" not in md
+    assert "[image: Far](<https://example.org/x.png>) *(slide 1, far)*" in md and "![Far]" not in md
+
+
+# --- fix round 2 (R27) -----------------------------------------------------------------------------------
+
+
+def xlsx_with(media: bytes) -> bytes:
+    import zipfile
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from openpyxl.drawing.image import Image as XlImage
+
+    workbook = openpyxl.Workbook()
+    workbook.active["A1"] = "Rates"
+    workbook.active.add_image(XlImage(io.BytesIO(picture((200, 100)))), "C3")
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    source, out = zipfile.ZipFile(io.BytesIO(buffer.getvalue())), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        for info in source.infolist():
+            data = media if info.filename.startswith("xl/media/") else source.read(info.filename)
+            archive.writestr(info, data)
+    return out.getvalue()
+
+
+def test_n1_a_workbook_picture_in_postscript_never_runs_ghostscript(tmp_path, monkeypatch):
+    log = fake_ghostscript(tmp_path, monkeypatch)
+    res = read_bytes(xlsx_with(EPS), "x.xlsx", CONFIG)
+    figures.describe(res, twice(), CONFIG)
+    figures.save(res, tmp_path / "out", CONFIG)
+    assert not log.exists()
+    figure = lines(res)[0]
+    assert res.images[figure.id] == EPS and figure.path.endswith(".eps")
+
+
+@pytest.mark.parametrize("fmt", ["WEBP", "BMP", "TIFF"])
+def test_n1_a_workbook_picture_arrives_as_the_bytes_the_archive_holds(fmt):
+    data = encode(Image.new("RGB", (200, 100), "white"), fmt)
+    res = read_bytes(xlsx_with(data), "x.xlsx", CONFIG)
+    assert list(res.images.values()) == [data]
+
+
+def test_n1_a_picture_claiming_a_huge_size_does_not_refuse_the_workbook(tmp_path):
+    import struct
+    import zlib
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    bomb = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 50000, 50000, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00"))
+        + chunk(b"IEND", b"")
+    )
+    res = read_bytes(xlsx_with(bomb), "x.xlsx", CONFIG)
+    assert res.document.pages[0].lines  # the cells are still read
+    figures.describe(res, twice(), CONFIG)
+    assert "image.too-large" in {f.rule for f in lines(res)[0].flags}
+
+
+def test_n1_a_workbook_with_a_wmf_picture_keeps_it():
+    wmf = b"\xd7\xcd\xc6\x9a" + b"\x00" * 40
+    res = read_bytes(xlsx_with(wmf), "x.xlsx", CONFIG)
+    assert list(res.images.values()) == [wmf]
+
+
+def test_n1_pillow_is_untouched_by_loading_a_workbook():
+    before = Image.open
+    read_bytes(xlsx_with(picture()), "x.xlsx", CONFIG)
+    assert Image.open is before
+    import openpyxl.reader.drawings as drawings
+
+    assert drawings.Image.__module__ == "openpyxl.drawing.image"  # the patch is undone
+
+
+def tiffs(count, side=300):
+    out = []
+    for i in range(count):
+        out.append(encode(Image.effect_noise((side, side), 60 + i).convert("RGB"), "TIFF"))
+    return out
+
+
+def test_n3_save_past_the_deadline_keeps_original_bytes_and_says_so(tmp_path):
+    import time
+
+    data = tiffs(3)
+    res = result(*[(fig(f"f{i}", PptxAnchor(slide=i + 1, shape="s")), d) for i, d in enumerate(data)])
+    figures.save(res, tmp_path, CONFIG, deadline=time.monotonic() - 1)
+    for figure, original in zip(lines(res), data, strict=True):
+        assert figure.path.endswith(".tif") and (tmp_path / figure.path).read_bytes() == original
+        rules = {f.rule for f in figure.flags}
+        assert {"image.not-viewable", "image.ocr-skipped"} <= rules
+
+
+def test_n3_describe_checks_the_deadline_before_decoding(monkeypatch):
+    import time
+
+    decoded = []
+    real = figures.probe
+    monkeypatch.setattr(figures, "probe", lambda data, config: decoded.append(1) or real(data, config))
+    data = tiffs(4)
+    res = result(*[(fig(f"f{i}", PptxAnchor(slide=i + 1, shape="s")), d) for i, d in enumerate(data)])
+    figures.describe(res, twice(), CONFIG, deadline=time.monotonic() - 1)
+    assert decoded == []
+    assert all("image.ocr-skipped" in {f.rule for f in figure.flags} for figure in lines(res))
+
+
+def test_n3_a_converted_image_that_was_read_is_not_marked_skipped(tmp_path):
+    import time
+
+    res = result((fig("a"), tiffs(1)[0]))
+    figures.describe(res, twice(), CONFIG)
+    figures.save(res, tmp_path, CONFIG, deadline=time.monotonic() - 1)
+    figure = lines(res)[0]
+    assert figure.description_source == "ocr" and figure.path.endswith(".tif")
+    assert "image.ocr-skipped" not in {f.rule for f in figure.flags}
+    assert "image.not-viewable" in {f.rule for f in figure.flags}
+
+
+def test_n4_a_pickled_result_saves_each_figure_with_its_own_image(tmp_path):
+    import gc
+    import pickle
+
+    for trial in range(30):
+        images = [picture((64 + k, 64), colour=(k, trial, 7)) for k in range(6)]
+        res = result(*[(fig(f"f{k}", PptxAnchor(slide=k + 1, shape="s")), images[k]) for k in range(6)])
+        figures.describe(res, [], CONFIG)
+        blob = pickle.dumps(res)
+        del res, images
+        gc.collect()
+        back = pickle.loads(blob)
+        assert back.cache == {}
+        out = tmp_path / str(trial)
+        figures.save(back, out, CONFIG)
+        for figure in lines(back):
+            assert (out / figure.path).read_bytes() == back.images[figure.id]
+
+
+def test_n4_a_cache_entry_is_trusted_only_for_the_same_bytes_object():
+    res = result((fig("a"), picture()), (fig("b", PptxAnchor(slide=1, shape="b")), picture(colour=(1, 1, 1))))
+    index = figures._index(res, CONFIG)
+    first = index.of(lines(res)[0])
+    index._sha[id(res.images["b"])] = (b"other", first[0])  # a stale entry under b's id
+    assert index.of(lines(res)[1])[0] != first[0]
+
+
+def test_r2_describing_again_clears_the_flags_it_set_itself():
+    import time
+
+    res = result((fig("a"), picture()))
+    figures.describe(res, twice(), CONFIG, deadline=time.monotonic() - 1)
+    assert "image.ocr-skipped" in {f.rule for f in lines(res)[0].flags}
+    figures.describe(res, twice(), CONFIG)
+    figure = lines(res)[0]
+    assert figure.description_source == "ocr" and "image.ocr-skipped" not in {f.rule for f in figure.flags}
+    assert figure.status == "accepted"
+
+
+def test_r2_a_figure_past_the_line_cap_still_names_its_ocr_sources():
+    from ragnaroq.export.chunks import to_chunks
+
+    config = Config(max_figure_ocr_lines=2)
+    res, engines = shown_by(2)
+    figures.describe(res, engines, config)
+    chunks = [c for c in to_chunks(res.document, config) if c["metadata"]["kind"] == "image"]
+    assert [c["metadata"]["sources"] for c in chunks] == ["ocr:one", "ocr:one"]

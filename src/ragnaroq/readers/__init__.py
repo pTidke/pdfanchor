@@ -38,6 +38,10 @@ class ReadResult:
     images: dict[str, bytes] = field(default_factory=dict)  # keyed by figure id
     cache: dict = field(default_factory=dict, repr=False, compare=False)  # what the figure stage learns
 
+    def __getstate__(self):
+        # The cache is keyed by the identity of byte strings, which a copy does not keep.
+        return {**self.__dict__, "cache": {}}
+
 
 def _installed(distribution: str) -> str | None:
     try:

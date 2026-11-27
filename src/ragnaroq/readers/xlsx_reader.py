@@ -2,7 +2,9 @@
 text is the value as Excel shows it ("5%", "₹1,50,000"). The stored value, the formula and
 the number format are kept in `line.value`. A merged range is one line anchored to the range."""
 
+import contextlib
 import io
+import threading
 from datetime import date, datetime, time
 
 from ..anchors import XlsxAnchor
@@ -118,7 +120,7 @@ def _read_sheet(sheet, values, number: int, page: Page, config: Config, images: 
             height=int(picture.height),
             anchor=XlsxAnchor(sheet=sheet.title, cell=_corner(picture.anchor, utils.get_column_letter)),
         )
-        images[figure.id] = picture._data()
+        images[figure.id] = picture.data
         page.figures.append(figure)
     for chart in getattr(sheet, "_charts", []):
         at = _corner(chart.anchor, utils.get_column_letter)
@@ -130,6 +132,34 @@ def _read_sheet(sheet, values, number: int, page: Page, config: Config, images: 
     return left_out
 
 
+class _RawPicture:
+    """A picture as the archive holds it. openpyxl's own `Image` opens, and for any format but
+    GIF, JPEG and PNG decodes and re-saves, the picture with Pillow; no reader does that. The
+    figure stage looks at the bytes, with limits."""
+
+    def __init__(self, source):
+        self.data = source.getvalue()
+        self.format = "raw"
+        self.width = self.height = 0  # measured later, by the figure stage
+
+
+_PATCH = threading.Lock()
+
+
+@contextlib.contextmanager
+def _raw_pictures():
+    """While a workbook loads, openpyxl takes pictures as raw bytes."""
+    from openpyxl.reader import drawings
+
+    with _PATCH:
+        original = drawings.Image
+        drawings.Image = _RawPicture
+        try:
+            yield
+        finally:
+            drawings.Image = original
+
+
 def read(data: bytes, name: str, config: Config) -> ReadResult:
     _zip.check(data, config)
     try:
@@ -138,8 +168,9 @@ def read(data: bytes, name: str, config: Config) -> ReadResult:
     except ModuleNotFoundError as error:
         raise ReaderUnavailable("The xlsx reader needs openpyxl: pip install 'ragnaroq[formats]'") from error
     try:
-        formulas = openpyxl.load_workbook(io.BytesIO(data), data_only=False)
-        cached = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+        with _raw_pictures():
+            formulas = openpyxl.load_workbook(io.BytesIO(data), data_only=False)
+            cached = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     except Exception as error:  # openpyxl raises many kinds for a broken file
         raise ReaderRefused("xlsx.invalid", f"{name} could not be opened as a workbook: {error}") from error
     document = _build.start(data, name, "xlsx", config, {"reader:xlsx": READER_VERSIONS["xlsx"]})

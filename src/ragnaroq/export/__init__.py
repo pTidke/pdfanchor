@@ -42,15 +42,17 @@ class Unit:
 MAX_GRID = 100_000  # a table with more cells than this is not laid out as a grid
 
 
-def table_markdown(table: Table) -> str:
+def table_markdown(table: Table, escape=lambda text: text) -> str:
+    """The table as a Markdown grid. `escape` is applied to each cell's words (the Markdown
+    file escapes them; chunk text stays raw)."""
     if table.rows * table.columns > MAX_GRID:  # a grid of that size could take gigabytes
         return "\n".join(
-            f"row {cell.row + 1}, column {cell.column + 1}: " + " ".join((cell.text or "").split())
+            f"row {cell.row + 1}, column {cell.column + 1}: " + escape(" ".join((cell.text or "").split()))
             for cell in table.cells
         )
     grid = [["" for _ in range(table.columns)] for _ in range(table.rows)]
     for cell in table.cells:
-        grid[cell.row][cell.column] = " ".join((cell.text or "").split()).replace("|", "\\|")
+        grid[cell.row][cell.column] = escape(" ".join((cell.text or "").split())).replace("|", "\\|")
     rows = ["| " + " | ".join(row) + " |" for row in grid]
     return "\n".join([rows[0], "|" + " --- |" * table.columns, *rows[1:]])
 
