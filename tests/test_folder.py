@@ -788,7 +788,7 @@ def swap_state(demo, victim):
     os.symlink(victim, demo / STATE)
 
 
-@pytest.mark.parametrize("hook", ["_install", "_write_file", "_sweep"])
+@pytest.mark.parametrize("hook", ["_install", "_write_file", "_sweep", "after_manifest"])
 @pytest.mark.parametrize("swap", [swap_files, swap_state])
 def test_swapping_the_state_folders_for_links_at_a_write_point_reaches_nothing_outside(
     demo, tmp_path, monkeypatch, hook, swap
@@ -798,16 +798,23 @@ def test_swapping_the_state_folders_for_links_at_a_write_point_reaches_nothing_o
     (demo / "readme.md").write_text("# Edited\n\nSo it is installed.\n", encoding="utf8")
     (demo / "rates.csv").unlink()  # and something is swept
     before = contents(victim)
-    real = getattr(folder, hook)
+    after = hook == "after_manifest"  # the swap comes just after manifest.json is written
+    real = getattr(folder, "_write_file" if after else hook)
     calls = []
 
     def swapping(*args, **kwargs):
+        if after:
+            done = real(*args, **kwargs)
+            if args[1] == "manifest.json":
+                calls.append(1)
+                swap(demo, victim)
+            return done
         if not calls:
             calls.append(1)
             swap(demo, victim)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(folder, hook, swapping)
+    monkeypatch.setattr(folder, "_write_file" if after else hook, swapping)
     run(demo)
     assert calls and contents(victim) == before
 
@@ -1156,3 +1163,81 @@ def test_index_says_plainly_that_it_is_for_linux_and_macos(demo, monkeypatch):
     monkeypatch.setattr(folder.os, "name", "nt")
     with pytest.raises(FolderError, match="Linux and macOS"):
         run(demo)
+
+
+# ---------------------------------------------------------------- fix round 2 (R30)
+
+
+def test_a_raised_limit_reads_a_file_again_that_failed_under_the_old_one(tmp_path, misbehaving, monkeypatch):
+    root = mixed(tmp_path, "a.json", "slow.csv", "hungry.csv")
+    calls = []
+    real = isolation.read_file
+
+    def spy(data, name, *args, **kwargs):
+        calls.append(name)
+        return real(data, name, *args, **kwargs)
+
+    monkeypatch.setattr(isolation, "read_file", spy)
+    tight = replace(Config(), file_timeout_seconds=2, page_memory_mb=700)
+    for _ in range(2):  # a timeout is tried twice
+        found = entries(run(root, tight))
+    assert found["slow.csv"].attempts == 2 and found["slow.csv"].limit == 2
+    assert found["hungry.csv"].rule == "file.memory" and found["hungry.csv"].limit == 700
+    calls.clear()
+    assert entries(run(root, tight))["slow.csv"].rule == "file.timeout" and calls == []  # carried over
+    calls.clear()
+    # A higher time limit reads the file again (and, here, it still times out under the new limit).
+    found = entries(run(root, replace(tight, file_timeout_seconds=4)))
+    assert calls == ["slow.csv"] and found["slow.csv"].limit == 4 and found["slow.csv"].attempts == 1
+    assert "4 seconds" in found["slow.csv"].error
+    calls.clear()
+    # A higher memory limit reads the memory failure again; the same or a lower one does not.
+    run(root, replace(tight, file_timeout_seconds=4, page_memory_mb=500))
+    assert "hungry.csv" not in calls
+    found = entries(run(root, replace(tight, file_timeout_seconds=4, page_memory_mb=3000)))
+    assert "hungry.csv" in calls and found["hungry.csv"].status in ("ok", "review")
+
+
+def test_a_file_is_recorded_as_the_format_it_was_read_as_and_is_not_read_again(demo, monkeypatch):
+    shutil.copy(DEMO / "guide.docx", demo / "really-a-docx.xlsx")
+    first = run(demo)
+    entry = entries(first)["really-a-docx.xlsx"]
+    assert entry.status in ("ok", "review") and entry.format == "docx"
+    assert entry.reader == readers.READER_VERSIONS["docx"] and "openpyxl" not in entry.reader
+    document = json.loads((demo / STATE / "files" / entry.file_id / "document.json").read_text())
+    assert document["source"]["format"] == "docx"
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("read again")
+
+    monkeypatch.setattr(isolation, "read_file", refuse)
+    second = run(demo)
+    assert second.changes.changed == [] and entries(second)["really-a-docx.xlsx"] == entry
+
+
+def test_images_behind_links_inside_the_folder_load_and_links_out_do_not(tmp_path):
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    (root / "assets").mkdir(parents=True)
+    outside.mkdir()
+    png = (DEMO / "diagram.png").read_bytes()
+    (root / "assets" / "d.png").write_bytes(png)
+    (outside / "o.png").write_bytes(png)
+    (root / "pics").mkdir()
+    (root / "pics" / "d.png").symlink_to("../assets/d.png")
+    (root / "pics" / "out.png").symlink_to(outside / "o.png")
+    (root / "alias").symlink_to("assets", target_is_directory=True)
+    (root / "away").symlink_to(outside, target_is_directory=True)
+    (root / "page.md").write_text(
+        "# Page\n\n![a](pics/d.png)\n\n![b](alias/d.png)\n\n![c](assets/d.png)\n\n"
+        "![d](pics/out.png)\n\n![e](away/o.png)\n",
+        encoding="utf8",
+    )
+    report = run(root)
+    entry = entries(report)["page.md"]
+    document = json.loads((root / STATE / "files" / entry.file_id / "document.json").read_text())
+    figures = [f for page in document["pages"] for f in page["figures"]]
+    rules = {f["description"]: [x["rule"] for x in f["flags"]] for f in figures}
+    for name in "abc":
+        assert "image.outside-folder" not in rules[name] and "image.not-found" not in rules[name], name
+    assert figures[0]["path"].startswith("images/") and figures[1]["path"] == figures[0]["path"]
+    assert "image.outside-folder" in rules["d"] and "image.outside-folder" in rules["e"]

@@ -81,6 +81,7 @@ class FileEntry(Model):
     skipped: str = ""
     rule: str = ""  # for a failed file, the rule of its blocking flag
     attempts: int = 0  # how many times in a row this file's bytes and settings ended in a timeout
+    limit: float = 0  # for file.timeout the seconds, for file.memory the MB, it failed under
 
 
 class Manifest(Model):
@@ -635,7 +636,9 @@ def _fail_output(
 # ---------------------------------------------------------------- a run
 
 
-def _carry(held: _State, old: FileEntry | None, found: Found, sha: str, settings: str) -> FileEntry | None:
+def _carry(
+    held: _State, old: FileEntry | None, found: Found, sha: str, settings: str, config: Config
+) -> FileEntry | None:
     """The last run's entry, if this file need not be read again: same bytes, same settings,
     and its output is still there, is the output of those bytes, and is what the manifest says."""
     if old is None or old.status == "skipped" or old.sha256 != sha or old.settings != settings:
@@ -643,6 +646,10 @@ def _carry(held: _State, old: FileEntry | None, found: Found, sha: str, settings
     if old.status == "failed" and (
         old.rule in TRANSIENT or (old.rule == "file.timeout" and old.attempts < TIMEOUT_TRIES)
     ):
+        return None
+    # A failure of a limit is only left alone while the limit is not raised.
+    now = {"file.timeout": config.file_timeout_seconds, "file.memory": config.page_memory_mb}
+    if old.status == "failed" and old.rule in now and now[old.rule] > old.limit:
         return None
     folder = _existing_dir(old.file_id, held.files)
     if folder is None:
@@ -825,9 +832,20 @@ def _run(held: _State, real_root, config, engines, third_reader, fresh, progress
                 entry = _entry_of(found, read.data or b"", read.fmt, hashed, document, failure, out)
                 if read.data is None:
                     entry.sha256 = ""  # nothing was read, so nothing can match it
+                if document is not None:  # what the reader that read it says it was, not its name
+                    used = document.source.format
+                    entry.format, entry.reader, entry.settings = (
+                        used,
+                        _reader_name(used),
+                        _hash(settings, used),
+                    )
+                limits = {"file.timeout": config.file_timeout_seconds, "file.memory": config.page_memory_mb}
+                if entry.rule in limits:
+                    entry.limit = float(limits[entry.rule])
                 if entry.rule == "file.timeout":
                     again = previous is not None and previous.sha256 == entry.sha256
-                    entry.attempts = previous.attempts + 1 if again and previous.settings == hashed else 1
+                    again = again and previous.settings == entry.settings and previous.limit == entry.limit
+                    entry.attempts = previous.attempts + 1 if again else 1
                 _install(held, out, entry)
                 return entry
             finally:
@@ -850,7 +868,9 @@ def _run(held: _State, real_root, config, engines, third_reader, fresh, progress
             sha = hashlib.sha256(read.data).hexdigest()
             hashed = _hash(settings, read.fmt)
             previous = before.get(identity)
-            carried = None if fresh else _carry(held, previous, found, sha, hashed)
+            # What was recorded is settled for the format the reader found, which a name may not tell.
+            recorded = _hash(settings, previous.format) if previous and previous.format else hashed
+            carried = None if fresh else _carry(held, previous, found, sha, recorded, config)
             done(carried if carried is not None else process(found, read, hashed, previous))
             read = None
 

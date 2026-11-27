@@ -2,7 +2,9 @@
 
 Nothing here reaches the network, and nothing outside the file's folder is opened: a remote
 image is kept as its URL, a `data:` URI is decoded in memory, and a relative path must stay
-inside `base` after symlinks are followed. Core only."""
+inside `base` after symlinks are followed. A `base` of (folder, names below it), as the folder
+index gives, is stricter: the path is opened name by name from the folder, and a link met on the
+way is resolved, must lead inside the folder, and is then opened the same way. Core only."""
 
 import base64
 import binascii
@@ -78,6 +80,20 @@ _C0 = "".join(chr(code) for code in range(0x21))  # controls and the space, trim
 _LONG = 4096
 
 
+def _open_below(folder: str, names: list[str]) -> int:
+    """A descriptor for the file `names` below `folder`, opened one name at a time from the
+    folder's own descriptor, never through a link (OSError ELOOP if one is met)."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    held = [os.open(folder, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))]
+    try:
+        for name in names[:-1]:
+            held.append(os.open(name, flags | getattr(os, "O_DIRECTORY", 0), dir_fd=held[-1]))
+        return os.open(names[-1], flags | getattr(os, "O_NONBLOCK", 0), dir_fd=held[-1])
+    finally:
+        for descriptor in held:
+            os.close(descriptor)
+
+
 class Images:
     """Loads the images one file names. Bytes are held once per real file, and the distinct
     bytes of a document together stay under `max_unzipped_bytes`."""
@@ -151,9 +167,10 @@ class Images:
         return Loaded(data=data)
 
     def _local_below(self, relative: str) -> Loaded:
-        """A file next to the one being read, for a base given as (folder, parts below it). The
-        folder is opened, then each part from the one before, never following a link: so a
-        link planted since the folder was listed cannot lead out of it."""
+        """A file next to the one being read, for a base given as (folder, names below it). The
+        folder is opened, then each name from the one before, never following a link. A link
+        inside the folder is resolved, must lead to a file inside the folder, and is then opened
+        the same way from the folder; one that leaves the folder is `image.outside-folder`."""
         folder, below = self.base
         found: list[str] = []
         for part in relative.split("/"):
@@ -171,19 +188,27 @@ class Images:
         key = "/".join(names)
         if key in self.files:
             return Loaded(data=self.files[key])
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        held = [os.open(folder, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))]
         try:
-            for name in names[:-1]:
-                held.append(os.open(name, flags | getattr(os, "O_DIRECTORY", 0), dir_fd=held[-1]))
-            fd = os.open(names[-1], flags | getattr(os, "O_NONBLOCK", 0), dir_fd=held[-1])
-        except (FileNotFoundError, NotADirectoryError):
-            return _not_found()
+            fd = _open_below(folder, names)
         except OSError as error:
-            return _outside() if error.errno == errno.ELOOP else _unreadable()
-        finally:
-            for descriptor in held:
-                os.close(descriptor)
+            if error.errno not in (errno.ELOOP, errno.ENOTDIR):  # a link, or a file where a folder was
+                return _not_found() if isinstance(error, FileNotFoundError) else _unreadable()
+            try:
+                inside = os.path.relpath(os.path.realpath(os.path.join(folder, *names)), folder).split(os.sep)
+            except (OSError, ValueError, RuntimeError):
+                return _outside()
+            if inside[0] == ".." or any(part.startswith(".") for part in inside):
+                return _outside()
+            try:
+                fd = _open_below(folder, inside)
+            except (FileNotFoundError, NotADirectoryError):
+                return _not_found()
+            except OSError as again:
+                return _outside() if again.errno == errno.ELOOP else _unreadable()
+            key = "/".join(inside)
+            if key in self.files:
+                os.close(fd)
+                return Loaded(data=self.files[key])
         with os.fdopen(fd, "rb") as handle:
             size = os.fstat(fd)
             if not stat.S_ISREG(size.st_mode):
