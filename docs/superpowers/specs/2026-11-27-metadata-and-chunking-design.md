@@ -102,9 +102,9 @@ Two files are new: `metadata.json` (section 2) and `chunking-plan.json` with `ch
 
 - **Numbered paragraph:** a body paragraph that starts with a number or letter in a numbering form: `1.`, `1.1`, `(1)`, `1)`, `(a)`, `(i)`, `I.`, `Article 5`, `Section 3.`, `Clause 4`. A run of at least two in sequence counts; a lone `1.` in prose does not.
 - **Proviso:** a paragraph that starts `Provided that`, `Provided further that`, `Provided also that`. **Explanation:** one that starts `Explanation` (with an optional number and a dash, colon or full stop). Both are kept with the numbered paragraph before them.
-- **Question-answer pair:** a question line (`Q.`, `Q:`, `Q1.`, `Question`, or a heading or bold-free line ending in `?`) followed by at least one body paragraph before the next question; an `A.`/`A:`/`Ans.`/`Answer` paragraph is the answer.
+- **Question-answer pair:** a question followed by at least one body paragraph before the next question. A question is a paragraph that starts `Q.`, `Q:`, `Q1.` or `Question`; a heading that ends in `?`; or a paragraph of at most 200 characters that ends in `?` and is followed by one that does not. An `A.`/`A:`/`Ans.`/`Answer` paragraph is the answer. (No reader but PDF knows bold, so bold is not used.) The `faq` kind needs at least 3 pairs holding 40% of the text, so a rhetorical question in prose does not make a FAQ.
 - **Definition:** a sentence of the form `"term" means …`, `term means …`, `"term" shall mean …`, `"term" includes …`, `term: means …`, or a two-column table whose header is `Term`/`Definition` (or `Word`/`Meaning`). The term is recorded as written.
-- **Record:** for JSON, each element of the top-level array, or each value of the top-level object when there is no array; for XML, each child of the root when the children repeat one element name.
+- **Record:** for JSON, each element of the top-level array, or each value of the top-level object when there is no array; for XML, each child of the root when the children repeat one element name. A JSON array of flat objects with the same keys is already a table in `document.json` (the JSON reader makes it one), and is cut as a table, not as records.
 
 **Limits.** At most 1,000 values for each list field of one document (dates, periods, amounts, references, files, definitions); past it the list is cut and `metadata.list-limit` names the field. Every pattern is linear: no nested quantifiers.
 
@@ -148,10 +148,12 @@ Each file's own entry is also written beside its `document.json` (`files/<id>/me
 | 4 | Kind `sectioned` | `sections` |
 | 5 | Kind `spreadsheet` | `table-rows` |
 | 6 | Kind `slides` | `slides` |
-| 7 | Kind `data` | `records` |
+| 7 | Kind `data`, unless the whole body is one table (then `table-rows`) | `records` |
 | 8 | Otherwise | `sentences` |
 
-The thresholds above are the starting values. They are set once on the questions set (section 7) and then fixed in code; the plan records the values that applied. A table in a document of any strategy is cut as `table-rows` cuts it.
+The thresholds above are the starting values. They are tuned on the tuning half of the questions set only (section 7) and then fixed in code; the plan records the values that applied. A table in a document of any strategy is cut as `table-rows` cuts it.
+
+**PDF tables stay one chunk each,** as in 0.3: a PDF's lines are not matched to its table's cells, so a PDF table cannot be cut into rows yet, and it is the one exception to `chunk_chars` besides a long sentence. It gets a summary chunk like any table. Cutting PDF tables into rows is later work.
 
 **What each strategy makes** (every chunk at most `chunk_chars`, except as section 5 says):
 
@@ -169,10 +171,10 @@ The thresholds above are the starting values. They are set once on the questions
 ```toml
 [chunking]
 "faq/*.pdf" = "question-answer"
-"data/*.xlsx" = { strategy = "table-rows", rows_per_chunk = 20 }
+"notes/*.md" = { strategy = "sentences", max_chars = 800, min_chars = 100 }
 ```
 
-A strategy name that is unknown, or a parameter outside its limits, stops the run at the start with a message naming the line. `ragnaroq convert` takes `--strategy NAME`. The override that applies to a file is part of that file's chunking key (section 6), so changing it remakes that file's chunks only.
+An override sets `strategy`, and may set `max_chars` (200 to 4,000; default `chunk_chars`) and `min_chars` (0 to half of `max_chars`; default 200) for the files it matches. Nothing else is settable: each strategy's parent and what it keeps together are fixed, and shown in the plan. A strategy name that is unknown, a key that is not one of these three, or a value outside its limits, stops the run at the start with a message naming the line. `ragnaroq convert` takes `--strategy NAME`. The override that applies to a file is part of that file's chunking key (section 6), so changing it remakes that file's chunks only.
 
 ### 4. The plan files
 
@@ -208,7 +210,8 @@ The 0.3 rules all hold. Every chunk now also has these flat metadata keys, `""` 
 Kinds of chunk: `text`, `table`, `image` (as 0.3), and new `definition` (a definition alone, with its term in `terms`) and `summary` (a table's summary). The metadata keys are the same on every chunk, as in 0.3.
 
 **Splitting.**
-- **Sentences** end at `.`, `?`, `!` or `;` followed by a space and a capital, a digit or an opening bracket or quote, or at a line end; not after a known abbreviation (`No.`, `Nos.`, `Rs.`, `Sec.`, `S.`, `Art.`, `Cl.`, `e.g.`, `i.e.`, `viz.`, `etc.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `vs.`, `Ltd.`, `Co.`, `Inc.`, `Jan.`…`Dec.`), an initial (`A.`), or inside a number (`1.5`, `10(46).`).
+- **A paragraph's lines are joined first.** A PDF line is one printed line, so the lines of a PDF paragraph are joined with a space before sentences are found; a printed line's end is never a sentence end. A line that starts with a list marker (`•`, `◦`, `▪`, `-`, `*`, `–`, or a numbering form) starts a new sentence.
+- **Sentences** end at `.`, `?`, `!` or `;` followed by a space and a capital, a digit or an opening bracket or quote, or at the paragraph's end; not after a known abbreviation (`No.`, `Nos.`, `Rs.`, `Sec.`, `S.`, `Art.`, `Cl.`, `e.g.`, `i.e.`, `viz.`, `etc.`, `Mr.`, `Mrs.`, `Ms.`, `Dr.`, `St.`, `vs.`, `Ltd.`, `Co.`, `Inc.`, `Jan.`…`Dec.`), an initial (`A.`), or inside a number (`1.5`, `10(46).`).
 - A chunk split from a unit repeats the unit's last sentence of the previous piece at its start (one sentence of overlap).
 - A single sentence over `chunk_chars` is split at the last space before the limit, and the chunk carries `chunk.long-sentence` in `rules`.
 - A sentence holding a reference is never split, even when it makes the chunk run over `chunk_chars` by up to half; past that, it is split as a long sentence.
@@ -222,7 +225,10 @@ Kinds of chunk: `text`, `table`, `image` (as 0.3), and new `definition` (a defin
 ### 6. The folder and incremental runs
 
 - A file's metadata, plan entry and chunks are made from its `document.json` by a pure function of: the document, the chunking settings (`chunk_chars`), the override that applies to it, and `CHUNKING_VERSION` (a constant raised whenever a rule changes). That key is stored per file in the manifest.
-- A run reads a file again only when its reading key changes, as in 0.3. When only the chunking key changes, its metadata and chunks are made again from the stored `document.json`, and `changes.json` lists the chunks that changed.
+- **The reading key no longer holds the package version or `chunk_chars`.** In 0.3 it held `ragnaroq`'s version and `Config.reading_sha256()`, which includes `chunk_chars`, so any upgrade or any change of chunk size read every file again, OCR included. In 0.4 it holds a reading version per format instead (each reader's, and one for the PDF pipeline), raised only when that format's reading changes, and `chunk_chars` moves to the chunking key.
+- A run reads a file again only when its reading key changes. When only the chunking key changes, its metadata and chunks are made again from the stored `document.json`, and `changes.json` lists the chunks that changed.
+- **Heading levels for PDFs are worked out when chunking,** from the stored lines' `font_size`, so a PDF read by 0.3 gains levels without being read again. The readers of the other formats set `Line.level` while reading, so their reading versions rise in 0.4.
+- **Upgrading from 0.3 reads no PDF again** when its settings are unchanged: 0.4 recognises the key 0.3 stored for the same settings, and keeps the reading. Files of the other formats are read again once, which is quick because they need no OCR.
 - `files` mentions and the folder's links and glossary are made at the end of each run from every file's entry; they are cheap and always made again.
 - `metadata.json`, `chunking-plan.json` and `chunking-plan.md` are written with the run's other files, before `manifest.json`, as 0.3 writes `chunks.jsonl` and `changes.json`.
 - A failed or skipped file has no metadata entry; the catalogue lists it with its status.
@@ -232,18 +238,18 @@ Kinds of chunk: `text`, `table`, `image` (as 0.3), and new `definition` (a defin
 **`ragnaroq evaluate --chunking QUESTIONS FOLDER`.** A questions file is JSON Lines:
 
 ```json
-{ "question": "Until when can the deduction be claimed?", "path": "notice.pdf", "answer": ["p2-l14", "p2-l15"] }
+{ "question": "Until when can the deduction be claimed?", "path": "notice.pdf", "answer": "may be claimed until 31st March, 2027" }
 ```
 
-`answer` names the lines whose text answers the question. For each question, the chunks of the whole folder are ranked by BM25 (k1 1.2, b 0.75; lower-cased words, digits kept, no stemming) over `embedding_text`; a chunk is a hit when it holds every answer line, or, for an answer longer than one chunk, its first line. The report gives, for 0.4's chunks and 0.3's on the same documents: hits in the top 1, 3 and 10, the mean reciprocal rank, the mean chunk length, and the number of chunks. 0.3's chunker is kept inside the evaluation code as the baseline, not as a user option.
+`answer` is a short passage copied from the document, a phrase or one sentence, that answers the question. For each question, the chunks of the whole folder are ranked by BM25 (k1 1.2, b 0.75; lower-cased words, digits kept, no stemming) over `embedding_text`; a chunk is a hit when it comes from `path` and its `text` holds the passage, whitespace aside. The same test applies to 0.3's chunks and 0.4's, so a chunk that holds a whole long paragraph and a piece that holds only the right sentence are judged alike. The report gives, for 0.4's chunks and 0.3's on the same documents: hits in the top 1, 3 and 10, the mean reciprocal rank, the mean chunk length, and the number of chunks. 0.3's chunker is kept inside the evaluation code as the baseline, not as a user option.
 
 **The questions set**, `references/chunking/`:
 
-- **Generated documents**, made by a script in the repo like the demo folder: a notice with numbered paragraphs, provisos and explanations; a FAQ in Word; a sectioned manual in Markdown and HTML; a contract with definitions; a slide deck; a sheet; a JSON data file; a long plain essay. Their questions are written by hand with the script.
-- **Public documents**, fetched by `ragnaroq reference chunking` and pinned by SHA-256, as the IRS reference set is: public-domain US government documents (an IRS publication with sections, an IRS FAQ page in HTML, a section of the US Code with numbered subsections). At least 60 questions in all, written by hand.
+- **Tuning half: generated documents**, made by a script in the repo like the demo folder: a notice with numbered paragraphs, provisos and explanations; a FAQ in Word; a sectioned manual in Markdown and HTML; a contract with definitions; a slide deck; a sheet; a JSON data file; a long plain essay. Their questions are written by hand with the script. The thresholds of section 3 are tuned on this half only.
+- **Held-out half: public documents**, fetched by `ragnaroq reference chunking` and pinned by SHA-256, as the IRS reference set is: public-domain US government documents (an IRS publication with sections, an IRS FAQ page in HTML, a section of the US Code with numbered subsections). At least 40 questions, written by hand and committed before any strategy code exists, so they cannot be fitted to the chunker; the 0.2 gate used a held-out set the same way. The builder writes them; the owner may check them.
 
 **Gates for the release:**
-- On the questions set, 0.4's mean reciprocal rank is at least 0.3's, and its top-3 hits at least 0.3's.
+- On the held-out half, scored once, 0.4's mean reciprocal rank is at least 0.3's, and its top-3 hits at least 0.3's.
 - On every document in the demo folder, the generated set and the public set: no chunk cuts a word; no chunk cuts a sentence except as section 5 allows; no proviso or explanation is in a different chunk from the start of its paragraph unless the paragraph was split, and then its piece carries the paragraph's number; no question is apart from its answer.
 - Every metadata value names lines that exist and whose text holds the value's `text`.
 - Two runs on the same folder give identical `metadata.json`, plan files and chunks.
@@ -270,5 +276,10 @@ These were not discussed with the owner; each is the writer's call, for checking
 - Numeric dates are normalised only when unambiguous; `05/01/2026` keeps `value` `""`.
 - Chunk filters are flat comma- or semicolon-separated strings plus integer date bounds, because 0.3's chunks hold only flat scalar values.
 - A reference sentence may run a chunk over by half before it is split.
-- The questions set mixes generated documents with fetched public-domain US government documents; no Indian government documents, whose redistribution is not settled.
+- The questions set mixes generated documents (for tuning) with fetched public-domain US government documents (held out, questions committed before the strategies are written); no Indian government documents, whose redistribution is not settled. The builder writes the questions.
 - 0.3's chunker survives only inside `evaluate`, as the baseline.
+- A question's answer is a short passage of text, not line ids, so split paragraphs and whole paragraphs are scored alike.
+- The reading key drops the package version and `chunk_chars`; upgrading from 0.3 keeps PDF readings, and PDF heading levels come from stored font sizes.
+- An array of same-key JSON objects is cut as a table; PDF tables stay one chunk each, with a summary.
+- Overrides may set only `strategy`, `max_chars` and `min_chars`.
+- Questions are found without bold; a printed PDF line's end is never a sentence end.
