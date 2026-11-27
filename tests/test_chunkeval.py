@@ -1,3 +1,4 @@
+import functools
 import subprocess
 import sys
 from pathlib import Path
@@ -89,3 +90,19 @@ def test_the_chunking_evaluation_runs_as_a_module(tmp_path):
     )
     assert run.returncode == 0, run.stderr
     assert (out / "chunking.md").exists()
+
+
+PUBLIC = ROOT / "references" / "chunking" / "public"
+
+
+@functools.cache
+def read_public(name):
+    return read_bytes((PUBLIC / name).read_bytes(), name, Config(), engines=[], base=PUBLIC).document
+
+
+def test_every_held_out_answer_is_in_its_document_once():
+    questions = load_questions(PUBLIC / "../public.questions.jsonl")
+    assert len(questions) >= 40
+    for q in questions:
+        text = " ".join(" ".join(line.text for line in read_public(q.path).lines()).split())
+        assert text.count(" ".join(q.answer.split())) == 1, q.question
