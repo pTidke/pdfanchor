@@ -306,6 +306,7 @@ def test_needs_review_truth_table():
         "tracked changes": (_with_flag("docx", "docx.tracked-changes"), True),
         "encoding": (_with_flag("csv", "encoding.guessed"), True),
         "pptx smartart": (_with_flag("pptx", "pptx.smartart", "page"), True),
+        "docx smartart": (_with_flag("docx", "docx.smartart", "page"), True),
         "xlsx cell limit": (_with_flag("xlsx", "xlsx.cell-limit", "page"), True),
         # Flags that only inform need no person.
         "tiny images": (_with_flag("docx", "image.tiny-skipped"), False),

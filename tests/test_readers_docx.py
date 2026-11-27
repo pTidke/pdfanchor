@@ -594,3 +594,86 @@ def test_a_picture_in_a_footnote_is_read_from_the_notes_part():
     result = read_docx(buffer.getvalue())
     (figure,) = result.document.pages[0].figures
     assert figure.anchor == DocxAnchor(note="footnote 1") and result.images[figure.id] == png()
+
+
+# --- final review: SmartArt and grouped pictures lost content without a flag ---------------------
+
+WPG = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+DGM = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+
+
+def _pic(number, alt=None, rid="rId9"):
+    attrs = f' descr="{alt}"' if alt else ""
+    return (
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="{number}" name="Picture {number}"{attrs}/><pic:cNvPicPr/>'
+        f'</pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/></pic:blipFill><pic:spPr><a:xfrm>'
+        '<a:off x="0" y="0"/><a:ext cx="952500" cy="476250"/></a:xfrm></pic:spPr></pic:pic>'
+    )
+
+
+def _drawing(uri, inner, alt=None):
+    attrs = f' descr="{alt}"' if alt else ""
+    return (
+        '<w:p><w:r><w:drawing><wp:inline><wp:extent cx="2857500" cy="476250"/>'
+        f'<wp:docPr id="3" name="Group 3"{attrs}/><a:graphic><a:graphicData uri="{uri}">'
+        f"{inner}</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+    )
+
+
+def _group(*children, alt=None):
+    inner = f'<wpg:wgp xmlns:wpg="{WPG}"><wpg:cNvGrpSpPr/><wpg:grpSpPr/>{"".join(children)}</wpg:wgp>'
+    return _drawing(WPG, inner, alt)
+
+
+def test_each_picture_in_a_group_is_a_figure_with_its_own_alt_text():
+    body = p("Our partners") + _group(_pic(4, "Bank A logo"), _pic(5, "Bank B logo"), _pic(6, "Bank C logo"))
+    result = read_docx(docx_bytes(body, media=True))
+    found = result.document.pages[0].figures
+    assert [(f.description, f.description_source) for f in found] == [
+        ("Bank A logo", "alt"),
+        ("Bank B logo", "alt"),
+        ("Bank C logo", "alt"),
+    ]
+    assert [f.anchor for f in found] == [DocxAnchor(paragraph=2)] * 3
+    assert all(result.images[f.id] == png() for f in found)
+    assert result.document.pages[0].flags == []
+
+
+def test_a_picture_in_a_group_without_alt_text_takes_the_groups():
+    body = p("Partners") + _group(_pic(4), _pic(5, "Image 5"), _pic(6, "Bank C logo"), alt="Partner banks")
+    found = read_docx(docx_bytes(body, media=True)).document.pages[0].figures
+    assert [f.description for f in found] == ["Partner banks", "Partner banks", "Bank C logo"]
+
+
+def test_a_group_holding_a_chart_keeps_its_pictures_and_flags_the_chart():
+    chart = (
+        '<wpg:graphicFrame><wpg:cNvPr id="7" name="Chart 7"/><wpg:cNvFrPr/><wpg:xfrm/><a:graphic>'
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart r:id="rId7"/>'
+        "</a:graphicData></a:graphic></wpg:graphicFrame>"
+    )
+    result = read_docx(docx_bytes(p("Figures") + _group(_pic(4, "Bank A logo"), chart), media=True))
+    page = result.document.pages[0]
+    assert [f.description for f in page.figures] == ["Bank A logo"]
+    assert [f.rule for f in page.flags] == ["chart.not-read"]
+
+
+def test_smartart_is_flagged_not_read():
+    smartart = _drawing(
+        DGM, f'<dgm:relIds xmlns:dgm="{DGM}" r:dm="rId20" r:lo="rId21" r:qs="rId22" r:cs="rId23"/>'
+    )
+    result = read_docx(docx_bytes(p("The process") + smartart))
+    page = result.document.pages[0]
+    assert [(f.rule, f.message) for f in page.flags] == [
+        ("docx.smartart", "A SmartArt graphic at ¶2 is not read; its text is not in the text.")
+    ]
+    assert page.figures == []
+
+
+def test_a_picture_in_a_text_box_inside_a_shape_is_one_figure():
+    shape = (
+        f'<wps:wsp><wps:cNvPr id="8" name="Text Box 8"/><wps:spPr/><wps:txbx>{textbox(picture(alt="Seal"))}'
+        "</wps:txbx></wps:wsp>"
+    )
+    body = p("Stamped") + _drawing("http://schemas.microsoft.com/office/word/2010/wordprocessingShape", shape)
+    found = read_docx(docx_bytes(body, media=True)).document.pages[0].figures
+    assert [f.description for f in found] == ["Seal"]

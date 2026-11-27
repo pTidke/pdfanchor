@@ -28,6 +28,12 @@ _EMU_PER_PIXEL = 9525
 _PICTURES = (_W + "drawing", _W + "pict", _W + "object")
 # Pictures under these are read elsewhere: with a text box's paragraphs, never as a fallback copy.
 _ELSEWHERE = (_W + "txbxContent", _MC + "Fallback")
+# Drawings whose content is in another part, by the last word of `a:graphicData/@uri`.
+_NOT_READ = {
+    "chart": ("chart.not-read", "chart", "its numbers are not in the text"),
+    "chartex": ("chart.not-read", "chart", "its numbers are not in the text"),
+    "diagram": ("docx.smartart", "SmartArt graphic", "its text is not in the text"),
+}
 _LENGTH = re.compile(r"(width|height)\s*:\s*([\d.]+)\s*(pt|px|in|cm|mm)?", re.I)
 _PIXELS = {"pt": 96 / 72, "px": 1, "in": 96, "cm": 96 / 2.54, "mm": 96 / 25.4}
 
@@ -51,6 +57,20 @@ def _inside(node, root, tags) -> bool:
         if ancestor.tag in tags:
             return True
     return False
+
+
+def _owner(blip, drawing):
+    """The picture or shape a blip fills, as its nearest ancestor with its own `cNvPr`
+    (`pic:nvPicPr/pic:cNvPr`, `wps:cNvPr`), and that alt text's candidates (@descr, @title)."""
+    for ancestor in blip.iterancestors():
+        if ancestor is drawing:
+            break
+        props = ancestor.find("{*}cNvPr")
+        if props is None:
+            props = ancestor.find("{*}*/{*}cNvPr")
+        if props is not None:
+            return ancestor, (props.get("descr"), props.get("title"))
+    return None, ()
 
 
 def _math(paragraph):
@@ -178,19 +198,31 @@ class _Reader:
                         self.vml(data, anchor, caption)
 
     def drawing(self, drawing, anchor, caption):
-        if drawing.find(f".//{_A}graphicData/{_C}chart") is not None:
-            where = cite(anchor)
-            self.flag("chart.not-read", f"A chart at {where} is not read; its numbers are not in the text.")
-            return
-        blip = drawing.find(f".//{_A}blip")
-        if blip is None:
-            return  # a shape: its text, if any, is read from its text box
-        props = drawing.find(f".//{_WP}docPr")
-        alt = _build.alt_text(props.get("descr"), props.get("title")) if props is not None else ""
-        extent = drawing.find(f".//{_WP}extent")
-        width = int(extent.get("cx", 0)) // _EMU_PER_PIXEL if extent is not None else 0
-        height = int(extent.get("cy", 0)) // _EMU_PER_PIXEL if extent is not None else 0
-        self.figure(anchor, caption, alt, blip.get(_R + "embed"), blip.get(_R + "link"), (width, height))
+        """Every picture in a drawing is a figure: one picture, or each picture of a group or a
+        canvas. Charts and SmartArt are flagged and not read, wherever they sit. A shape's text,
+        if any, is read from its text box."""
+        for data in drawing.iter(_A + "graphicData"):
+            if _inside(data, drawing, _ELSEWHERE):
+                continue  # read with the text box's paragraphs
+            kind = (
+                "chart" if data.find(_C + "chart") is not None else (data.get("uri") or "").rsplit("/", 1)[-1]
+            )
+            if kind in _NOT_READ:
+                rule, label, lost = _NOT_READ[kind]
+                self.flag(rule, f"A {label} at {cite(anchor)} is not read; {lost}.")
+        blips = [blip for blip in drawing.iter(_A + "blip") if not _inside(blip, drawing, _ELSEWHERE)]
+        props = drawing.find(f"*/{_WP}docPr")
+        whole = (props.get("descr"), props.get("title")) if props is not None else ()
+        for blip in blips:
+            owner, names = _owner(blip, drawing)
+            if len(blips) == 1:  # the drawing's alt text and size are the picture's own
+                alt, size = _build.alt_text(*whole, *names), drawing.find(f"*/{_WP}extent")
+            else:  # a picture in a group: its own, else the group's alt text, as a caption is
+                alt = _build.alt_text(*names, *whole)
+                size = owner.find(f"*/{_A}xfrm/{_A}ext") if owner is not None else None
+            width = int(size.get("cx", 0)) // _EMU_PER_PIXEL if size is not None else 0
+            height = int(size.get("cy", 0)) // _EMU_PER_PIXEL if size is not None else 0
+            self.figure(anchor, caption, alt, blip.get(_R + "embed"), blip.get(_R + "link"), (width, height))
 
     def vml(self, data, anchor, caption):
         """A VML picture: `v:imagedata` names the image; the shape around it has the alt text."""
