@@ -413,7 +413,10 @@ def _open_found(found: Found, root: int, real_root: str) -> tuple[int | None, st
         return (*_checked(fd), found.parts)
     if not stat.S_ISLNK(info.st_mode):  # a fifo, a socket or a device is never opened
         return None, "not a regular file", ()
-    resolved = os.path.realpath(os.path.join(real_root, *found.parts))
+    try:
+        resolved = os.path.realpath(os.path.join(real_root, *found.parts))
+    except OSError:  # a name on the way changed while it was resolved (EINVAL on Python 3.12)
+        return None, "unreadable", ()
     try:
         below = os.path.relpath(resolved, real_root).split(os.sep)
     except ValueError:

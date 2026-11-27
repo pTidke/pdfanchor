@@ -879,6 +879,28 @@ def test_a_folder_swapped_with_a_link_while_it_is_read_never_gets_outside_text_i
     assert leaked == 0
 
 
+def test_a_link_whose_path_changes_while_it_is_resolved_is_skipped_and_the_run_goes_on(tmp_path, monkeypatch):
+    """On Python 3.12, realpath raises EINVAL when a name it saw as a link is a folder by the time it
+    reads the link (the race above, met in CI). That error stopped the whole run."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "real.md").write_text("# Real\n\nwords\n", encoding="utf8")
+    (root / "alias.md").symlink_to("real.md")
+    real = os.path.realpath
+
+    def racing(path, *args, **kwargs):
+        if str(path).endswith("alias.md"):
+            raise OSError(22, "Invalid argument", str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(folder.os.path, "realpath", racing)
+    report = run(root)
+    monkeypatch.undo()
+    found = entries(report)
+    assert (found["alias.md"].status, found["alias.md"].skipped) == ("skipped", "unreadable")
+    assert found["real.md"].status == "ok"
+
+
 def test_a_link_that_is_swapped_for_a_file_outside_after_the_check_is_not_read(tmp_path, monkeypatch):
     root, outside = tmp_path / "root", tmp_path / "outside"
     root.mkdir()
