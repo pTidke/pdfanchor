@@ -1,24 +1,26 @@
-{"question": "Who files the return for a dependent child who can't file because of age?", "path": "p501.pdf", "answer": "or other legally responsible person must file it"}
-{"question": "What counts as earned income for the filing requirements besides wages?", "path": "p501.pdf", "answer": "also includes any part of a taxable scholarship."}
-{"question": "How much is the special allowance for passive rental real estate losses if I file separately?", "path": "p501.pdf", "answer": "$12,500 maximum special allowance for losses"}
-{"question": "Which states are community property states?", "path": "p501.pdf", "answer": "property states include Arizona, California,"}
-{"question": "Can I claim the education credits if I am married filing separately?", "path": "p501.pdf", "answer": "You can’t take the education credits"}
-{"question": "How many tests must a child meet to be my qualifying child?", "path": "p501.pdf", "answer": "Five tests must be met for a child to be your"}
-{"question": "Can I claim a stillborn child as a dependent?", "path": "p501.pdf", "answer": "Stillborn child. You can’t claim a stillborn"}
-{"question": "How is support provided as lodging measured?", "path": "p501.pdf", "answer": "the fair rental value of the room, apartment,"}
-{"question": "Which costs do I leave out when working out the cost of keeping up a home?", "path": "p501.pdf", "answer": "cost of clothing, education, medical treatment,"}
-{"question": "Can I file as head of household if my qualifying person is my parent?", "path": "p501.pdf", "answer": "person is your parent, you may be eligible to file"}
-{"question": "If my spouse died in 2026 before filing, can I still file jointly for 2025?", "path": "p501.pdf", "answer": "If your spouse died in 2026 before filing a"}
-{"question": "Which year does the night of December 31 count in for custody?", "path": "p501.pdf", "answer": "treated as part of the year in which it begins."}
-{"question": "Can I claim a foreign exchange student as a dependent?", "path": "p501.pdf", "answer": "as dependents. However, if you provided a"}
-{"question": "What is the Taxpayer Advocate Service?", "path": "p501.pdf", "answer": "The Taxpayer Advocate Service (TAS) is an in-"}
-{"question": "How many basic rights does the Taxpayer Bill of Rights describe?", "path": "p501.pdf", "answer": "The Taxpayer Bill of Rights describes ten basic"}
-{"question": "Where can I report systemic problems to the Taxpayer Advocate Service?", "path": "p501.pdf", "answer": "You can report systemic issues at"}
-{"question": "How much is the enhanced deduction for seniors?", "path": "p501.pdf", "answer": "niors. The maximum amount of the deduction is $6,000 ($12,000 if married filing jointly and both"}
-{"question": "What is a U.S. national?", "path": "p501.pdf", "answer": "A U.S. national is an individual"}
-{"question": "Where do I go to get tax forms and publications?", "path": "p501.pdf", "answer": "Getting tax forms and publications. Go to"}
-{"question": "How can I change from standard to itemized deductions after filing?", "path": "p501.pdf", "answer": "return by filing Form 1040-X."}
-{"question": "What is the minimum gross income at which a single filer under 65 must file?", "path": "p501.pdf", "answer": "single under 65 $15,750"}
+{"question": "What counts as gross income for deciding whether I must file?", "path": "p501.html", "answer": "Gross income is all income you receive in the form of money, goods, property, and services that isn’t exempt from tax."}
+{"question": "Does a Puerto Rico resident include Puerto Rico income in U.S. gross income?", "path": "p501.html", "answer": "If you are a bona fide resident of Puerto Rico for the whole year, your U.S. gross income doesn’t include income from sources within Puerto Rico."}
+{"question": "What if my marriage is annulled by a court decree?", "path": "p501.html", "answer": "If you obtain a court decree of annulment, which holds that no valid marriage ever existed, you are considered unmarried even if you filed joint returns for earlier years."}
+{"question": "Can I file jointly for 2025 if my spouse died in 2026 before filing?", "path": "p501.html", "answer": "If your spouse died in 2026 before filing a 2025 return, you can choose married filing jointly as your filing status on your 2025 return."}
+{"question": "How do I request innocent spouse relief from a joint return?", "path": "p501.html", "answer": "You must file Form 8857, Request for Innocent Spouse Relief, to request relief from joint responsibility."}
+{"question": "When might married filing separately be a good choice?", "path": "p501.html", "answer": "This filing status may benefit you if you want to be responsible only for your own tax or if it results in less tax than filing a joint return."}
+{"question": "Can I claim the earned income credit if I file separately?", "path": "p501.html", "answer": "You can’t take the earned income credit unless you have a qualifying child and meet certain other requirements."}
+{"question": "How do I select head of household filing status on the form?", "path": "p501.html", "answer": "Select this filing status by checking the “Head of household” box on the Filing Status line near the top of Form 1040 or 1040-SR."}
+{"question": "When am I considered married if I choose to treat my nonresident alien spouse as a resident?", "path": "p501.html", "answer": "You are considered married if you choose to treat your spouse as a resident alien."}
+{"question": "Who can I claim as a dependent in terms of citizenship?", "path": "p501.html", "answer": "You can’t claim a person as a dependent unless that person is a U.S. citizen, a U.S. resident alien, a U.S. national, or a resident of Canada or Mexico.1"}
+{"question": "Who is the qualifying child of divorced or separated parents?", "path": "p501.html", "answer": "In most cases, because of the residency test, a child of divorced or separated parents is the qualifying child of the custodial parent."}
+{"question": "What must a noncustodial parent attach if the divorce decree took effect after 2008?", "path": "p501.html", "answer": "The noncustodial parent can’t attach pages from the decree or agreement instead of Form 8332 if the decree or agreement went into effect after 2008."}
+{"question": "Who treats the child as qualifying if no parent claims the child?", "path": "p501.html", "answer": "If no parent can claim the child as a qualifying child, the child is treated as the qualifying child of the person who had the highest AGI for the year."}
+{"question": "Can I claim a dependent who died during the year?", "path": "p501.html", "answer": "If your dependent died during the year and you otherwise qualify to claim that person as a dependent, you can still claim that person as a dependent."}
+{"question": "How are household expenses divided when figuring support?", "path": "p501.html", "answer": "Expenses not directly related to any one member of a household, such as the cost of food for the household, must be divided among the members of the household."}
+{"question": "Do Medicare benefits count as support?", "path": "p501.html", "answer": "Medical insurance benefits, including basic and supplementary Medicare benefits, aren’t part of support."}
+{"question": "Are alimony payments treated as support of a dependent?", "path": "p501.html", "answer": "Payments to a spouse that are alimony or separate maintenance payments, or similar payments from an estate or trust, aren’t treated as a payment for the support of a dependent."}
+{"question": "What must a dependent alien without an SSN do?", "path": "p501.html", "answer": "If your dependent is a resident or nonresident alien who doesn’t have and isn’t eligible to get an SSN, your dependent must apply for an ITIN."}
+{"question": "What is the standard deduction limit for someone claimed as a dependent?", "path": "p501.html", "answer": "The individual’s earned income for the year plus $450 (but not more than the regular standard deduction amount, generally $15,750)."}
+{"question": "How do I decide between the standard deduction and itemizing?", "path": "p501.html", "answer": "You should first figure your itemized deductions and compare that amount to your standard deduction to make sure you are using the method that gives you the greater benefit."}
+{"question": "What can I do with an IRS online account?", "path": "p501.html", "answer": "With an online account, you can access a variety of information to help you during the filing season."}
+{"question": "How long can an amended return take to show up in the IRS system?", "path": "p501.html", "answer": "It can take up to 3 weeks from the date you filed your amended return for it to show up in our system, and processing it can take up to 16 weeks"}
+{"question": "Where can I get help with general tax topics from the Taxpayer Advocate?", "path": "p501.html", "answer": "To get help any time with general tax topics, visit www.TaxpayerAdvocate.IRS.gov."}
 {"question": "What is the 2025 standard deduction for married couples filing jointly?", "path": "rp-24-40.pdf", "answer": "Married Individuals Filing Joint Returns and Surviving Spouses (§ 1(j)(2)(A)) $30,000"}
 {"question": "What is the 2025 standard deduction for heads of household?", "path": "rp-24-40.pdf", "answer": "Heads of Households (§ 1(j)(2)(B)) $22,500"}
 {"question": "How much extra standard deduction do the aged or blind get for 2025?", "path": "rp-24-40.pdf", "answer": "amount under § 63(f) for the aged or the blind is $1,600."}
