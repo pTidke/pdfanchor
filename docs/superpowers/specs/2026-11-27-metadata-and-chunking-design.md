@@ -1,6 +1,6 @@
 # 0.4: Metadata and chunking strategies, by rule
 
-Status: draft, 2026-11-27. Approach B.
+Status: draft for the owner's approval, 2026-11-27. Approach B. Builder check done; the chunk filter keys are lists of strings (owner's choice).
 
 ## Why
 
@@ -46,7 +46,7 @@ These would make 0.4 a failure even if it ran:
 
 - Python 3.12 or newer. No new dependency in the core: the rules are plain Python and regular expressions, and `ragnaroq.toml` is read with the standard library's `tomllib`.
 - Offline and deterministic, as the rest of the core.
-- Chunks keep the rules of 0.3: a UUID `id`, flat metadata with no nulls and no nesting, the same keys on every chunk, `anchors_json` capped at 20,000 bytes, metadata well under Pinecone's 40 KB.
+- Chunks keep the rules of 0.3: a UUID `id`, flat metadata with no nulls and no nesting, the same keys on every chunk, `anchors_json` capped at 20,000 bytes, metadata well under Pinecone's 40 KB. One rule changes, by the owner's choice: the four filter keys of section 5 are lists of strings, so stores can filter on them.
 - `ragnaroq index` stays POSIX-only, as in 0.3. `ragnaroq convert` works anywhere.
 - `chunk_chars` stays the one size setting, 1,200 by default. `docs/chunking.md`'s 2,000 predates 0.3, which chose 1,200 for the stores' limits; `chunking.md` is corrected.
 
@@ -191,7 +191,7 @@ An override sets `strategy`, and may set `max_chars` (200 to 4,000; default `chu
 
 ### 5. Chunks (format 0.4.0)
 
-The 0.3 rules all hold. Every chunk now also has these flat metadata keys, `""` or `0` when empty:
+The 0.3 rules all hold, but one. Every chunk now also has these metadata keys; a scalar key is `""` or `0` when empty:
 
 | Key | Holds |
 | --- | --- |
@@ -199,13 +199,15 @@ The 0.3 rules all hold. Every chunk now also has these flat metadata keys, `""` 
 | `parent_id` | A UUID of the chunk's parent (section, numbered paragraph, table, slide, record parent), made like a chunk id from the file and the parent's anchor; every chunk with the same parent has it |
 | `parent_cite` | The parent's citation |
 | `heading_path` | The heading path, `Part II › Section 4` |
-| `dates` | ISO dates found in the chunk, comma-separated |
+| `dates` | List of the ISO dates found in the chunk, in order, without repeats |
 | `date_first`, `date_last` | The first and last of them as `YYYYMMDD` integers, for range filters |
-| `periods` | Normalised periods, comma-separated |
-| `references` | Normalised references, separated by ` ; ` |
-| `terms` | Defined terms the chunk uses, ` ; `-separated |
+| `periods` | List of the normalised periods |
+| `references` | List of the normalised references |
+| `terms` | List of the defined terms the chunk uses |
 | `scripts` | The chunk's script |
 | `part_of` | `n/m` when a unit was split into m pieces |
+
+**The list keys** (`dates`, `periods`, `references`, `terms`) are the one change to 0.3's rule that every metadata value is a scalar, chosen by the owner so that stores can filter on them: Pinecone with `$in`, Chroma with `$contains` (lists since February 2026), Qdrant and pgvector natively. Each is a list of strings, never empty: Chroma refuses an empty list, so a chunk with none holds `[""]`, and every chunk keeps the same keys. Each list holds at most 50 values. `docs/vector-databases.md` names the Chroma release that first takes lists, and shows a filter on each store. The CI test of chunk shape checks: scalars or non-empty lists of strings only, no nulls, the same keys everywhere.
 
 Kinds of chunk: `text`, `table`, `image` (as 0.3), and new `definition` (a definition alone, with its term in `terms`) and `summary` (a table's summary). The metadata keys are the same on every chunk, as in 0.3.
 
@@ -274,7 +276,7 @@ These were not discussed with the owner; each is the writer's call, for checking
 - `chunk_chars` stays 1,200 (not `chunking.md`'s 2,000); doubtful lines stay in chunks (not left out by default).
 - `kind` uses its own small vocabulary (`numbered`, `sectioned`, …), separate from the document's own type, which LangExtract adds later.
 - Numeric dates are normalised only when unambiguous; `05/01/2026` keeps `value` `""`.
-- Chunk filters are flat comma- or semicolon-separated strings plus integer date bounds, because 0.3's chunks hold only flat scalar values.
+- An empty filter list is written `[""]`, and a list holds at most 50 values.
 - A reference sentence may run a chunk over by half before it is split.
 - The questions set mixes generated documents (for tuning) with fetched public-domain US government documents (held out, questions committed before the strategies are written); no Indian government documents, whose redistribution is not settled. The builder writes the questions.
 - 0.3's chunker survives only inside `evaluate`, as the baseline.
