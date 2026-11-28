@@ -247,6 +247,69 @@ def test_a_piece_under_min_chars_joins_its_neighbour_under_the_same_parent():
     assert [c["text"] for c in stays][0] == "Tiny."
 
 
+def assert_sizes(chunks, max_chars=1200, min_chars=200):
+    """No chunk over max_chars; none under min_chars but the document's last."""
+    sizes = [c["metadata"]["chars"] for c in chunks]
+    assert all(size <= max_chars for size in sizes), sizes
+    assert all(size >= min_chars for size in sizes[:-1]), sizes
+
+
+def assert_whole_sentences(chunks, text):
+    """Every piece is made of the text's sentences, whole: no word or sentence is cut."""
+    whole = [s for paragraph in text.split("\n\n") for s in split_sentences(paragraph)]
+    for chunk in chunks:
+        for paragraph in chunk["text"].split("\n\n"):
+            assert all(s in whole for s in split_sentences(paragraph)), paragraph
+
+
+def rate_sentences(count):
+    return " ".join(
+        f"Stall {i} pays the rate set for the pitches in row {i} of the market." for i in range(count)
+    )
+
+
+def test_a_short_piece_before_a_split_paragraph_joins_its_first_piece():
+    """R17 (a): the short paragraph takes the room the first piece of the next one leaves."""
+    text = "Short line.\n\n" + "A long sentence about rates. " * 60
+    chunks = chunks_of_md(text, "sentences")
+    assert_sizes(chunks)
+    assert_whole_sentences(chunks, text)
+    assert chunks[0]["text"].startswith("Short line.\n\nA long sentence about rates. A long")
+    assert [c["metadata"]["part_of"] for c in chunks] == ["1/2", "2/2"]
+    assert split_sentences(chunks[1]["text"])[0] == split_sentences(chunks[0]["text"].split("\n\n")[1])[-1]
+
+    # a paragraph that would fill a chunk alone is split too, when no piece is left small
+    fills = rate_sentences(17) + " The last rule is the same for every row of the whole market."
+    assert len("Short line.\n\n" + fills) > 1200 >= len(fills)
+    text = "Short line.\n\n" + fills
+    chunks = chunks_of_md(text, "sentences")
+    assert len(chunks) == 2 and chunks[0]["text"].startswith("Short line.\n\nStall 0 ")
+    assert_sizes(chunks)
+    assert_whole_sentences(chunks, text)
+
+
+def test_the_last_piece_of_a_split_paragraph_takes_sentences_from_the_one_before():
+    """R17 (b): the boundary moves back by whole sentences; the overlap follows it."""
+    paragraph = rate_sentences(18)
+    greedy = chunks_of_md(paragraph, "sentences", min_chars=0)
+    assert [c["metadata"]["chars"] < 200 for c in greedy] == [False, True]  # what packing alone gives
+    chunks = chunks_of_md(paragraph, "sentences")
+    assert_sizes(chunks)
+    assert_split_with_one_repeated(chunks, paragraph, 1200)
+    assert all(c["metadata"]["chars"] >= 200 for c in chunks)
+
+
+def test_a_small_piece_stays_when_no_rebalancing_fits_it():
+    """R17 (c): a tiny paragraph between two one-sentence paragraphs that each fill a chunk."""
+    filling = "The " + "long " * 238 + "end."
+    assert len(filling) == 1198  # with "Tiny." it would be 1,205
+    text = f"{filling}\n\nTiny.\n\n{filling}"
+    chunks = chunks_of_md(text, "sentences")
+    assert [c["text"] for c in chunks] == [filling, "Tiny.", filling]
+    assert all(c["metadata"]["chars"] <= 1200 for c in chunks)
+    assert all("chunk.long-sentence" not in c["metadata"]["rules"] for c in chunks)
+
+
 def test_tables_and_images_are_their_own_chunks_in_sentences():
     text = "Before the table. " * 5 + "\n\n| Section | Rate |\n|---|---|\n| 80C | 5% |\n\n" + "After it. " * 5
     chunks = chunks_of_md(text, "sentences", min_chars=0)
