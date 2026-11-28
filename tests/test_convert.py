@@ -158,10 +158,18 @@ def test_markdown_carries_structure_and_status_and_the_chunk_file_matches(native
     assert rows == chunks
 
 
-def test_small_chunk_size_splits_paragraphs_but_never_a_paragraph(native_pdf):
+def test_small_chunk_size_splits_a_paragraph_between_its_sentences(native_pdf):
+    from ragnaroq.semantic.describe import describe
+    from ragnaroq.semantic.overrides import Override
+    from ragnaroq.semantic.rules import choose
+
     config = replace(TRUSTING, chunk_chars=100)
-    texts = [c["text"] for c in to_chunks(convert(native_pdf, config=config, engines=[]), config)]
-    assert f"{BODY[0]} {BODY[1]}" in texts and BAD_DATE in texts
+    document = convert(native_pdf, config=config, engines=[])
+    choice = choose(describe(document), config, Override("*", "sentences"))  # the rules choose single
+    texts = [c["text"] for c in to_chunks(document, config, choice=choice)]
+    # 0.3 kept the 153-character paragraph whole; 0.4 cuts it between its sentences, never inside one
+    assert BODY[0] in texts and BODY[1] in texts and BAD_DATE in texts
+    assert f"{BODY[0]} {BODY[1]}" not in texts
 
 
 def test_command_line_exit_codes_and_files(native_pdf, tmp_path, capsys):
@@ -362,8 +370,15 @@ def test_converted_pdf_lines_carry_rounded_pdf_anchors(native_pdf):
 def test_a_missing_model_stops_the_command_before_reading(scanned_pdf, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("ragnaroq.pipeline.PageReader", None)  # any read would fail loudly
     code = main(
-        ["convert", str(scanned_pdf), "--out", str(tmp_path / "out"),
-         "--third-reader", "--vlm-models", str(tmp_path / "none")]
+        [
+            "convert",
+            str(scanned_pdf),
+            "--out",
+            str(tmp_path / "out"),
+            "--third-reader",
+            "--vlm-models",
+            str(tmp_path / "none"),
+        ]
     )
     assert code == 1 and "--vlm-download" in json.loads(capsys.readouterr().err)["error"]
 

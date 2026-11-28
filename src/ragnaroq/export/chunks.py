@@ -1,21 +1,35 @@
-"""Chunks for a vector index, one JSON object per line.
+"""Chunks for a vector index, one JSON object per line (chunk format 0.4.0).
 
 Every chunk has the same shape, so any vector database can load it as it stands: a UUID `id`, the
 `text` to show, the `embedding_text` to embed, and a `metadata` object that is flat (strings,
-integers, floats and booleans only, never null) with the same keys on every chunk. A citation is
-in `metadata["cite"]`, and the full anchors are in `anchors` and, as a string, in
-`metadata["anchors_json"]`. Index `embedding_text`; show `text`; filter on `status`.
+integers, floats and booleans, never null; the four `LIST_KEYS` are non-empty lists of strings,
+`[""]` when there is none) with the same keys on every chunk. A citation is in `metadata["cite"]`,
+and the full anchors are in `anchors` and, as a string, in `metadata["anchors_json"]`. Index
+`embedding_text`; show `text`; filter on `status`, `dates`, `date_first`/`date_last`, `periods`,
+`references` and `terms`.
+
+`to_chunks` describes the document, chooses its strategy (or takes the plan it is given), and
+turns the strategy's pieces into chunks.
 """
 
 import json
 import re
 import uuid
 from collections import deque
+from typing import TYPE_CHECKING
 
 from ..anchors import Anchor, PdfAnchor, XlsxAnchor, cite
 from ..config import Config
 from ..model import SCHEMA_VERSION, Document, Line, Table
-from . import Unit, grid_cell, grid_markdown, layout, units
+from ..semantic import find
+from ..semantic.model import Chunking, DocumentMetadata
+from ..semantic.paragraphs import locate
+from ..semantic.rules import CHUNK_LIST_LIMIT
+from . import Unit, grid_cell, grid_markdown, layout
+
+if TYPE_CHECKING:
+    from ..chunking.pieces import Piece
+    from ..semantic.paragraphs import Para
 
 NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/pTidke/ragnaroq")
 
@@ -39,7 +53,20 @@ METADATA_KEYS = (
     "chars",
     "anchors_json",
     "image_path",
+    "strategy",
+    "parent_id",
+    "parent_cite",
+    "heading_path",
+    "dates",
+    "date_first",
+    "date_last",
+    "periods",
+    "references",
+    "terms",
+    "scripts",
+    "part_of",
 )
+LIST_KEYS = ("dates", "periods", "references", "terms")
 
 ANCHORS_JSON_LIMIT = 20_000  # UTF-8 bytes
 TRUNCATED = "chunk.anchors-truncated"
@@ -96,32 +123,49 @@ def _span(group: list[Line]) -> tuple[Anchor, Anchor]:
     return (bound, bound) if bound else (group[0].anchor, group[-1].anchor)
 
 
-def chunk_anchors(lines: list[Line]) -> list[dict]:
+def _with_chars(anchor: dict, line: Line, chars: dict[str, tuple[int, int]]) -> dict:
+    if line.id in chars:
+        anchor["from_char"], anchor["to_char"] = chars[line.id]
+    return anchor
+
+
+def chunk_anchors(lines: list[Line], chars: dict[str, tuple[int, int]] | None = None) -> list[dict]:
     """Where a chunk came from, built from each line's anchor and never from a box.
 
     A PDF gives one anchor per page, with the box around that page's lines. An xlsx table gives one
-    anchor, the range its cells cover. Anything else gives {"from", "to"} per part."""
+    anchor, the range its cells cover. Anything else gives {"from", "to"} per part. `chars` names
+    the lines the chunk holds only in part, with the `(from, to)` offsets into each one's text: a
+    PDF page's anchor lists them under "chars"; a "from" or "to" anchor gets `from_char` and
+    `to_char` when its line is one of them."""
+    chars = chars or {}
     anchors: list[dict] = []
     for group in _groups(lines):
         first, last = _span(group)
         if isinstance(first, PdfAnchor):
             boxes = [line.anchor.box for line in group if isinstance(line.anchor, PdfAnchor)]
-            anchors.append(
-                {
-                    "page": first.page,
-                    "box": [
-                        round(min(b[0] for b in boxes), 2),
-                        round(min(b[1] for b in boxes), 2),
-                        round(max(b[2] for b in boxes), 2),
-                        round(max(b[3] for b in boxes), 2),
-                    ],
-                    "line_ids": [line.id for line in group],
-                }
-            )
+            anchor = {
+                "page": first.page,
+                "box": [
+                    round(min(b[0] for b in boxes), 2),
+                    round(min(b[1] for b in boxes), 2),
+                    round(max(b[2] for b in boxes), 2),
+                    round(max(b[3] for b in boxes), 2),
+                ],
+                "line_ids": [line.id for line in group],
+            }
+            partial = {line.id: list(chars[line.id]) for line in group if line.id in chars}
+            if partial:
+                anchor["chars"] = partial
+            anchors.append(anchor)
         elif _bounding_range(group):
             anchors.append(_dump(first))
         else:
-            anchors.append({"from": _dump(first), "to": _dump(last)})
+            anchors.append(
+                {
+                    "from": _with_chars(_dump(first), group[0], chars),
+                    "to": _with_chars(_dump(last), group[-1], chars),
+                }
+            )
     return anchors
 
 
@@ -172,13 +216,58 @@ def _part(document: Document, number: int) -> str:
     return (page.name if page and page.name else "") or ""
 
 
-def _chunk(document: Document, path: str, heading: str | None, members: list[Unit]) -> dict:
-    figure = members[0].figure
-    lines = [line for unit in members for line in unit.lines]
-    text = figure.description.strip() if figure else "\n\n".join(unit.text for unit in members if unit.text)
-    context = [part for part in (document.title, heading) if part]
-    if len(context) == 2 and context[0] == context[1]:
-        context.pop()
+def _lines_of(piece: "Piece", position: dict[int, int]) -> list[tuple[Line, int, int]]:
+    """The lines a piece holds, in reading order, each with the `(from, to)` range of its text the
+    piece holds (two ranges of one line become the range that covers both). The lines of its text
+    parts are found by `locate`; the lines of its table groups are held whole."""
+    held: dict[int, tuple[Line, int, int]] = {}
+
+    def add(line: Line, start: int, end: int):
+        if id(line) in held:
+            _, low, high = held[id(line)]
+            start, end = min(start, low), max(end, high)
+        held[id(line)] = (line, start, end)
+
+    for para, start, end in piece.parts:
+        for line, low, high in locate(para, start, end):
+            add(line, low, high)
+    for unit in piece.units:
+        for line in unit.lines:
+            add(line, 0, len(line.text))
+    return sorted(held.values(), key=lambda found: position.get(id(found[0]), len(position)))
+
+
+def _partial(line: Line, start: int, end: int) -> bool:
+    """True when the range leaves out some of the line's words."""
+    text = line.text
+    return start > len(text) - len(text.lstrip()) or end < len(text.rstrip())
+
+
+def _found(finder, text: str) -> list[str]:
+    """The normalised values the finder finds in the text, in order and without repeats."""
+    return list(dict.fromkeys(m.value for m in finder(text) if isinstance(m.value, str) and m.value))
+
+
+def _listed(values: list[str]) -> list[str]:
+    return values[:CHUNK_LIST_LIMIT] or [""]
+
+
+def _day(iso: str) -> int:
+    return int(iso.replace("-", ""))
+
+
+def _chunk(
+    document: Document, path: str, piece: "Piece", strategy: str, position: dict[int, int]
+) -> dict | None:
+    """A piece as a chunk, or None when it holds no line and no figure (nothing to cite)."""
+    figure = next((unit.figure for unit in piece.units if unit.figure), None)
+    located = _lines_of(piece, position)
+    if not located and not figure:
+        return None
+    lines = [line for line, _, _ in located]
+    context = [line for unit in piece.units for line in unit.context]
+    chars = {line.id: (start, end) for line, start, end in located if _partial(line, start, end)}
+    text = piece.text
     if figure:
         anchors = [
             {"page": figure.anchor.page, "box": list(figure.anchor.box), "line_ids": []}
@@ -187,45 +276,66 @@ def _chunk(document: Document, path: str, heading: str | None, members: list[Uni
         ]
         cited, numbers = cite(figure.anchor), [figure.page]
     else:
-        anchors, cited = chunk_anchors(lines), citation(lines)
+        anchors, cited = chunk_anchors(lines, chars), citation(lines)
         numbers = sorted({line.page for line in lines})
-    states = {unit.status for unit in members}
-    rules = sorted({rule for unit in members for rule in unit.rules})
+    states = {line.status for line in lines} | {unit.status for unit in piece.units}
+    flags = [flag for line in [*lines, *context] for flag in line.flags]
+    rules = {flag.rule for flag in flags} | {rule for unit in piece.units for rule in unit.rules}
+    rules |= set(piece.rules)
     anchors_json, cut = _limited(anchors)
     if cut:
-        rules = sorted({*rules, TRUNCATED})
-    body = _figure_embedding(figure) if figure else text
+        rules.add(TRUNCATED)
     pdf = document.source.format == "pdf"
     sources = {line.source for line in lines} | set(figure.ocr_sources if figure else [])
-    kind = "image" if figure else "table" if members[0].kind == "table" else "text"
+    scripts = sorted({script for line in [*lines, *context] for script in line.scripts})
     file_id = str(uuid.uuid5(NAMESPACE, path))
-    what = figure.id if figure else ",".join(line.id for line in lines)
+    if figure:
+        what = figure.id
+    else:
+        what = ",".join(
+            f"{line.id}:{chars[line.id][0]}-{chars[line.id][1]}" if line.id in chars else line.id
+            for line in lines
+        )
+    dates = _found(find.dates, text)
+    heading = piece.heading_path[-1] if piece.heading_path else ""
     metadata = {
         "schema_version": SCHEMA_VERSION,
         "file_id": file_id,
         "path": path,
         "file_type": document.source.format,
         "file_sha256": document.source.sha256,
-        "kind": kind,
+        "kind": piece.kind,
         "status": "blocked" if "blocked" in states else "flagged" if "flagged" in states else "accepted",
-        "rules": ",".join(rules),
+        "rules": ",".join(sorted(rules)),
         "sources": ",".join(sorted(sources)),
         "cite": f"{path}, {cited}" if cited else path,
         "part": _part(document, numbers[0]) if numbers else "",
         "part_index": numbers[0] if numbers else 0,
         "page_first": numbers[0] if pdf and numbers else 0,
         "page_last": numbers[-1] if pdf and numbers else 0,
-        "heading": heading or "",
+        "heading": heading,
         "title": document.title or "",
         "chars": len(text),
         "anchors_json": anchors_json,
         "image_path": figure.path if figure and not REMOTE.match(figure.path) else "",  # a saved file only
+        "strategy": strategy,
+        "parent_id": str(uuid.uuid5(NAMESPACE, f"{file_id}|parent|{piece.parent}")),
+        "parent_cite": f"{path}, {piece.parent_cite}" if piece.parent_cite else path,
+        "heading_path": " › ".join(piece.heading_path),
+        "dates": _listed(dates),
+        "date_first": _day(min(dates)) if dates else 0,  # ISO dates sort as the days they name
+        "date_last": _day(max(dates)) if dates else 0,
+        "periods": _listed(_found(find.periods, text)),
+        "references": _listed(_found(find.references, text)),
+        "terms": _listed(list(dict.fromkeys(piece.terms))),
+        "scripts": "+".join(scripts),
+        "part_of": f"{piece.part_of[0]}/{piece.part_of[1]}" if piece.part_of else "",
     }
     assert tuple(metadata) == METADATA_KEYS
     return {
         "id": str(uuid.uuid5(NAMESPACE, f"{file_id}|{document.source.sha256}|{what}")),
         "text": text,
-        "embedding_text": "\n".join([" > ".join(context), body]) if context else body,
+        "embedding_text": piece.embedding_text,
         "metadata": metadata,
         "anchors": anchors,
     }
@@ -317,53 +427,54 @@ def _table_groups(unit: Unit, limit: int) -> list[Unit]:
     return made
 
 
+def _kept(paras: list["Para"], include: tuple[str, ...], pdf: bool) -> list["Para"]:
+    """The paragraphs of a status in `include` (a table of a file that is not a PDF is kept: its
+    groups of rows are decided alone), with each heading path made again from the headings kept."""
+    kept = [p for p in paras if p.status in include or (p.kind == "table" and p.table and not pdf)]
+    stack: list[tuple[int, str]] = []
+    for para in kept:
+        if para.kind == "heading":
+            while stack and stack[-1][0] >= para.level:
+                stack.pop()
+            stack.append((para.level, para.text))
+        para.heading_path = tuple(text for _, text in stack)
+    return kept
+
+
 def to_chunks(
     document: Document,
     config: Config,
     include: tuple[str, ...] = ("accepted", "flagged"),
     *,
     path: str | None = None,
+    choice: Chunking | None = None,
+    meta: DocumentMetadata | None = None,
 ) -> list[dict]:
+    """The document's chunks, cut by the strategy of `choice`; without one, by the plan in `meta`,
+    else by the rules over `meta` (described here when not given). Lines of a status not in
+    `include` are left out with the paragraph or group of rows that holds them."""
+    # imported here: these modules import this one (citation, _table_groups)
+    from ..chunking.pieces import StrategyContext
+    from ..chunking.strategies import pieces, strategy_of
+    from ..semantic.describe import describe
+    from ..semantic.paragraphs import paragraphs
+    from ..semantic.rules import choose
+    from ..semantic.shape import shape
+
     path = path or document.source.filename
-    chunks: list[dict] = []
-    heading: str | None = None
-    pending: list[Unit] = []
-
-    def flush():
-        nonlocal pending
-        if pending:
-            chunks.append(_chunk(document, path, heading, pending))
-            pending = []
-
-    for unit in units(document):
-        if unit.kind == "table" and unit.table is not None and document.source.format != "pdf":
-            if unit.text:  # cut into groups of rows, each decided alone; a PDF table stays one chunk
-                flush()
-                groups = _table_groups(unit, config.chunk_chars)
-                chunks += [_chunk(document, path, heading, [g]) for g in groups if g.status in include]
-            continue
-        if unit.status not in include:
-            continue
-        if unit.figure:
-            if unit.figure.description.strip():
-                flush()
-                chunks.append(_chunk(document, path, heading, [unit]))
-            continue
-        if not unit.text:
-            continue
-        if unit.kind == "heading":
-            flush()
-            heading = unit.text
-        elif unit.kind == "table":
-            flush()
-            chunks.append(_chunk(document, path, heading, [unit]))
-        else:
-            size = sum(len(member.text) for member in pending)
-            if pending and size + len(unit.text) > config.chunk_chars:
-                flush()
-            pending.append(unit)
-    flush()
-    return chunks
+    if choice is None:
+        meta = meta or describe(document, path=path)
+        choice = meta.chunking or choose(meta, config)
+    elif meta is None:
+        meta = describe(document, path=path)
+    strategy = strategy_of(choice.strategy)
+    paras = paragraphs(document)
+    found = shape(paras, document)
+    kept = _kept(paras, include, document.source.format == "pdf")
+    context = StrategyContext(document, kept, found, meta, choice, config, include)
+    position = {id(line): i for i, line in enumerate(document.lines())}
+    chunks = [_chunk(document, path, piece, strategy, position) for piece in pieces(context)]
+    return [chunk for chunk in chunks if chunk and chunk["metadata"]["status"] in include]
 
 
 def to_jsonl(chunks: list[dict]) -> str:

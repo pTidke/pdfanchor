@@ -6,15 +6,26 @@ from conftest import BAD_DATE, BODY
 
 from ragnaroq import Config, Policy, convert
 from ragnaroq.anchors import DocxAnchor, PdfAnchor, XlsxAnchor
-from ragnaroq.export.chunks import METADATA_KEYS, NAMESPACE, chunk_anchors, to_chunks
+from ragnaroq.export.chunks import LIST_KEYS, METADATA_KEYS, NAMESPACE, chunk_anchors, to_chunks, to_jsonl
 from ragnaroq.model import Cell, Document, Engine, Figure, Line, Page, Source, Table
 from ragnaroq.policy import decide
+from ragnaroq.semantic.describe import describe
+from ragnaroq.semantic.overrides import Override
+from ragnaroq.semantic.rules import choose
 
 TRUSTING = Config(policy=Policy(accept_native_without_crosscheck=True))
 EXPECTED_KEYS = (
     "schema_version file_id path file_type file_sha256 kind status rules sources cite part part_index "
-    "page_first page_last heading title chars anchors_json image_path"
+    "page_first page_last heading title chars anchors_json image_path "
+    "strategy parent_id parent_cite heading_path dates date_first date_last periods references terms "
+    "scripts part_of"
 ).split()
+
+
+def sentences_plan(document, config=None, max_chars=None, min_chars=None):
+    """The plan that cuts `document` with `sentences`, whatever the rules would choose for it."""
+    override = Override("*", "sentences", max_chars, min_chars)
+    return choose(describe(document), config or Config(), override)
 
 
 def hand_built(fmt, filename, pages, sha="0"):
@@ -43,7 +54,12 @@ def assert_flat(chunk):
     uuid.UUID(chunk["id"])
     assert set(chunk) == {"id", "text", "embedding_text", "metadata", "anchors"}
     assert list(chunk["metadata"]) == EXPECTED_KEYS == list(METADATA_KEYS)
-    assert all(isinstance(v, (str, int, float, bool)) for v in chunk["metadata"].values())
+    for key, value in chunk["metadata"].items():
+        if key in LIST_KEYS:  # a non-empty list of strings, [""] when there is none
+            assert isinstance(value, list) and value and len(value) <= 50, (key, value)
+            assert all(isinstance(v, str) for v in value), (key, value)
+        else:
+            assert isinstance(value, (str, int, float, bool)), (key, value)
     assert chunk["metadata"]["cite"]
 
 
@@ -83,14 +99,20 @@ def test_ids_are_stable_for_the_same_content_and_change_with_it(native_pdf):
 
 def test_a_pdf_chunk_cites_its_pages(native_pdf):
     document = convert(native_pdf, config=TRUSTING, engines=[])
-    chunks = to_chunks(document, replace(TRUSTING, chunk_chars=100))
-    body = next(c for c in chunks if c["text"] == f"{BODY[0]} {BODY[1]}")
+    small = replace(TRUSTING, chunk_chars=100)
+    chunks = to_chunks(document, small, choice=sentences_plan(document, small))
+    # 0.3 kept the 153-character paragraph whole; 0.4 splits it between its two sentences
+    assert [c["metadata"]["part_of"] for c in chunks if c["text"] in BODY] == ["1/2", "2/2"]
+    body = next(c for c in chunks if c["text"] == BODY[0])
     meta = body["metadata"]
     assert meta["cite"] == "native.pdf, p. 1" and meta["part"] == "p. 1" and meta["file_type"] == "pdf"
     assert meta["page_first"] == meta["page_last"] == 1
     (anchor,) = body["anchors"]
     assert anchor["page"] == 1 and len(anchor["box"]) == 4 and anchor["line_ids"]
-    spanning = to_chunks(document, TRUSTING)[0]
+    (whole,) = to_chunks(document, TRUSTING)  # the rules cut a short document as one chunk, table and all
+    assert whole["metadata"]["strategy"] == "single" and "5,00,000" in whole["text"]
+    assert "table.member" in whole["metadata"]["rules"]
+    spanning = to_chunks(document, TRUSTING, choice=sentences_plan(document, TRUSTING))[0]
     assert spanning["metadata"]["cite"] == "native.pdf, pp. 1–2"
     assert [a["page"] for a in spanning["anchors"]] == [1, 2]
     assert (spanning["metadata"]["page_first"], spanning["metadata"]["page_last"]) == (1, 2)
@@ -161,7 +183,8 @@ def test_to_chunks_works_on_an_exact_document_without_boxes():
     document = hand_built("docx", "guide.docx", pages)
     assert all(line.box is None for line in document.lines())
     decide(document, Policy())
-    chunks = to_chunks(document, replace(Config(), chunk_chars=20))
+    small = replace(Config(), chunk_chars=20)
+    chunks = to_chunks(document, small, choice=sentences_plan(document, small))
     assert len(chunks) > 1
     for chunk in chunks:
         assert_flat(chunk)
@@ -462,3 +485,178 @@ def test_a_remote_figure_chunk_has_no_image_path():
     page = Page(number=1, kind="body", lines=[], figures=[remote, saved])
     chunks = to_chunks(hand_built("html", "notice.html", [page]), Config())
     assert [c["metadata"]["image_path"] for c in chunks] == ["", "images/html-body-img.png"]
+
+
+# --- chunk format 0.4.0 -------------------------------------------------------------------------------
+
+GENERATED = DEMO.parent / "chunking" / "generated"
+
+
+def read_file(folder, name):
+    from ragnaroq import read_bytes
+
+    return read_bytes((folder / name).read_bytes(), name, Config(), engines=[], base=folder).document
+
+
+def all_chunks(folder):
+    from ragnaroq.readers import ReaderRefused
+
+    found = []
+    for path in sorted(folder.iterdir()):
+        if path.name.endswith(".jsonl") or path.suffix in (".png", ".toml"):
+            continue
+        try:
+            found += to_chunks(read_file(folder, path.name), Config(), path=path.name)
+        except ReaderRefused:
+            assert path.name == "bomb.xml"
+    return found
+
+
+def md_chunks(text, **limits):
+    from ragnaroq import read_bytes
+
+    document = read_bytes(text.encode(), "notes.md", Config(), engines=[]).document
+    return document, to_chunks(document, Config(), choice=sentences_plan(document, **limits))
+
+
+def test_every_chunk_has_the_0_4_keys_and_list_keys_are_never_empty():
+    chunks = all_chunks(DEMO) + all_chunks(GENERATED)
+    assert len(chunks) > 50
+    for chunk in chunks:
+        assert list(chunk["metadata"]) == list(METADATA_KEYS)
+        for key in LIST_KEYS:
+            values = chunk["metadata"][key]
+            assert isinstance(values, list) and values and all(isinstance(v, str) for v in values)
+            assert len(values) <= 50
+        assert all(isinstance(v, (str, int, float, bool, list)) for v in chunk["metadata"].values())
+        assert_flat(chunk)
+        assert json.loads(chunk["metadata"]["anchors_json"]) == chunk["anchors"]
+    assert LIST_KEYS == ("dates", "periods", "references", "terms")
+    assert {c["metadata"]["terms"] == [""] for c in chunks} == {True}  # terms come with definitions
+
+
+def test_two_pieces_of_one_line_have_different_ids_and_their_char_ranges():
+    sentence = "A stall holder must show the certificate to the market officer on request. "
+    document, chunks = md_chunks("Short.\n\n" + sentence * 6, max_chars=200, min_chars=0)
+    line = document.pages[0].lines[1]
+    pieces = chunks[1:]
+    assert len(pieces) > 2 and len({c["id"] for c in chunks}) == len(chunks)
+    for chunk in pieces:
+        (anchor,) = chunk["anchors"]
+        start, end = anchor["from"]["from_char"], anchor["from"]["to_char"]
+        assert anchor["to"] == anchor["from"] and anchor["from"]["lines"] == [3, 3]
+        assert line.text[start:end] == chunk["text"]
+        what = f"{line.id}:{start}-{end}"
+        file_id = chunk["metadata"]["file_id"]
+        assert chunk["id"] == str(uuid.uuid5(NAMESPACE, f"{file_id}|{document.source.sha256}|{what}"))
+    whole = chunks[0]  # a whole line keeps 0.3's anchor and id
+    assert whole["anchors"] == [
+        {"from": {"type": "md", "lines": [1, 1]}, "to": {"type": "md", "lines": [1, 1]}}
+    ]
+    file_id = whole["metadata"]["file_id"]
+    assert whole["id"] == str(uuid.uuid5(NAMESPACE, f"{file_id}|{document.source.sha256}|p1-l1"))
+
+
+def test_a_pdf_piece_names_the_characters_of_each_line_it_holds_in_part():
+    texts = [
+        "The first sentence of the paragraph is on the first line. The second one",
+        "runs on to the second line and ends here. The third sentence is short. The fourth",
+        "sentence is all on the third line and ends the paragraph.",
+    ]
+    lines = [
+        Line(
+            id=f"l{i}",
+            page=1,
+            order=i,
+            raw=text,
+            text=text,
+            source="native",
+            paragraph=1,
+            status="accepted",
+            box={"x0": 10, "top": 10 * i, "x1": 400, "bottom": 10 * i + 9},
+        )
+        for i, text in enumerate(texts)
+    ]
+    document = hand_built("pdf", "p.pdf", [Page(number=1, kind="native", lines=lines)])
+    config = replace(Config(), chunk_chars=200)
+    chunks = to_chunks(document, config, choice=sentences_plan(document, config, min_chars=0))
+    assert len(chunks) > 1 and len({c["id"] for c in chunks}) == len(chunks)
+    by_id = {line.id: line.text for line in lines}
+    partial = 0
+    for chunk in chunks:
+        (page,) = chunk["anchors"]
+        assert page["page"] == 1 and page["box"][0] == 10 and page["line_ids"]
+        chars = page.get("chars", {})
+        assert set(chars) <= set(page["line_ids"])
+        shown = []
+        for line_id in page["line_ids"]:
+            start, end = chars.get(line_id, (0, len(by_id[line_id])))
+            shown.append(by_id[line_id][start:end])
+        assert " ".join(shown) == chunk["text"]
+        partial += len(chars)
+    assert partial >= 2
+
+
+def test_dates_and_bounds_are_filters():
+    text = (
+        "Issued on 5 January 2026 for FY 2025-26 under section 10(46) and Rule 3. Due by 31 March 2026, "
+        "not 05/01/2026, and from 1 April 2025. Again on 5 January 2026 in Q3 2026."
+        "\n\n# Other\n\nNothing dated here."
+    )
+    _, (dated, plain) = md_chunks(text, min_chars=0)
+    meta = dated["metadata"]
+    assert meta["dates"] == ["2026-01-05", "2026-03-31", "2025-04-01"]  # in order, no repeats, ISO only
+    assert (meta["date_first"], meta["date_last"]) == (20250401, 20260331)  # the earliest and the latest
+    assert meta["periods"] == ["2025-04-01/2026-03-31", "2026-Q3"]
+    assert meta["references"] == ["section 10(46)", "rule 3"]
+    meta = plain["metadata"]
+    assert [meta[k] for k in ("dates", "periods", "references", "terms")] == [[""]] * 4
+    assert (meta["date_first"], meta["date_last"]) == (0, 0)
+    many = " ".join(f"On 1 January {year}." for year in range(2000, 2060))
+    _, (chunk,) = md_chunks(many)
+    assert len(chunk["metadata"]["dates"]) == 50 and chunk["metadata"]["dates"][-1] == "2049-01-01"
+    assert (chunk["metadata"]["date_first"], chunk["metadata"]["date_last"]) == (20000101, 20590101)
+
+
+def test_the_scripts_key_joins_the_scripts_of_the_chunks_lines():
+    from ragnaroq import read_bytes
+
+    document = read_bytes("Hello world.\n\nनमस्ते दुनिया".encode(), "s.md", Config(), engines=[]).document
+    (chunk,) = to_chunks(document, Config())
+    assert chunk["metadata"]["scripts"] == "Deva+Latn"
+
+
+def test_the_same_document_gives_the_same_chunks_twice():
+    for path in sorted(GENERATED.iterdir()):
+        first = to_jsonl(to_chunks(read_file(GENERATED, path.name), Config(), path=path.name))
+        again = to_jsonl(to_chunks(read_file(GENERATED, path.name), Config(), path=path.name))
+        assert first == again, path.name
+
+
+def test_a_document_with_no_lines_gives_no_chunks():
+    from ragnaroq.readers._build import start
+
+    empty = start(b"", "empty.csv", "csv", Config(), {})
+    failed = hand_built("pdf", "failed.pdf", [Page(number=n, kind="failed", lines=[]) for n in (1, 2)])
+    excluded = hand_built("docx", "x.docx", [Page(number=1, kind="body", lines=[docx_line(0, "नमस्ते", 1)])])
+    excluded.pages[0].lines[0].excluded = "script:Deva"
+    for document in (empty, failed, excluded):
+        assert to_chunks(document, Config()) == []
+        assert to_chunks(document, Config(), choice=sentences_plan(document)) == []
+
+
+def test_to_chunks_takes_the_plan_and_the_metadata_by_keyword():
+    import pytest
+
+    from ragnaroq import read_bytes
+
+    document = read_bytes(("Some words here. " * 40).encode(), "w.md", Config(), engines=[]).document
+    choice = sentences_plan(document, max_chars=200)
+    with pytest.raises(TypeError):
+        to_chunks(document, Config(), ("accepted", "flagged"), None, choice)
+    meta = describe(document)
+    assert [c["metadata"]["strategy"] for c in to_chunks(document, Config(), meta=meta)] == ["single"]
+    meta.chunking = choice  # a plan already in the metadata is the one used
+    chunks = to_chunks(document, Config(), meta=meta)
+    assert len(chunks) > 1 and all(c["metadata"]["chars"] <= 200 for c in chunks)
+    assert to_chunks(document, Config(), choice=choice, meta=meta) == chunks
