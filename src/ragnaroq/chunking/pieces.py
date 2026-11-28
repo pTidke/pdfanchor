@@ -270,12 +270,12 @@ def split_paragraph(
 
 
 def _joined_split(
-    context: StrategyContext, pending: list[Para], size: int, para: Para, parent: Parent
+    context: StrategyContext, pending: list[Para], size: int, para: Para, parent: Parent, limit: int
 ) -> list[Piece] | None:
     """Short paragraphs (`size` under `min_chars`) in front of the first piece of `para`, cut to the
-    room they leave (R17 a). A paragraph that would fit a chunk of its own is cut so only when no piece
-    is then left under `min_chars`. None when it cannot be done."""
-    limit, least = context.max_chars, context.min_chars
+    room they leave in `limit` (R17 a). A paragraph that would fit a chunk of its own is cut so only
+    when no piece is then left under `min_chars`. None when it cannot be done."""
+    least = context.min_chars
     room = limit - size - len(BETWEEN_PARAGRAPHS)
     found = cuts(para, limit, least=least, room=room) if room > 0 else None
     if not found or len(found) < 2:
@@ -287,13 +287,15 @@ def _joined_split(
     return _cut_pieces(context, para, found, parent, lead=pending)
 
 
-def pack_paras(context: StrategyContext, paras: list[Para], parent: Parent) -> list[Piece]:
-    """Whole paragraphs joined, in order, into pieces of at most `max_chars` (blank lines counted);
-    a paragraph over it is split between sentences. Short paragraphs (under `min_chars`) that the
-    next paragraph does not fit beside go in front of its first piece, cut to the room left
-    (`_joined_split`); when that cannot be done they stay a small piece, for `join_small`, and
-    `max_chars` wins (R17)."""
-    limit, least = context.max_chars, context.min_chars
+def pack_paras(
+    context: StrategyContext, paras: list[Para], parent: Parent, *, max_chars: int | None = None
+) -> list[Piece]:
+    """Whole paragraphs joined, in order, into pieces of at most `max_chars` (blank lines counted;
+    the plan's unless given, as when a strategy repeats text in front of each piece); a paragraph
+    over it is split between sentences. Short paragraphs (under `min_chars`) that the next paragraph
+    does not fit beside go in front of its first piece, cut to the room left (`_joined_split`); when
+    that cannot be done they stay a small piece, for `join_small`, and `max_chars` wins (R17)."""
+    limit, least = max_chars or context.max_chars, context.min_chars
     made: list[Piece] = []
     pending: list[Para] = []
     size = 0
@@ -309,14 +311,18 @@ def pack_paras(context: StrategyContext, paras: list[Para], parent: Parent) -> l
             pending.append(para)
             size = grown
             continue
-        if pending and size < least and (joined := _joined_split(context, pending, size, para, parent)):
+        if (
+            pending
+            and size < least
+            and (joined := _joined_split(context, pending, size, para, parent, limit))
+        ):
             made.extend(joined)
             pending.clear()
             size = 0
             continue
         flush()
         if len(para.text) > limit:
-            made.extend(split_paragraph(context, para, parent))
+            made.extend(split_paragraph(context, para, parent, max_chars=limit))
             size = 0
         else:
             pending.append(para)
@@ -325,7 +331,8 @@ def pack_paras(context: StrategyContext, paras: list[Para], parent: Parent) -> l
     return made
 
 
-def _merged(context: StrategyContext, first: Piece, second: Piece) -> Piece:
+def merged(context: StrategyContext, first: Piece, second: Piece) -> Piece:
+    """The two pieces as one, the second after the first, under the first's parent and heading path."""
     text = first.text + BETWEEN_PARAGRAPHS + second.text
     return replace(
         first,
@@ -344,13 +351,14 @@ def join_small(
     pieces: list[Piece],
     *,
     key: Callable[[Piece], Hashable] = lambda piece: piece.parent,
+    max_chars: int | None = None,
 ) -> list[Piece]:
     """A text piece under `min_chars` joins the next piece, else the one before, when both are text
     pieces with the same `key` (the same parent by default), they are not two pieces of one paragraph,
-    and together they fit in `max_chars`; otherwise `max_chars` wins and it stays as it is (R17 c).
-    Pieces of a split paragraph are rebalanced before this, by `cuts`, and short paragraphs in front
-    of a long one by `pack_paras`."""
-    least, limit = context.min_chars, context.max_chars
+    and together they fit in `max_chars` (the plan's unless given); otherwise `max_chars` wins and it
+    stays as it is (R17 c). Pieces of a split paragraph are rebalanced before this, by `cuts`, and
+    short paragraphs in front of a long one by `pack_paras`."""
+    least, limit = context.min_chars, max_chars or context.max_chars
 
     def small(piece: Piece) -> bool:
         return piece.kind == "text" and len(piece.text) < least
@@ -368,9 +376,9 @@ def join_small(
     kept: list[Piece] = []
     for i, piece in enumerate(waiting):
         if small(piece) and i + 1 < len(waiting) and fits(piece, waiting[i + 1]):
-            waiting[i + 1] = _merged(context, piece, waiting[i + 1])
+            waiting[i + 1] = merged(context, piece, waiting[i + 1])
         elif small(piece) and kept and fits(kept[-1], piece):
-            kept[-1] = _merged(context, kept[-1], piece)
+            kept[-1] = merged(context, kept[-1], piece)
         else:
             kept.append(piece)
     return kept

@@ -1,4 +1,5 @@
-"""What the chunking strategies cut a document into: `single` and `sentences` (spec sections 3 and 5)."""
+"""What the chunking strategies cut a document into: `single`, `sentences`, `numbered-paragraphs`,
+`sections` and `question-answer` (spec sections 3 and 5)."""
 
 import uuid
 from pathlib import Path
@@ -15,7 +16,7 @@ from ragnaroq.model import Document, Engine, Line, Page, Source
 from ragnaroq.readers import ReaderRefused, read_bytes
 from ragnaroq.semantic.describe import describe
 from ragnaroq.semantic.overrides import Override
-from ragnaroq.semantic.paragraphs import paragraphs
+from ragnaroq.semantic.paragraphs import numbering, paragraphs
 from ragnaroq.semantic.rules import CHUNK_LIST_LIMIT, STRATEGIES, choose
 from ragnaroq.semantic.shape import shape
 
@@ -339,3 +340,336 @@ def test_a_heading_left_out_by_include_is_not_in_the_heading_path():
     (chunk,) = to_chunks(document, Config(), choice=plan(document, "sentences"))
     assert (chunk["metadata"]["heading"], chunk["metadata"]["heading_path"]) == ("Kept", "Kept")
     assert "Blocked" not in chunk["embedding_text"]
+
+
+# --- numbered-paragraphs, sections and question-answer: what every chunk keeps ---------------------------
+
+THREE = ("numbered-paragraphs", "sections", "question-answer")
+STRUCTURED = ("notice.pdf", "faq.docx", "manual.md", "manual.html", "contract.docx")
+
+
+def test_numbered_paragraphs_sections_and_question_answer_are_registered():
+    assert set(THREE) <= set(STRATEGY_FUNCTIONS)
+    for name, strategy in [
+        ("notice.pdf", "numbered-paragraphs"),
+        ("contract.docx", "numbered-paragraphs"),
+        ("faq.docx", "question-answer"),
+        ("manual.md", "sections"),
+        ("manual.html", "sections"),
+    ]:
+        chunks = chunks_of(read(GENERATED, name))  # the rules choose the strategy
+        assert {c["metadata"]["strategy"] for c in chunks} == {strategy}, name
+
+
+def at_sentence_bounds(block, paras):
+    """True when `block` is a run of whole sentences of one paragraph (or a whole paragraph)."""
+    for para in paras:
+        ranges = sentences(para.text, para.breaks)
+        starts = {start for start, _ in ranges} | {0}
+        ends = {start + len(para.text[start:stop].rstrip()) for start, stop in ranges} | {len(para.text)}
+        at = para.text.find(block)
+        while at >= 0:
+            if at in starts and at + len(block) in ends:
+                return True
+            at = para.text.find(block, at + 1)
+    return False
+
+
+def assert_clean(chunks, document, max_chars):
+    """No chunk over max_chars, but a long sentence's parts and a sentence that holds a reference (up
+    to half over); and no word or sentence cut: each block of a text chunk is whole sentences of one
+    paragraph, after the number a piece of a split paragraph repeats."""
+    paras = paragraphs(document)
+    for chunk in chunks:
+        meta = chunk["metadata"]
+        long = "chunk.long-sentence" in meta["rules"]
+        assert meta["chars"] == len(chunk["text"])
+        assert (
+            meta["chars"] <= max_chars
+            or long
+            or (meta["chars"] <= max_chars * 1.5 and meta["references"] != [""])
+        ), (meta["chars"], chunk["text"][:80])
+        if meta["kind"] != "text" or long:
+            continue
+        for i, block in enumerate(chunk["text"].split("\n\n")):
+            token = numbering(block) if i == 0 else None
+            assert at_sentence_bounds(block, paras) or (
+                token and at_sentence_bounds(block[len(token) :].lstrip(), paras)
+            ), block[:80]
+
+
+@pytest.mark.parametrize("max_chars", [1200, 400])
+@pytest.mark.parametrize("strategy", THREE)
+def test_the_three_strategies_cut_no_word_or_sentence_and_keep_to_max_chars(strategy, max_chars):
+    for name in STRUCTURED:
+        document = read(GENERATED, name)
+        chunks = chunks_of(document, strategy, max_chars=max_chars)
+        assert chunks, name
+        assert_clean(chunks, document, max_chars)
+        assert all(c["metadata"]["strategy"] == strategy for c in chunks)
+        for chunk in chunks:
+            part_of = chunk["metadata"]["part_of"]
+            if part_of:
+                n, m = map(int, part_of.split("/"))
+                assert 1 <= n <= m and m > 1
+
+
+# --- numbered-paragraphs ----------------------------------------------------------------------------------
+
+
+def test_a_proviso_and_an_explanation_are_in_their_paragraphs_chunk():
+    notice = read(GENERATED, "notice.pdf")
+    found = shape(paragraphs(notice), notice)
+    notes = found.provisos + found.explanations
+    assert len(found.provisos) == 2 and len(found.explanations) == 1
+    chunks = chunks_of(notice)
+    for note in notes:
+        (holder,) = [c for c in chunks if note.text in c["text"]]  # a paragraph under max_chars stays whole
+        assert holder["text"].startswith(numbering(note.text) or "")
+    assert [numbering(c["text"]) for c in chunks] == ["1.", "2.", "3.", "4.", "5.", "5.", "6.", "7.", "8."]
+
+    # a proviso and an explanation in paragraphs of their own stay with the numbered paragraph above them
+    texts = [
+        "1. Every stall holder must keep the pitch clean during the whole of the market day.",
+        "Provided that a stall holder who sells only flowers may leave the pitch until the evening.",
+        "Explanation.—A pitch is the space marked out for one stall on the market square.",
+        "2. The market officer may inspect any stall at any time while the market is open.",
+        "3. A permit that is withdrawn may not be applied for again in the same trading period.",
+    ]
+    document = pdf_document(texts)
+    chunks = chunks_of(document, "numbered-paragraphs", min_chars=0)
+    assert [c["text"] for c in chunks] == ["\n\n".join(texts[:3]), texts[3], texts[4]]
+    split = chunks_of(document, "numbered-paragraphs", max_chars=200, min_chars=0)
+    held = [c for c in split if "Provided that" in c["text"] or "Explanation" in c["text"]]
+    assert held and all(c["text"].startswith("1. ") for c in held)
+    assert all(c["metadata"]["part_of"] for c in held)
+    assert_clean(split, document, 200)
+
+
+def test_every_piece_of_a_split_numbered_paragraph_starts_with_its_number():
+    notice = read(GENERATED, "notice.pdf")
+    long = next(p for p in paragraphs(notice) if len(p.text) > 2000)
+    for max_chars in (1200, 400):
+        pieces_of_5 = [
+            c
+            for c in chunks_of(notice, "numbered-paragraphs", max_chars=max_chars)
+            if c["text"].startswith("5. ")
+        ]
+        m = len(pieces_of_5)
+        assert m > 1
+        assert [c["metadata"]["part_of"] for c in pieces_of_5] == [f"{n}/{m}" for n in range(1, m + 1)]
+        assert pieces_of_5[0]["text"] == long.text[: len(pieces_of_5[0]["text"])]
+        for chunk in pieces_of_5[1:]:
+            body = chunk["text"][len("5. ") :]
+            assert body in long.text and not long.text.startswith(body)
+            assert chunk["metadata"]["chars"] <= max_chars
+        assert_clean(pieces_of_5, notice, max_chars)
+
+    # any number form: (a) and its pieces
+    first = "(a) " + rate_sentences(12)
+    document = pdf_document(
+        [first, "(b) The second item is short but it is long enough to stand alone here."]
+    )
+    chunks = chunks_of(document, "numbered-paragraphs", max_chars=400, min_chars=0)
+    pieces_of_a = [c for c in chunks if c["metadata"]["part_of"]]
+    assert len(pieces_of_a) > 2 and all(c["text"].startswith("(a) ") for c in pieces_of_a)
+    assert chunks[-1]["text"].startswith("(b) ") and not chunks[-1]["metadata"]["part_of"]
+    assert all(c["metadata"]["chars"] <= 400 for c in chunks)
+
+
+def test_numbered_paragraphs_have_their_section_as_parent_and_short_ones_join_the_next():
+    contract = read(GENERATED, "contract.docx")
+    chunks = chunks_of(contract)
+    by_section = {}
+    for chunk in chunks:
+        by_section.setdefault(chunk["metadata"]["heading_path"], []).append(chunk)
+    services = by_section["Cleaning Services Agreement › 2. The Services"]
+    (both,) = services  # 2.1 and 2.2 are each under min_chars: they join, in their section only
+    assert both["text"].startswith("2.1 ") and "\n\n2.2 " in both["text"]
+    assert not any("2.2 " in c["text"] and "3.1 " in c["text"] for c in chunks)
+    parents = [c["metadata"]["parent_id"] for c in chunks]
+    assert len(set(parents)) == len(by_section) == 5  # one parent per section
+    assert all(len({c["metadata"]["parent_id"] for c in group}) == 1 for group in by_section.values())
+    assert all(c["metadata"]["parent_cite"].startswith("contract.docx, ") for c in chunks)
+
+    # the text before a section's first numbered paragraph is packed as `sentences` packs it
+    definitions = "Cleaning Services Agreement › 1. Definitions"
+    for max_chars in (1200, 400):
+        texts = {
+            strategy: [
+                c["text"]
+                for c in chunks_of(contract, strategy, max_chars=max_chars)
+                if c["metadata"]["heading_path"] == definitions
+            ]
+            for strategy in ("numbered-paragraphs", "sentences")
+        }
+        assert texts["numbered-paragraphs"] == texts["sentences"] and texts["sentences"]
+
+    # the text before the first numbered paragraph is packed like sentences, under the same parent
+    notice = read(GENERATED, "notice.pdf")
+    texts = [
+        "The Council gives this notice under its market powers.",
+        *[p.text for p in paragraphs(notice)][1:],
+    ]
+    chunks = chunks_of(pdf_document(texts), "numbered-paragraphs")
+    assert chunks[0]["text"].startswith(texts[0] + "\n\n1. ")  # a short preamble joins the next one
+    assert len({c["metadata"]["parent_id"] for c in chunks}) == 1
+
+
+def test_a_numbered_paragraphs_parent_is_its_section():
+    notice = read(GENERATED, "notice.pdf")
+    chunks = chunks_of(notice)
+    heading = next(line for line in notice.lines() if line.text == "Notice of Temporary Market Stall Permits")
+    file_id = chunks[0]["metadata"]["file_id"]
+    assert {c["metadata"]["parent_id"] for c in chunks} == {
+        str(uuid.uuid5(NAMESPACE, f"{file_id}|parent|section:{heading.id}"))
+    }
+    assert {c["metadata"]["heading_path"] for c in chunks} == {"Notice of Temporary Market Stall Permits"}
+    pages = sorted({line.page for line in notice.lines()})
+    assert {c["metadata"]["parent_cite"] for c in chunks} == {
+        f"notice.pdf, p. {pages[0]}" if len(pages) == 1 else f"notice.pdf, pp. {pages[0]}–{pages[-1]}"
+    }
+
+
+# --- question-answer ----------------------------------------------------------------------------------------
+
+
+def test_a_question_is_never_apart_from_its_answer():
+    faq = read(GENERATED, "faq.docx")
+    questions = [q.text for q, _ in shape(paragraphs(faq), faq).qa]
+    assert len(questions) == 12
+    for max_chars in (1200, 400):
+        chunks = chunks_of(faq, "question-answer", max_chars=max_chars)
+        for chunk in chunks:
+            assert chunk["text"].startswith("Q.")
+            (question,) = [q for q in questions if q in chunk["text"]]  # a pair never joins another pair
+            assert chunk["text"].startswith(
+                question + "\n\nA. " if not chunk["metadata"]["part_of"] else question
+            )
+            assert chunk["text"].split("\n\n")[1]  # and never stands without its answer
+        assert len({c["metadata"]["parent_id"] for c in chunks}) == 12
+        assert_clean(chunks, faq, max_chars)
+
+    # a long answer is split between sentences, each piece repeating the question
+    renew = [c for c in chunks_of(faq) if c["text"].startswith("Q. Can I renew my loans?\n\n")]
+    assert [c["metadata"]["part_of"] for c in renew] == ["1/2", "2/2"]
+    assert renew[0]["text"].startswith("Q. Can I renew my loans?\n\nA. Most items can be renewed")
+    assert len({c["metadata"]["parent_id"] for c in renew}) == 1
+
+
+def test_small_pairs_stay_apart_and_text_outside_pairs_is_packed_like_sentences():
+    intro = "The library answers the questions it is asked most often below. " * 4
+    text = (
+        intro
+        + "\n\nQ. Is it free?\n\nA. Yes.\n\nQ. Is it open on Sunday?\n\nA. No.\n\nQ. Can I park?\n\nA. Yes, at the back."
+    )
+    document = md(text)
+    chunks = chunks_of(document, "question-answer")
+    assert [c["text"] for c in chunks] == [
+        intro.strip(),
+        "Q. Is it free?\n\nA. Yes.",
+        "Q. Is it open on Sunday?\n\nA. No.",
+        "Q. Can I park?\n\nA. Yes, at the back.",
+    ]
+    parents = [c["metadata"]["parent_id"] for c in chunks]
+    file_id = chunks[0]["metadata"]["file_id"]
+    assert parents[0] == str(uuid.uuid5(NAMESPACE, f"{file_id}|parent|document"))
+    assert len(set(parents)) == 4
+
+
+# --- sections -----------------------------------------------------------------------------------------------
+
+
+def test_sections_carry_their_heading_path():
+    for name in ("manual.md", "manual.html"):
+        manual = read(GENERATED, name)
+        headings = {p.text: p.heading_path for p in paragraphs(manual) if p.kind == "heading"}
+        whole = chunks_of(manual)  # each part of the manual fits in one chunk
+        assert [(c["metadata"]["heading_path"], c["text"].split("\n\n")[0]) for c in whole] == [
+            ("Installing Pennant", "Installing Pennant"),
+            ("Making backups", "Making backups"),
+            ("Getting files back", "Getting files back"),
+        ]
+        assert "\n\nFirst start\n\n" not in whole[0]["text"] and whole[0]["text"].endswith("\n\nFirst start")
+        small = chunks_of(manual, "sections", max_chars=400)
+        for chunk in small:
+            first = chunk["text"].split("\n\n")[0]
+            path = tuple(chunk["metadata"]["heading_path"].split(" › "))
+            assert first in headings and headings[first][: len(path)] == path  # it reads on its own
+        schedule = next(c for c in small if c["text"].startswith("Setting a schedule\n\n"))
+        assert schedule["metadata"]["heading_path"] == "Making backups › Setting a schedule"
+        assert schedule["metadata"]["heading"] == "Setting a schedule"
+        assert schedule["embedding_text"].startswith(f"{manual.title} > Setting a schedule\n")
+        assert [c["text"] for c in chunks_of(read(GENERATED, "manual.md"), "sections", max_chars=400)] == [
+            c["text"] for c in small
+        ]
+
+
+def test_a_long_section_is_split_between_paragraphs_then_sentences_each_piece_under_its_heading():
+    body = "\n\n".join(rate_sentences(4) for _ in range(5)) + "\n\n" + rate_sentences(30)
+    text = (
+        "# Rates\n\n"
+        + body
+        + "\n\n# Fees\n\nThe fees are set each year by the council and published in spring."
+    )
+    chunks = chunks_of_md(text, "sections")
+    rates = [c for c in chunks if c["metadata"]["heading_path"] == "Rates"]
+    m = len(rates)
+    assert m > 2 and all(c["text"].startswith("Rates\n\nStall ") for c in rates)
+    assert [c["metadata"]["part_of"] for c in rates] == [f"{n}/{m}" for n in range(1, m + 1)]
+    assert len({c["metadata"]["parent_id"] for c in rates}) == 1
+    assert_clean(chunks, md(text), 1200)
+    assert chunks[-1]["text"] == "Fees\n\nThe fees are set each year by the council and published in spring."
+
+
+def test_a_heading_with_nothing_under_it_joins_the_next_section():
+    """Review Focus 4: a run of headings, and a section under min_chars, join the next section under
+    the same parent; the heading stays in the heading path."""
+    fourth = "The fourth section says what a stall holder must do before the market opens. " * 4
+    fifth = rate_sentences(14)
+    text = f"# Part II\n\n## Section 4\n\n{fourth}\n\n## Section 5\n\n{fifth}"
+    chunks = chunks_of_md(text, "sections")
+    assert [c["metadata"]["heading_path"] for c in chunks] == ["Part II › Section 4", "Part II › Section 5"]
+    assert chunks[0]["text"] == f"Part II\n\nSection 4\n\n{fourth.strip()}"
+    assert all(c["metadata"]["chars"] >= 200 for c in chunks)
+
+    # the heading still leads into the next section when that one is split
+    long = chunks_of_md(f"# Part II\n\n## Section 4\n\n{rate_sentences(30)}", "sections")
+    assert long[0]["text"].startswith("Part II\n\nSection 4\n\nStall 0 ")
+    assert all(c["text"].startswith(("Part II\n\nSection 4\n\n", "Section 4\n\n")) for c in long)
+    assert {c["metadata"]["heading_path"] for c in long} == {"Part II › Section 4"}
+    assert len(long) > 1 and all(c["metadata"]["chars"] <= 1200 for c in long)
+
+    # a short section joins the next one under the same parent
+    joined = chunks_of_md(
+        f"# A\n\n## A1\n\nShort.\n\n## A2\n\n{fourth}\n\n## A3\n\n{fifth}\n\n# B\n\n{fourth}", "sections"
+    )
+    assert joined[0]["text"].startswith("A\n\nA1\n\nShort.\n\nA2\n\nThe fourth section")
+    assert joined[0]["metadata"]["heading_path"] == "A"
+    assert all(c["metadata"]["chars"] >= 200 for c in joined)
+
+    # a title with nothing under it, before the chapters at its level, leads into the first of them,
+    # even one that fits a chunk alone but not with the title (R17 a: it is split to make room)
+    chapter = rate_sentences(16) + " Every stall in the market pays its rate on the first day of each month"
+    chapter += " and keeps the receipt it is given at the desk."
+    assert len(f"Chapter 1\n\n{chapter}") <= 1200 < len(f"Handbook\n\nChapter 1\n\n{chapter}")
+    titled = chunks_of_md(f"# Handbook\n\n# Chapter 1\n\n{chapter}\n\n# Chapter 2\n\n{fourth}", "sections")
+    assert titled[0]["text"].startswith("Handbook\n\nChapter 1\n\nStall 0 ")
+    assert [c["metadata"]["heading_path"] for c in titled] == ["Chapter 1", "Chapter 1", "Chapter 2"]
+    assert all(200 <= c["metadata"]["chars"] <= 1200 for c in titled)
+
+    # manual.md's "First start" has nothing under it and no section after it in its part: no tiny chunk
+    manual = read(GENERATED, "manual.md")
+    small = chunks_of(manual, "sections", max_chars=400)
+    (holder,) = [c for c in small if "First start" in c["text"]]
+    assert holder["text"] != "First start" and holder["text"].endswith("\n\nFirst start")
+    assert holder["metadata"]["heading_path"].startswith("Installing Pennant")
+
+    # an empty last subsection after a split one goes at the end of its last piece, which keeps its
+    # parent and its part_of
+    text = f"# Part 1\n\n{fourth}\n\n## Rates\n\n{rate_sentences(25)}\n\n## Empty\n\n# Part 2\n\n{fourth}"
+    chunks = chunks_of_md(text, "sections")
+    rates = [c for c in chunks if c["metadata"]["heading_path"] == "Part 1 › Rates"]
+    assert [c["metadata"]["part_of"] for c in rates] == ["1/2", "2/2"]
+    assert rates[-1]["text"].endswith("\n\nEmpty") and len({c["metadata"]["parent_id"] for c in rates}) == 1
+    assert all(c["metadata"]["chars"] >= 200 for c in chunks)
